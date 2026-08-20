@@ -1,0 +1,29 @@
+{
+  "name": "observer-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Observer - interactive canvas for running agents across OpenCode, Codex, Claude Code and GitHub Copilot CLI",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter=!@observer-ai/web build && pnpm --filter=@observer-ai/web build",
+    "build:libs": "pnpm -r --filter=!@observer-ai/web build",
+    "release": "pnpm build && node scripts/build-release.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm build:libs && vitest run",
+    "test:only": "vitest run",
+    "test:watch": "vitest",
+    "dev": "pnpm --filter=@observer-ai/daemon dev",
+    "clean": "rm -rf node_modules release **/dist **/node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

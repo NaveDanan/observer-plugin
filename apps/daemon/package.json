@@ -1,0 +1,32 @@
+{
+  "name": "@observer-ai/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "observer-daemon": "./dist/main.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.0.1",
+    "@observer-ai/adapters": "workspace:*",
+    "@observer-ai/core": "workspace:*",
+    "@observer-ai/protocol": "workspace:*",
+    "@observer-ai/storage": "workspace:*",
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,0 +1,830 @@
+:root {
+  --bg: #0b0e14;
+  --bg-soft: #121722;
+  --bg-raised: #171d2a;
+  --line: #232b3b;
+  --text: #e6ebf5;
+  --muted: #8d99b0;
+  --accent: #5aa9ff;
+  --running: #3ddc97;
+  --idle: #7f8ea3;
+  --failed: #ff6b6b;
+  --completed: #5aa9ff;
+  --warn: #ffb454;
+  --radius: 10px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.mono,
+.pre,
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ------------------------------------------------------------------ topbar */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 12px rgba(90, 169, 255, 0.6);
+}
+
+/* Binding label for the harness that opened this view. */
+.bound {
+  flex: 1;
+  font-size: 13px;
+  color: var(--muted);
+}
+.bound strong {
+  color: var(--text);
+}
+
+.tab,
+.session,
+.icon-button,
+.danger,
+.tool-head {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.status {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.status-live {
+  color: var(--running);
+  border-color: var(--running);
+}
+.status-connecting {
+  color: var(--warn);
+}
+.status-offline {
+  color: var(--failed);
+  border-color: var(--failed);
+}
+
+/* Delivery problems: agents are reporting, but Observer could not record it. */
+.alert {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(255, 180, 84, 0.12);
+  border-bottom: 1px solid var(--warn);
+  color: var(--text);
+  font-size: 13px;
+}
+.alert code {
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+
+/* -------------------------------------------------------------------- body */
+
+.body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.app.has-panel .body {
+  grid-template-columns: 220px minmax(0, 1fr) minmax(300px, 26vw);
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--bg-soft);
+}
+
+.sidebar-title,
+.overview h2,
+.panel-head h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.sidebar ul,
+.overview-todos ul,
+.todos,
+.tools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+}
+.session:hover {
+  background: var(--bg-raised);
+}
+.session.is-active {
+  background: var(--bg-raised);
+  border-color: var(--accent);
+}
+.session-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- overview */
+
+.overview {
+  display: grid;
+  /* Columns wrap instead of being crushed when the detail panel is open. */
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.overview p {
+  margin: 0 0 4px;
+}
+.overview dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0 0 8px;
+}
+.overview dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.overview dd {
+  margin: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.danger {
+  border-color: var(--line);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--failed);
+}
+.danger:hover {
+  border-color: var(--failed);
+}
+
+/* ------------------------------------------------------------------ canvas */
+
+.canvas {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  /* React Flow's transformed viewport must be clipped, not push the page wide. */
+  overflow: hidden;
+}
+.canvas.empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.react-flow__node {
+  cursor: pointer;
+}
+
+/* Flow chrome: match the app shell rather than React Flow's defaults. */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--line);
+  fill: var(--text);
+}
+.react-flow__controls-button:hover {
+  background: var(--line);
+}
+.minimap {
+  background: var(--bg-soft) !important;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.react-flow__minimap-mask {
+  fill: rgba(11, 14, 20, 0.72);
+}
+.react-flow__minimap-node {
+  fill: var(--line);
+  stroke: var(--muted);
+}
+.react-flow__edge-text {
+  fill: var(--muted);
+  font-size: 10px;
+}
+.react-flow__edge-textbg {
+  fill: var(--bg);
+}
+.react-flow__handle {
+  background: var(--muted);
+  border: none;
+  width: 6px;
+  height: 6px;
+}
+
+.node {
+  width: 260px;
+  min-height: 132px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.node:focus-visible,
+.node.is-selected {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(90, 169, 255, 0.25);
+}
+.node.is-live {
+  border-color: var(--running);
+}
+
+.node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.node-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.node-host {
+  font-size: 11px;
+  color: var(--muted);
+}
+.node-model {
+  font-size: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow: hidden;
+}
+.node-model-name {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-unknown {
+  color: var(--muted);
+  font-style: italic;
+}
+.node-foot {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.dot,
+.marker {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+  flex: none;
+}
+.dot.status-running,
+.marker.status-running,
+.marker.status-in_progress {
+  background: var(--running);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.dot.status-failed,
+.marker.status-failed,
+.marker.status-error {
+  background: var(--failed);
+}
+.dot.status-completed,
+.marker.status-completed,
+.marker.status-ok {
+  background: var(--completed);
+}
+.marker.status-blocked {
+  background: var(--warn);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge.status-running {
+  color: var(--running);
+  border-color: var(--running);
+}
+.badge.status-failed,
+.badge.status-error {
+  color: var(--failed);
+  border-color: var(--failed);
+}
+.badge.status-completed,
+.badge.status-active {
+  color: var(--completed);
+  border-color: var(--completed);
+}
+.badge.availability-partial {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.badge.availability-unavailable {
+  color: var(--failed);
+  border-color: var(--failed);
+}
+
+.edge-reconciled .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
+.edge-inferred .react-flow__edge-path {
+  stroke-dasharray: 2 5;
+  opacity: 0.7;
+}
+
+.fidelity {
+  padding: 6px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-soft);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------- panel */
+
+.panel {
+  border-left: 1px solid var(--line);
+  background: var(--bg-soft);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-head h2 {
+  color: var(--text);
+  font-size: 15px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.panel-sub {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.icon-button {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  border-color: var(--line);
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  /* A narrow panel scrolls its tabs rather than widening the whole layout. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tab {
+  padding: 8px 11px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+  white-space: nowrap;
+}
+.tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.count {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg-raised);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  /* Each tab owns its own scrolling so the chat can stay pinned to the bottom. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+.block h3 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pre {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  max-height: 320px;
+  overflow: auto;
+}
+.pre.error {
+  color: var(--failed);
+}
+.notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.empty {
+  margin: auto;
+  text-align: center;
+  padding: 24px 16px;
+  max-width: 320px;
+}
+.empty-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------------------- chat */
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Long code lines scroll inside their own block, never the whole panel. */
+  overflow-x: hidden;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  scroll-behavior: smooth;
+}
+.chat-note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: auto;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 86%;
+  min-width: 0;
+}
+/* Grouped turns sit closer together so one long reply reads as one message. */
+.msg.is-grouped {
+  margin-top: -8px;
+}
+.msg.is-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.msg.is-assistant,
+.msg.is-reasoning {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.msg-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 4px 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.msg-role {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.msg-body {
+  padding: 9px 13px;
+  border-radius: 16px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  max-width: 100%;
+  min-width: 0;
+}
+.is-user .msg-body {
+  background: linear-gradient(0deg, rgba(90, 169, 255, 0.14), rgba(90, 169, 255, 0.14)), var(--bg-raised);
+  border-color: rgba(90, 169, 255, 0.4);
+  border-bottom-right-radius: 5px;
+}
+.is-assistant .msg-body {
+  border-bottom-left-radius: 5px;
+}
+.is-reasoning .msg-body {
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.msg-text {
+  white-space: pre-wrap;
+}
+.msg-code {
+  display: block;
+  position: relative;
+  margin: 8px 0 2px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 12px;
+  white-space: pre;
+}
+.msg-code:first-child {
+  margin-top: 0;
+}
+.msg-code-lang {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 3px;
+  background: var(--running);
+  vertical-align: text-bottom;
+  animation: pulse 1s steps(2) infinite;
+}
+
+.todos,
+.tools {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  margin: 0;
+}
+
+.todo,
+.tool {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.todo.status-completed .todo-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.todo-text {
+  flex: 1;
+}
+.tool {
+  display: block;
+}
+.tool-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 0;
+}
+.tool-body {
+  padding: 6px 0 10px;
+}
+.tool-body h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.fatal {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  height: 100%;
+  text-align: center;
+  padding: 24px;
+}
+
+/* ------------------------------------------------------------------ mobile */
+
+/* With the detail panel open there is not enough canvas left for a minimap. */
+@media (max-width: 1400px) {
+  .app.has-panel .react-flow__minimap {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .body,
+  .app.has-panel .body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    max-height: 30vh;
+  }
+  .overview {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .panel {
+    position: fixed;
+    inset: auto 0 0 0;
+    height: 72vh;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+    z-index: 20;
+  }
+  .node {
+    width: 220px;
+  }
+  /* The minimap costs more than it gives on a phone: it covers real nodes. */
+  .react-flow__minimap {
+    display: none;
+  }
+}
