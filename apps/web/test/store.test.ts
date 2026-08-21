@@ -139,4 +139,12 @@ describe("employee seating", () => {
     })
     expect(selectEmployeeMatch(state, node)).toBeUndefined()
   })
+
+  it("never seats anyone on an @observer activation node", () => {
+    const node = agent({
+      agentType: "observer",
+      delegationPrompt: "Confirm that Observer staffing is active for this session.",
+    })
+    expect(selectEmployeeMatch(state, node)).toBeUndefined()
+  })
 })

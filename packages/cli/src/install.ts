@@ -1,7 +1,15 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { HostId } from "@observer-ai/protocol"
-import { emitterPath, hookPowershellCommand, hookShellCommand, homeDir, nodePath, opencodePluginSource } from "./paths.js"
+import {
+  emitterPath,
+  hookPowershellCommand,
+  hookShellCommand,
+  homeDir,
+  nodePath,
+  opencodeAgentSource,
+  opencodePluginSource,
+} from "./paths.js"
 
 export interface InstallResult {
   host: HostId
@@ -73,10 +81,18 @@ export function copilotHooksPath(): string {
   return join(home && home.length > 0 ? home : join(homeDir(), ".copilot"), "hooks", "observer.json")
 }
 
-export function opencodePluginPath(): string {
+function opencodeConfigBase(): string {
   const xdg = process.env["XDG_CONFIG_HOME"]
-  const base = xdg && xdg.length > 0 ? xdg : join(homeDir(), ".config")
-  return join(base, "opencode", "plugins", "observer.js")
+  return xdg && xdg.length > 0 ? xdg : join(homeDir(), ".config")
+}
+
+export function opencodePluginPath(): string {
+  return join(opencodeConfigBase(), "opencode", "plugins", "observer.js")
+}
+
+/** The agent definition that puts `@observer` in OpenCode's @ menu. */
+export function opencodeAgentPath(): string {
+  return join(opencodeConfigBase(), "opencode", "agent", "observer.md")
 }
 
 export function hostConfigPath(host: HostId): string {
@@ -116,7 +132,7 @@ export function uninstall(host: HostId): InstallResult {
     case "copilot":
       return removeFile("copilot", copilotHooksPath())
     case "opencode":
-      return removeFile("opencode", opencodePluginPath())
+      return removeOpencode()
   }
 }
 
@@ -228,17 +244,43 @@ function installCopilot(): InstallResult {
 function installOpencode(): InstallResult {
   const path = opencodePluginPath()
   const source = opencodePluginSource()
-  const existed = existsSync(path)
   if (!existsSync(source)) {
     return { host: "opencode", action: "missing", path, notes: [`Plugin source not found at ${source}`] }
   }
+  const existed = existsSync(path)
   mkdirSync(dirname(path), { recursive: true })
   copyFileSync(source, path)
+
+  // The agent definition is what makes @observer appear in OpenCode's @ menu;
+  // the plugin alone cannot add entries there.
+  const agentSource = opencodeAgentSource()
+  let agentNote = ""
+  if (existsSync(agentSource)) {
+    const agentPath = opencodeAgentPath()
+    mkdirSync(dirname(agentPath), { recursive: true })
+    copyFileSync(agentSource, agentPath)
+    agentNote = ` @observer mention installed to ${agentPath}.`
+  }
+
   return {
     host: "opencode",
     action: existed ? "updated" : "installed",
     path,
-    notes: ["Restart OpenCode; plugins load at startup."],
+    notes: [`Restart OpenCode; plugins and agents load at startup.${agentNote}`],
+  }
+}
+
+function removeOpencode(): InstallResult {
+  const results = [
+    removeFile("opencode", opencodePluginPath()),
+    removeFile("opencode", opencodeAgentPath()),
+  ]
+  const removed = results.some((result) => result.action === "removed")
+  return {
+    host: "opencode",
+    action: removed ? "removed" : "unchanged",
+    path: opencodePluginPath(),
+    notes: removed ? ["Removed the Observer plugin and agent definition."] : [],
   }
 }
 

@@ -500,13 +500,16 @@ export function selectRoster(current: Readonly<State>): RosterProfile[] {
  * its delegation prompt, falling back to its description, then its type.
  * Matches are memoized per revision so live updates do not re-run the
  * matcher on every token.
- *
- * An explicit "subcontractor" node was deliberately staffed with nobody by
- * the plugin; the canvas must not contradict that decision with a match of
- * its own.
  */
+/**
+ * Node types the plugin decided upstream: a subcontractor was deliberately
+ * staffed with nobody, and an observer node is the @observer activation ack.
+ * The canvas must not contradict either decision with a match of its own.
+ */
+const EXPLICIT_TYPES = new Set(["subcontractor", "observer"])
+
 export function selectEmployeeMatch(current: Readonly<State>, agent: AgentEntity): EmployeeMatch | undefined {
-  if (agent.agentType === "subcontractor") return undefined
+  if (EXPLICIT_TYPES.has(agent.agentType)) return undefined
   const key = `${agent.id}:${agent.updatedAt}`
   if (current.matchCache.has(key)) return current.matchCache.get(key)
   const task = [agent.delegationPrompt, agent.description, agent.agentType]

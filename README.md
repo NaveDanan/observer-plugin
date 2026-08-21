@@ -28,7 +28,9 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
   `subcontractor` (`"guidance": false` in `~/.observer/config.json` turns this
   off). Typing **`@observer`** in a message activates staffing for that
   session on demand — even with guidance off — and `@observer off` disables it
-  again.
+  again. Observer installs a small agent definition next to the plugin, so
+  `@observer` appears in OpenCode's `@` menu; selecting it inserts the mention,
+  which is what activates staffing.
 - **Per-node model attribution.** Each node names the model it is running, and
   says so plainly when the host never reported one.
 - **Session goal and todos on the canvas** so the overall objective stays

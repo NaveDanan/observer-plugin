@@ -113,6 +113,10 @@ async function main() {
     join(root, "integrations/opencode/observer-plugin.js"),
     join(stageDir, "integrations/opencode/observer-plugin.js"),
   )
+  cpSync(
+    join(root, "integrations/opencode/observer-agent.md"),
+    join(stageDir, "integrations/opencode/observer-agent.md"),
+  )
   for (const file of ["README.md", "LICENSE"]) {
     if (existsSync(join(root, file))) cpSync(join(root, file), join(stageDir, file))
   }

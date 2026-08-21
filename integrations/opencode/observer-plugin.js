@@ -367,6 +367,14 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       const args = output?.args
       if (!args || typeof args.prompt !== "string" || args.prompt.length === 0) return
       try {
+        // A delegation to the @observer agent is the activation ack, not work:
+        // the node keeps its own type instead of wearing an employee persona.
+        if (typeof args.subagentType === "string" && args.subagentType.toLowerCase() === "observer") {
+          if (typeof args.description === "string" && args.description.length > 0) {
+            pendingTasks.set(args.description, { prompt: args.prompt, agentType: "observer" })
+          }
+          return
+        }
         const seat = await seatFor(args.prompt)
         if (typeof args.description === "string" && args.description.length > 0) {
           pendingTasks.set(args.description, {

@@ -63,6 +63,19 @@ export function opencodePluginSource(): string {
   ])
 }
 
+/**
+ * Absolute path to the OpenCode agent definition shipped with Observer.
+ *
+ * This is what puts `@observer` in OpenCode's @ menu: that menu lists
+ * registered agents, not plugin tokens.
+ */
+export function opencodeAgentSource(): string {
+  return firstExisting([
+    resolve(here(), "../integrations/opencode/observer-agent.md"), // published package
+    resolve(here(), "../../../integrations/opencode/observer-agent.md"), // monorepo
+  ])
+}
+
 /** The Node binary the hooks should run. */
 export function nodePath(): string {
   return process.execPath

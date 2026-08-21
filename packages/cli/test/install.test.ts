@@ -98,6 +98,22 @@ describe("install", () => {
     expect(hostConfigPath("codex")).toBe(join(home, "custom-codex", "hooks.json"))
     expect(hostConfigPath("opencode")).toBe(join(home, "custom-config", "opencode", "plugins", "observer.js"))
   })
+
+  it("installs the @observer agent definition beside the OpenCode plugin", () => {
+    const result = install("opencode")
+    expect(result.action).toBe("installed")
+    // The agent definition is what puts @observer in OpenCode's @ menu.
+    const agentPath = join(dirname(hostConfigPath("opencode")), "..", "agent", "observer.md")
+    expect(existsSync(agentPath)).toBe(true)
+    expect(readFileSync(agentPath, "utf8")).toContain("mode: subagent")
+  })
+
+  it("removes the @observer agent definition on uninstall", () => {
+    install("opencode")
+    uninstall("opencode")
+    const agentPath = join(dirname(hostConfigPath("opencode")), "..", "agent", "observer.md")
+    expect(existsSync(agentPath)).toBe(false)
+  })
 })
 
 describe("uninstall", () => {
