@@ -508,12 +508,30 @@ export function selectRoster(current: Readonly<State>): RosterProfile[] {
  */
 const EXPLICIT_TYPES = new Set(["subcontractor", "observer"])
 
+/**
+ * OpenCode titles a child session `"<task> (@<type> subagent)"`. That suffix
+ * names the host's own agent definition, not the work, so it must not become
+ * match evidence.
+ *
+ * Scoring is additive, so the suffix cannot lower a score — it seats the wrong
+ * person. `"Tidy up the accessibility of the settings screen (@k8s subagent)"`
+ * seats the devops profile over the designer, because "k8s" expands to
+ * "kubernetes", which is a whole roster field.
+ */
+const HOST_TITLE_SUFFIX = /\s*\(@[^)]*\bsubagent\s*\)\s*$/i
+
+export function stripHostTitleSuffix(text: string): string {
+  return text.replace(HOST_TITLE_SUFFIX, "").trim()
+}
+
 export function selectEmployeeMatch(current: Readonly<State>, agent: AgentEntity): EmployeeMatch | undefined {
   if (EXPLICIT_TYPES.has(agent.agentType)) return undefined
   const key = `${agent.id}:${agent.updatedAt}`
   if (current.matchCache.has(key)) return current.matchCache.get(key)
   const task = [agent.delegationPrompt, agent.description, agent.agentType]
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map(stripHostTitleSuffix)
+    .filter((part) => part.length > 0)
     .join(". ")
   const match = matchEmployee(task)
   current.matchCache.set(key, match)

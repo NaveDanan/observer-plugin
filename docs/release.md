@@ -95,3 +95,13 @@ It is injected into the CLI bundle at build time and reported by
 The tarball is self-contained; copy it to the target machine by any means and
 `npm install -g` it. To publish to npm instead, run `npm publish` from
 `release/package`.
+
+Two install traps, both hit in practice:
+
+- **Always pass the tarball with an explicit path.** Without the leading
+  `./`, npm parses `release/observer-ai-0.2.0.tgz` as a GitHub `user/repo`
+  shorthand and fails trying to contact git.
+- **Never install the staging directory** (`npm i -g ./release/package`).
+  Folder installs are symlinked, so `observer` runs from a tree that has no
+  `node_modules`, and every invocation dies on the external `fastify` import.
+  The tarball is the only supported local artifact.

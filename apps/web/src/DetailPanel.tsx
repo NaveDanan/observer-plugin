@@ -29,6 +29,11 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "tools", label: "Tools" },
 ]
 
+/** An Agent that is still working, which is what the pulsing badge signals. */
+function isLive(agent: AgentEntity): boolean {
+  return agent.status === "running" || agent.status === "starting"
+}
+
 export function DetailPanel(props: DetailPanelProps): JSX.Element {
   const { agent, match, messages, toolCalls, todos, promptFragments, capabilities, onClose } = props
   const [tab, setTab] = useState<Tab>("chat")
@@ -50,7 +55,10 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
         <div className="panel-id">
           <h2>{employee ? `${employee.fullName} — activity` : (agent.displayName ?? agent.agentType)}</h2>
           <p className="panel-sub">
-            <span className={`badge status-${agent.status}`}>{agent.status}</span>
+            <span className={`badge status-${agent.status}${isLive(agent) ? " badge-running" : ""}`}>
+              {isLive(agent) && <span className="pulse-dot" aria-hidden="true" />}
+              {agent.status}
+            </span>
             <span className="mono">{agent.model ?? "model unknown"}</span>
             {agent.totalTokens ? <span className="muted">{agent.totalTokens.toLocaleString()} tokens</span> : null}
           </p>

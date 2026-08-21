@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { AgentEntity, MessageEntity, TodoEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { describeReason } from "@observer-ai/roster"
@@ -22,6 +22,12 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
   const closeRef = useRef<HTMLButtonElement>(null)
   const employee = match?.profile
   const name = employee?.fullName ?? agent.displayName ?? agent.agentType
+  // A photo that 404s must degrade to initials rather than a broken-image box.
+  const [brokenPhotoUrl, setBrokenPhotoUrl] = useState<string | undefined>(undefined)
+  const photoSrc = employee && employee.imageUrl !== brokenPhotoUrl ? employee.imageUrl : undefined
+  // Two different states, two different sentences. A subcontractor was staffed
+  // with nobody on purpose; an unseated node is the matcher declining to guess.
+  const isSubcontractor = agent.agentType === "subcontractor"
 
   useEffect(() => {
     closeRef.current?.focus()
@@ -36,8 +42,13 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
     <aside className="worker-card" role="complementary" aria-label={`Worker ${name}`}>
       <header className="worker-head">
         <div className={`employee-photo large status-${agent.status}`}>
-          {employee ? (
-            <img src={employee.imageUrl} alt={employee.fullName} draggable={false} />
+          {photoSrc ? (
+            <img
+              src={photoSrc}
+              alt={employee?.fullName ?? name}
+              draggable={false}
+              onError={() => setBrokenPhotoUrl(photoSrc)}
+            />
           ) : (
             <span className="employee-initials" aria-hidden="true">
               ?
@@ -47,7 +58,7 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
         </div>
         <div className="worker-id">
           <h2>{name}</h2>
-          <p className="worker-title">{employee?.title ?? "Unassigned"}</p>
+          <p className="worker-title">{employee?.title ?? (isSubcontractor ? "subcontractor" : "no employee seated")}</p>
           {employee && (
             <p className="muted small">
               {employee.experienceSummary} · {employee.animal}
@@ -61,9 +72,11 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
 
       {!employee && (
         <div className="empty">
-          <p className="empty-title">No employee seated</p>
+          <p className="empty-title">{isSubcontractor ? "Subcontractor" : "No employee seated"}</p>
           <p className="muted small">
-            The matcher found no roster fit for this agent's task. It is shown with a placeholder identity.
+            {isSubcontractor
+              ? "Subcontractor — this Agent runs without an employee. Nobody was seated here on purpose, so the node states its type instead of borrowing a persona."
+              : "No employee seated — nothing on the roster scored high enough for this task. The node keeps the host's own name rather than being given a made-up identity."}
           </p>
         </div>
       )}
@@ -125,7 +138,14 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
             <dl className="facts">
               <dt>Status</dt>
               <dd>
-                <span className={`badge status-${agent.status}`}>{agent.status}</span>
+                <span
+                  className={`badge status-${agent.status}${agent.status === "running" || agent.status === "starting" ? " badge-running" : ""}`}
+                >
+                  {(agent.status === "running" || agent.status === "starting") && (
+                    <span className="pulse-dot" aria-hidden="true" />
+                  )}
+                  {agent.status}
+                </span>
               </dd>
               <dt>Model</dt>
               <dd className="mono">{agent.model ?? "unknown"}</dd>

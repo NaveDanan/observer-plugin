@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { Handle, Position } from "@xyflow/react"
 import type { NodeProps } from "@xyflow/react"
 import type { AgentEntity, ToolCallEntity } from "@observer-ai/protocol"
@@ -40,6 +41,32 @@ function initialsOf(name: string): string {
 }
 
 /**
+ * The node's second line.
+ *
+ * A subcontractor and a node nobody could be seated on are different states,
+ * and the node says which. The short form fits the 11px role line; the long
+ * form is the tooltip and the screen-reader label.
+ */
+function roleOf(
+  agent: AgentEntity,
+  hostLabel: string,
+  isRoot: boolean,
+  employee: { title: string } | undefined,
+): { short: string; long: string } {
+  if (employee) return { short: employee.title, long: employee.title }
+  if (agent.agentType === "subcontractor") {
+    return { short: "subcontractor", long: "Subcontractor — this Agent runs without an employee." }
+  }
+  // The root agent is the developer's own agent; it is never seated, so it
+  // reports the host rather than a failed seating.
+  if (isRoot) return { short: hostLabel, long: hostLabel }
+  return {
+    short: "no employee seated",
+    long: "No employee seated — nothing on the roster scored high enough for this task.",
+  }
+}
+
+/**
  * One agent on the canvas, drawn as its seated employee.
  *
  * The node carries the employee's photo, name, tone and top strengths. When
@@ -52,6 +79,11 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
   const failed = agent.status === "failed"
   const employee = match?.profile
   const elapsedText = activity ? formatElapsed(activity.elapsedMs) : undefined
+  // A photo that 404s must degrade to initials rather than a broken-image box.
+  // Keyed by URL, not a boolean, so re-seating the node with a different
+  // employee gives the new photo a fresh chance to load.
+  const [brokenPhotoUrl, setBrokenPhotoUrl] = useState<string | undefined>(undefined)
+  const photoSrc = employee && employee.imageUrl !== brokenPhotoUrl ? employee.imageUrl : undefined
 
   let activityText: string
   let activityTitle: string | undefined
@@ -69,9 +101,7 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
   }
 
   const name = employee?.fullName ?? agent.displayName ?? agent.agentType
-  // A subcontractor node states what it is instead of borrowing the host
-  // label: the plugin explicitly staffed it with nobody.
-  const title = employee?.title ?? (agent.agentType === "subcontractor" ? "subcontractor" : hostLabel)
+  const role = roleOf(agent, hostLabel, isRoot, employee)
   const tone = employee?.tone
   const strengths = employee ? employee.fields.slice(0, 3) : []
 
@@ -86,14 +116,20 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
           onOpen()
         }
       }}
-      aria-label={`${name}, ${title}. ${STATUS_LABEL[agent.status]}. ${activityText}. Press Enter for details.`}
+      aria-label={`${name}, ${role.long} ${STATUS_LABEL[agent.status]}. ${activityText}. Press Enter for details.`}
     >
       {!isRoot && <Handle type="target" position={Position.Top} />}
 
       <header className="employee-head">
         <div className={`employee-photo status-${agent.status}`}>
-          {employee ? (
-            <img src={employee.imageUrl} alt={employee.fullName} draggable={false} loading="lazy" />
+          {photoSrc ? (
+            <img
+              src={photoSrc}
+              alt={employee?.fullName ?? name}
+              draggable={false}
+              loading="lazy"
+              onError={() => setBrokenPhotoUrl(photoSrc)}
+            />
           ) : (
             <span className="employee-initials" aria-hidden="true">
               {initialsOf(name)}
@@ -105,10 +141,13 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
           <span className="node-title" title={name}>
             {name}
           </span>
-          <span className="node-role" title={title}>
-            {title}
+          <span className="node-role" title={role.long}>
+            {role.short}
           </span>
-          <span className={`badge status-${agent.status}`}>{STATUS_LABEL[agent.status]}</span>
+          <span className={`badge status-${agent.status}${live ? " badge-running" : ""}`}>
+            {live && <span className="pulse-dot" aria-hidden="true" />}
+            {STATUS_LABEL[agent.status]}
+          </span>
         </div>
         {isRoot && <span className="badge badge-root">root</span>}
       </header>

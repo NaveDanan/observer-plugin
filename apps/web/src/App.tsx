@@ -71,12 +71,15 @@ export function App(): JSX.Element {
         )}
 
         <div className="topbar-right">
+          {session && !selectedAgent && (
+            <span className="tip-pill">Click an Agent for its Worker card</span>
+          )}
           {boundHost && (
             <span className="bound" title={boundHost.notes.join("\n")}>
               connected to <strong>{boundHost.label}</strong>
             </span>
           )}
-          <span className={`status status-${state.connection}`}>{state.connection}</span>
+          <span className={`status-pill status-${state.connection}`}>{state.connection}</span>
         </div>
       </header>
 
@@ -190,7 +193,7 @@ export function App(): JSX.Element {
 
           <div className="sidebar-footer">
             <div className="connection-row">
-              <span className={`status status-${state.connection}`}>{state.connection}</span>
+              <span className={`status-pill status-${state.connection}`}>{state.connection}</span>
               <span className="muted small">{boundHost ? boundHost.label : "all hosts"}</span>
             </div>
           </div>
@@ -214,12 +217,14 @@ export function App(): JSX.Element {
                 {session.host} · {agents.length} agents · {session.model ?? "model unknown"}
               </div>
               <Canvas
+                key={session.id}
                 agents={agents}
                 edges={edges}
                 matches={matches}
                 runningTools={state.runningTools}
                 hostLabel={capabilities?.label ?? session.host}
                 selectedAgentId={state.selectedAgentId}
+                focusAgentId={state.selectedAgentId}
                 now={now}
                 onOpenAgent={(id) => void selectAgent(id)}
                 onSelectAgent={(id) => void selectAgent(id)}
