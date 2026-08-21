@@ -14,8 +14,8 @@ interface ElkResult {
  */
 const elk = new (ELK as unknown as new () => { layout(graph: unknown): Promise<ElkResult> })()
 
-export const NODE_WIDTH = 260
-export const NODE_HEIGHT = 132
+export const NODE_WIDTH = 320
+export const NODE_HEIGHT = 168
 
 export interface Position {
   x: number
@@ -52,7 +52,7 @@ export async function layoutGraph(agents: AgentEntity[], edges: EdgeEntity[]): P
   try {
     const result = await elk.layout(graph)
     for (const child of result.children ?? []) {
-      positions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 })
+      positions.set(child.id, { x: Math.round(child.x ?? 0), y: Math.round(child.y ?? 0) })
     }
     if (positions.size === agents.length) return positions
     throw new Error("incomplete layout")
@@ -71,8 +71,8 @@ export async function layoutGraph(agents: AgentEntity[], edges: EdgeEntity[]): P
     for (const [depth, row] of byDepth) {
       row.forEach((agent, index) => {
         positions.set(agent.id, {
-          x: index * (NODE_WIDTH + 48),
-          y: depth * (NODE_HEIGHT + 90),
+          x: Math.round(index * (NODE_WIDTH + 48)),
+          y: Math.round(depth * (NODE_HEIGHT + 90)),
         })
       })
     }

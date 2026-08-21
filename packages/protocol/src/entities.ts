@@ -149,6 +149,12 @@ export interface AgentCounts {
   todos: number
 }
 
+/** Per-agent live activity — the tool currently running, if any. */
+export interface AgentActivity {
+  tool: ToolCallEntity
+  elapsedMs: number
+}
+
 /** Full snapshot of one session, used for initial load and reconnect. */
 export interface SessionSnapshot {
   session: SessionEntity
@@ -156,6 +162,8 @@ export interface SessionSnapshot {
   edges: EdgeEntity[]
   todos: TodoEntity[]
   counts: Record<string, AgentCounts>
+  /** The tool call currently running for each agent, if any. Null means idle / no data. */
+  runningTools: Record<string, ToolCallEntity | null>
 }
 
 export interface AgentDetail {

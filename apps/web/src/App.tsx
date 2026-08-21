@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react"
+import { useEffect } from "react"
 import { Canvas } from "./Canvas"
 import { DetailPanel } from "./DetailPanel"
+import { WorkerCard } from "./WorkerCard"
 import type { DeliveryDiagnostics } from "./api"
 import {
   dismissDiagnostics,
@@ -11,11 +12,11 @@ import {
   selectAgent,
   selectAgents,
   selectEdges,
+  selectEmployeeMatch,
   selectHostCapabilities,
   selectMessages,
   selectPromptFragments,
   selectSession,
-  selectSessionTodos,
   selectSessions,
   selectToolCalls,
   selectTodos,
@@ -25,6 +26,7 @@ import {
 export function App(): JSX.Element {
   useStoreVersion()
   const state = getState()
+  const now = Date.now()
 
   useEffect(() => {
     void initialise()
@@ -34,15 +36,11 @@ export function App(): JSX.Element {
   const session = selectActiveSession(state)
   const agents = selectAgents(state, session?.id)
   const edges = selectEdges(state, session?.id)
-  const sessionTodos = selectSessionTodos(state, session?.id)
   const capabilities = selectHostCapabilities(state, session?.host)
   const boundHost = selectHostCapabilities(state, state.scopeHost)
   const selectedAgent = state.selectedAgentId ? state.agents.get(state.selectedAgentId) : undefined
-
-  const rootTodos = useMemo(() => {
-    const root = agents.find((agent) => !agent.parentAgentId)
-    return root ? sessionTodos.filter((todo) => todo.agentId === root.id) : []
-  }, [agents, sessionTodos])
+  /** Employee seated per node, computed once per agent revision. */
+  const matches = new Map(agents.map((agent) => [agent.id, selectEmployeeMatch(state, agent)]))
 
   if (state.error && !state.ready) {
     return (
@@ -62,19 +60,24 @@ export function App(): JSX.Element {
         <div className="brand">
           <span className="logo" aria-hidden="true" />
           <strong>Observer</strong>
+          <span className="brand-sub">canvas</span>
         </div>
 
-        {/*
-          No harness picker: this view is bound to the harness that opened it,
-          passed through as ?host= by `observer open`.
-        */}
-        {boundHost && (
-          <span className="bound" title={boundHost.notes.join("\n")}>
-            connected to <strong>{boundHost.label}</strong>
-          </span>
+        {session && (
+          <div className="topbar-goal" title={session.goal ?? undefined}>
+            <span className="topbar-goal-label">Goal</span>
+            <span className="topbar-goal-text">{session.goal ?? "No goal recorded yet."}</span>
+          </div>
         )}
 
-        <span className={`status status-${state.connection}`}>{state.connection}</span>
+        <div className="topbar-right">
+          {boundHost && (
+            <span className="bound" title={boundHost.notes.join("\n")}>
+              connected to <strong>{boundHost.label}</strong>
+            </span>
+          )}
+          <span className={`status status-${state.connection}`}>{state.connection}</span>
+        </div>
       </header>
 
       {state.diagnostics && state.diagnostics.faults > 0 && !state.diagnosticsDismissed && (
@@ -90,94 +93,138 @@ export function App(): JSX.Element {
       )}
 
       <div className="body">
-        <nav className="sidebar" aria-label="Sessions">
-          <h2 className="sidebar-title">Sessions</h2>
-          {sessions.length === 0 && <p className="muted small">No sessions captured yet.</p>}
-          <ul>
-            {sessions.map((entry) => (
-              <li key={entry.id}>
-                <button
-                  className={entry.id === session?.id ? "session is-active" : "session"}
+        <nav className="sidebar" aria-label="Agent sessions">
+          <div className="section-header">
+            <span>Agent sessions</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <circle cx="5" cy="6" r="2.5" />
+              <circle cx="19" cy="6" r="2.5" />
+              <circle cx="12" cy="18" r="2.5" />
+              <path d="M6.5 8l4 8M17.5 8l-4 8" />
+            </svg>
+          </div>
+
+          <div className="session-list">
+            {sessions.length === 0 && (
+              <p className="muted small" style={{ padding: "8px" }}>
+                No agent sessions captured yet.
+              </p>
+            )}
+            {sessions.map((entry) => {
+              const isActive = entry.id === session?.id
+              const hostLabel =
+                entry.host === "opencode"
+                  ? "OpenCode"
+                  : entry.host === "claude"
+                    ? "Claude"
+                    : entry.host === "codex"
+                      ? "Codex"
+                      : entry.host
+              const liveCount = isActive
+                ? agents.filter((a) => a.status === "running" || a.status === "starting").length
+                : 0
+              return (
+                <div
+                  key={entry.id}
+                  className={`session-item ${isActive ? "is-active" : ""}`}
                   onClick={() => void selectSession(entry.id)}
                 >
-                  <span className="session-title">{entry.title ?? entry.goal ?? entry.sessionKey}</span>
-                  <span className="session-meta">
-                    <span className={`badge status-${entry.status}`}>{entry.status}</span>
-                    <span className="muted small">{entry.host}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+                  <div className="session-title">{entry.title ?? entry.goal ?? entry.sessionKey}</div>
+                  <div className="session-meta">
+                    <span className="host-tag">{hostLabel}</span>
+                    <span>{new Date(entry.updatedAt).toLocaleDateString()}</span>
+                    {isActive && agents.length > 0 && (
+                      <span className="diff-badge">
+                        <span className="diff-add">
+                          {agents.length} agent{agents.length === 1 ? "" : "s"}
+                          {liveCount > 0 ? ` · ${liveCount} live` : ""}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+
+                  {isActive && agents.length > 0 && (
+                    <div className="agent-mini-list">
+                      {agents.map((agent) => {
+                        const match = matches.get(agent.id)
+                        const name = match?.profile.fullName ?? agent.displayName ?? agent.agentType
+                        return (
+                          <button
+                            key={agent.id}
+                            className={`agent-mini${agent.id === state.selectedAgentId ? " is-selected" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void selectAgent(agent.id)
+                            }}
+                            title={`${name} — ${agent.status}`}
+                          >
+                            {match ? (
+                              <img className="agent-mini-photo" src={match.profile.imageUrl} alt="" draggable={false} />
+                            ) : (
+                              <span className="agent-mini-photo agent-mini-initials">{initialsOf(name)}</span>
+                            )}
+                            <span className="agent-mini-name">{name}</span>
+                            <span className={`dot status-${agent.status}`} aria-hidden="true" />
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {isActive && (
+                    <button
+                      className="danger small"
+                      style={{ marginTop: "6px" }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void removeSession(entry.id)
+                      }}
+                    >
+                      Delete session
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="sidebar-footer">
+            <div className="connection-row">
+              <span className={`status status-${state.connection}`}>{state.connection}</span>
+              <span className="muted small">{boundHost ? boundHost.label : "all hosts"}</span>
+            </div>
+          </div>
         </nav>
+
+        {selectedAgent && (
+          <WorkerCard
+            agent={selectedAgent}
+            match={matches.get(selectedAgent.id)}
+            messages={selectMessages(state, selectedAgent.id)}
+            toolCalls={selectToolCalls(state, selectedAgent.id)}
+            todos={selectTodos(state, selectedAgent.id)}
+            onClose={() => void selectAgent(undefined)}
+          />
+        )}
 
         <main className="stage">
           {session ? (
-            <>
-              <section className="overview" aria-label="Session goal and tasks">
-                <div className="overview-goal">
-                  <h2>Goal</h2>
-                  <p>{session.goal ?? "No goal recorded yet."}</p>
-                  <p className="muted small">
-                    {session.goalStatus === "derived"
-                      ? "Derived from the first user prompt."
-                      : session.goalStatus
-                        ? `Reported by host (${session.goalStatus}).`
-                        : ""}
-                  </p>
-                </div>
-                <div className="overview-todos">
-                  <h2>Todos</h2>
-                  {rootTodos.length === 0 ? (
-                    <p className="muted small">No task list captured.</p>
-                  ) : (
-                    <ul>
-                      {rootTodos.slice(0, 8).map((todo) => (
-                        <li key={todo.id} className={`todo status-${todo.status}`}>
-                          <span className={`marker status-${todo.status}`} aria-hidden="true" />
-                          {todo.content}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div className="overview-meta">
-                  <h2>Session</h2>
-                  <dl>
-                    <dt>Host</dt>
-                    <dd>{capabilities?.label ?? session.host}</dd>
-                    <dt>Model</dt>
-                    <dd className="mono">{session.model ?? "unknown"}</dd>
-                    <dt>Agents</dt>
-                    <dd>{agents.length}</dd>
-                    <dt>Workspace</dt>
-                    <dd className="mono small">{session.workspaceRoot}</dd>
-                  </dl>
-                  <button className="danger" onClick={() => void removeSession(session.id)}>
-                    Delete session data
-                  </button>
-                </div>
-              </section>
-
+            <div className="canvas-wrap">
+              <div className="preview-badge">
+                {session.host} · {agents.length} agents · {session.model ?? "model unknown"}
+              </div>
               <Canvas
                 agents={agents}
                 edges={edges}
-                todos={sessionTodos}
-                counts={state.counts}
+                matches={matches}
+                runningTools={state.runningTools}
                 hostLabel={capabilities?.label ?? session.host}
                 selectedAgentId={state.selectedAgentId}
+                now={now}
                 onOpenAgent={(id) => void selectAgent(id)}
                 onSelectAgent={(id) => void selectAgent(id)}
               />
-
-              {capabilities && (
-                <footer className="fidelity">
-                  <strong>{capabilities.label} fidelity:</strong> graph {capabilities.agentGraph}, replies{" "}
-                  {capabilities.liveAssistantText}, todos {capabilities.todos}, model {capabilities.model}, system prompt{" "}
-                  {capabilities.systemPrompt}
-                </footer>
-              )}
-            </>
+            </div>
           ) : (
             <div className="canvas empty">
               <p>
@@ -192,6 +239,7 @@ export function App(): JSX.Element {
         {selectedAgent && (
           <DetailPanel
             agent={selectedAgent}
+            match={matches.get(selectedAgent.id)}
             messages={selectMessages(state, selectedAgent.id)}
             toolCalls={selectToolCalls(state, selectedAgent.id)}
             todos={selectTodos(state, selectedAgent.id)}
@@ -209,4 +257,9 @@ export function App(): JSX.Element {
 function topFaultHosts(diagnostics: DeliveryDiagnostics): string {
   const hosts = [...new Set(diagnostics.recent.map((entry) => entry.host))].slice(0, 3)
   return hosts.length > 0 ? ` (${hosts.join(", ")})` : ""
+}
+
+function initialsOf(name: string): string {
+  const parts = name.replace(/^Dr\.\s*/, "").split(/\s+/).filter(Boolean)
+  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase()
 }

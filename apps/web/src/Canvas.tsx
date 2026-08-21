@@ -1,32 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import {
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  ReactFlowProvider,
-  useReactFlow,
-  type Edge,
-  type Node,
-} from "@xyflow/react"
+import { Background, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import type { AgentCounts, AgentEntity, EdgeEntity, TodoEntity } from "@observer-ai/protocol"
+import type { AgentEntity, EdgeEntity, ToolCallEntity } from "@observer-ai/protocol"
+import type { EmployeeMatch } from "@observer-ai/roster"
 import { AgentNode, type AgentNodeData } from "./AgentNode"
 import { NODE_HEIGHT, NODE_WIDTH, graphSignature, layoutGraph, type Position } from "./layout"
 
 const nodeTypes = { agent: AgentNode }
 
-const NO_COUNTS: AgentCounts = { messages: 0, toolCalls: 0, todos: 0 }
-
 export interface CanvasProps {
   agents: AgentEntity[]
   edges: EdgeEntity[]
-  todos: TodoEntity[]
-  counts: Map<string, AgentCounts>
+  /** Seated employee per agent id. */
+  matches: Map<string, EmployeeMatch | undefined>
+  runningTools: Map<string, ToolCallEntity>
   hostLabel: string
   selectedAgentId: string | undefined
+  now: number
   onOpenAgent: (agentId: string) => void
   onSelectAgent: (agentId: string) => void
+}
+
+function snapPosition(pos: Position): Position {
+  return { x: Math.round(pos.x), y: Math.round(pos.y) }
+}
+
+function snapZoom(value: number): number {
+  // Pixel crispness: only integer zoom levels. Clamped to available range.
+  const snapped = Math.round(value)
+  return Math.max(1, Math.min(4, snapped))
 }
 
 /**
@@ -36,7 +38,7 @@ export interface CanvasProps {
  * is the primary interaction described in the product brief.
  */
 function CanvasInner(props: CanvasProps): JSX.Element {
-  const { agents, edges, todos, counts, hostLabel, selectedAgentId, onOpenAgent, onSelectAgent } = props
+  const { agents, edges, matches, runningTools, hostLabel, selectedAgentId, now, onOpenAgent, onSelectAgent } = props
   const [positions, setPositions] = useState<Map<string, Position>>(new Map())
   const signature = graphSignature(agents, edges)
   const requested = useRef("")
@@ -46,45 +48,45 @@ function CanvasInner(props: CanvasProps): JSX.Element {
     if (requested.current === signature) return
     requested.current = signature
     void layoutGraph(agents, edges).then((next) => {
-      // Guard on the signature rather than an effect cleanup flag: `agents`
-      // and `edges` are new arrays on every store update, so a cleanup-based
-      // cancel would discard the in-flight layout on the next unrelated event.
       if (requested.current !== signature) return
-      setPositions(next)
-      // Layout resolves after the first paint, so the initial `fitView` ran
-      // against placeholder positions; re-fit once the real ones arrive.
-      requestAnimationFrame(() => flow.fitView({ padding: 0.18, duration: 220 }))
+      const snapped = new Map<string, Position>()
+      for (const [id, pos] of next) snapped.set(id, snapPosition(pos))
+      setPositions(snapped)
+      requestAnimationFrame(() => {
+        // Fit then snap to integer zoom so default view is crisp.
+        flow.fitView({ padding: 0.18, duration: 0 })
+        requestAnimationFrame(() => {
+          const vp = flow.getViewport()
+          const z = snapZoom(vp.zoom)
+          if (z !== vp.zoom) flow.setViewport({ ...vp, zoom: z }, { duration: 0 })
+        })
+      })
     })
   }, [signature, agents, edges, flow])
 
-  const todosByAgent = useMemo(() => {
-    const map = new Map<string, TodoEntity[]>()
-    for (const todo of todos) {
-      const list = map.get(todo.agentId) ?? []
-      list.push(todo)
-      map.set(todo.agentId, list)
-    }
-    return map
-  }, [todos])
-
   const nodes: Node<AgentNodeData>[] = useMemo(
     () =>
-      agents.map((agent, index) => ({
-        id: agent.id,
-        type: "agent",
-        position: positions.get(agent.id) ?? { x: (index % 4) * (NODE_WIDTH + 48), y: Math.floor(index / 4) * (NODE_HEIGHT + 90) },
-        data: {
-          agent,
-          todos: todosByAgent.get(agent.id) ?? [],
-          counts: counts.get(agent.id) ?? NO_COUNTS,
-          hostLabel,
-          isRoot: !agent.parentAgentId,
-          selected: agent.id === selectedAgentId,
-          onOpen: () => onOpenAgent(agent.id),
-        },
-        draggable: true,
-      })),
-    [agents, positions, todosByAgent, counts, hostLabel, selectedAgentId, onOpenAgent],
+      agents.map((agent, index) => {
+        const raw = positions.get(agent.id) ?? { x: (index % 4) * (NODE_WIDTH + 48), y: Math.floor(index / 4) * (NODE_HEIGHT + 90) }
+        const tool = runningTools.get(agent.id)
+        const activity = tool ? { tool, elapsedMs: Math.max(0, now - tool.startedAt) } : undefined
+        return {
+          id: agent.id,
+          type: "agent",
+          position: snapPosition(raw),
+          data: {
+            agent,
+            hostLabel,
+            isRoot: !agent.parentAgentId,
+            selected: agent.id === selectedAgentId,
+            activity,
+            match: matches.get(agent.id),
+            onOpen: () => onOpenAgent(agent.id),
+          },
+          draggable: true,
+        }
+      }),
+    [agents, positions, matches, runningTools, hostLabel, selectedAgentId, now, onOpenAgent],
   )
 
   const flowEdges: Edge[] = useMemo(
@@ -93,9 +95,11 @@ function CanvasInner(props: CanvasProps): JSX.Element {
         id: edge.id,
         source: edge.fromAgentId,
         target: edge.toAgentId,
+        type: "step",
         animated: edge.edgeType === "spawned",
         label: edge.provenance === "authoritative" ? undefined : edge.provenance,
         className: `edge-${edge.provenance}`,
+        pathOptions: { borderRadius: 0 },
       })),
     [edges],
   )
@@ -117,15 +121,17 @@ function CanvasInner(props: CanvasProps): JSX.Element {
         colorMode="dark"
         fitView
         fitViewOptions={{ padding: 0.18 }}
-        minZoom={0.2}
-        maxZoom={1.75}
+        minZoom={1}
+        maxZoom={4}
         proOptions={{ hideAttribution: true }}
         onNodeDoubleClick={(_event, node) => onOpenAgent(node.id)}
         onNodeClick={(_event, node) => onSelectAgent(node.id)}
+        onMoveEnd={(_e, vp) => {
+          const z = snapZoom(vp.zoom)
+          if (z !== vp.zoom) flow.setViewport({ ...vp, zoom: z })
+        }}
       >
-        <Background gap={24} size={1} />
-        <Controls showInteractive={false} />
-        <MiniMap pannable zoomable className="minimap" nodeStrokeWidth={3} />
+        <Background gap={16} size={1} />
       </ReactFlow>
     </div>
   )

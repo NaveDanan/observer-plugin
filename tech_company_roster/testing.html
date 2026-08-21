@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UI Layout</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: #121212;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-size: 13px;
+    }
+
+    /* Top Bar */
+    .top-bar {
+      height: 40px;
+      background-color: #1a1a1a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid #282828;
+    }
+
+    .window-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .control-btn {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .close { background-color: #ff5f56; }
+    .minimize { background-color: #ffbd2e; }
+    .maximize { background-color: #27c93f; }
+
+    .nav-tabs {
+      display: flex;
+      background-color: #262626;
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .tab {
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #8e8e8e;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .tab.active {
+      background-color: #383838;
+      color: #ffffff;
+    }
+
+    /* Main Container */
+    .main-container {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 40px);
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      background-color: #181818;
+      border-right: 1px solid #282828;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .sidebar-content {
+      padding: 12px;
+      overflow-y: auto;
+    }
+
+    .btn-new-session {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #cccccc;
+      padding: 8px 0;
+      cursor: pointer;
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #777;
+      padding: 6px 0;
+      margin-bottom: 16px;
+      cursor: pointer;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      color: #666;
+      font-size: 11px;
+      margin-bottom: 12px;
+    }
+
+    .session-item {
+      margin-bottom: 14px;
+      cursor: pointer;
+    }
+
+    .session-title {
+      color: #d0d0d0;
+      font-size: 13px;
+      margin-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .session-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #666;
+    }
+
+    .badge-green { color: #4CAF50; }
+    .badge-red { color: #F44336; }
+
+    /* Sidebar Footer */
+    .sidebar-footer {
+      border-top: 1px solid #282828;
+      padding: 12px;
+    }
+
+    .plugin-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #aaaaaa;
+      margin-bottom: 12px;
+      cursor: pointer;
+    }
+
+    .user-profile {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background-color: #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: #ccc;
+    }
+
+    .user-name { color: #eee; font-size: 12px; }
+    .user-plan { color: #666; font-size: 11px; }
+
+    .user-actions {
+      display: flex;
+      gap: 8px;
+      color: #777;
+    }
+
+    /* Workspace Canvas */
+    .workspace {
+      flex: 1;
+      background-color: #1e1e1e;
+      background-image: radial-gradient(#2c2c2c 1px, transparent 1px);
+      background-size: 16px 16px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-tag {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      font-size: 12px;
+      color: #666;
+    }
+
+    /* Popover Menu & Tooltip */
+    .menu-container {
+      position: relative;
+      margin-bottom: 12px;
+    }
+
+    .dropdown-menu {
+      width: 220px;
+      background-color: #252525;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 6px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+
+    .menu-item {
+      padding: 6px 10px;
+      color: #a0a0a0;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .menu-item.active {
+      background-color: #323232;
+      color: #ffffff;
+    }
+
+    .tooltip {
+      position: absolute;
+      left: 232px;
+      top: 100px;
+      width: 180px;
+      background-color: #000000;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: #cccccc;
+      line-height: 1.4;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
+    /* Input Card */
+    .input-card {
+      width: 480px;
+      background-color: #252525;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+    }
+
+    .input-prompt {
+      color: #666;
+      margin-bottom: 30px;
+      display: flex;
+      align-items: center;
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 1px;
+      height: 14px;
+      background-color: #888;
+      margin-right: 4px;
+    }
+
+    .card-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .tool-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #888;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .model-selector {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .model-name {
+      color: #888;
+      font-size: 12px;
+    }
+
+    .send-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background-color: #724235;
+      color: #e28e77;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .card-footer {
+      border-top: 1px solid #303030;
+      padding-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .folder-select, .location-select {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #888;
+      font-size: 11px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="window-controls">
+      <div class="control-btn close"></div>
+      <div class="control-btn minimize"></div>
+      <div class="control-btn maximize"></div>
+    </div>
+    <div class="nav-tabs">
+      <div class="tab">Chat</div>
+      <div class="tab">Cowork</div>
+      <div class="tab active">Code</div>
+    </div>
+    <div></div>
+  </div>
+
+  <!-- Main Container -->
+  <div class="main-container">
+    
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-content">
+        <div class="btn-new-session">+ New session</div>
+        <div class="search-box">🔍 Search</div>
+        
+        <div class="section-header">
+          <span>Sessions</span>
+          <span>≡</span>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Suggest next steps for project</div>
+          <div class="session-meta">☁ tc-ghost-theme · Feb 2</div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Create custom archive newsletter pa</div>
+          <div class="session-meta">
+            ☁ tc-ghost-theme · Feb 2 
+            <span class="badge-green">+155</span> 
+            <span class="badge-red">-0</span>
+          </div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Generate cyberpunk robot SVG artw</div>
+          <div class="session-meta">☁ tc-claude-agent-workspace · Jan 28</div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Create comprehensive CLAUDE.md</div>
+          <div class="session-meta">
+            ☁ tc-ghost-theme · Jan 26 
+            <span class="badge-green">+321</span> 
+            <span class="badge-red">-0</span>
+          </div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">MCP Antfood Integration</div>
+          <div class="session-meta">☁ tc-claude-agent-workspace · Jan 23</div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Add Enabled Status Test</div>
+          <div class="session-meta">🍀 tc-ghost-theme · Jan 3</div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Enable Newsletter Setting by Default</div>
+          <div class="session-meta">
+            🍀 tc-ghost-theme · Jan 3 
+            <span class="badge-green">+1</span> 
+            <span class="badge-red">-1</span>
+          </div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Add RSS Tests Conflict Resolution</div>
+          <div class="session-meta">🍀 tc-ghost-theme · Jan 3</div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">List Open Pull Requests</div>
+          <div class="session-meta">☁ tc-ghost-theme · Jan 3</div>
+        </div>
+
+        <div class="session-item">
+          <div class="session-title">Add UI tests for verification</div>
+          <div class="session-meta">☁ tc-ghost-theme · Dec 30</div>
+        </div>
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="plugin-item">🔌 Plugins</div>
+        <div class="user-profile">
+          <div class="user-info">
+            <div class="avatar">A</div>
+            <div>
+              <div class="user-name">Alexey</div>
+              <div class="user-plan">Pro plan</div>
+            </div>
+          </div>
+          <div class="user-actions">
+            <span>📥</span>
+            <span>🐞</span>
+            <span>⇡</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+      <div class="preview-tag">Preview</div>
+
+      <!-- Command Dropdown -->
+      <div class="menu-container">
+        <div class="dropdown-menu">
+          <div class="menu-item">compact</div>
+          <div class="menu-item">context</div>
+          <div class="menu-item">cost</div>
+          <div class="menu-item active">debug</div>
+          <div class="menu-item">init</div>
+          <div class="menu-item">insights</div>
+          <div class="menu-item">pr-comments</div>
+          <div class="menu-item">release-notes</div>
+          <div class="menu-item">review</div>
+          <div class="menu-item">security-review</div>
+        </div>
+        
+        <div class="tooltip">
+          Debug your current Claude Code session by reading the session debug log. (bundled)
+        </div>
+      </div>
+
+      <!-- Input Dialog -->
+      <div class="input-card">
+        <div class="input-prompt">
+          <span class="cursor"></span>Type to filter
+        </div>
+
+        <div class="card-toolbar">
+          <div style="display: flex; gap: 12px;">
+            <div class="tool-btn">+</div>
+            <div class="tool-btn">&lt;/&gt; Code ˅</div>
+          </div>
+          <div class="model-selector">
+            <span class="model-name">Opus 4.6 ˅</span>
+            <div class="send-btn">↑</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="folder-select">
+            <span>📁</span> Select folder
+          </div>
+          <div class="location-select">
+            <span>🖥</span> Local ˅
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>
+
+                                                                                

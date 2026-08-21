@@ -11,6 +11,8 @@ import type {
   TodoEntity,
   ToolCallEntity,
 } from "@observer-ai/protocol"
+import type { EmployeeMatch, RosterProfile } from "@observer-ai/roster"
+import { matchEmployee } from "@observer-ai/roster"
 import * as api from "./api"
 
 type ConnectionState = "connecting" | "live" | "offline"
@@ -30,8 +32,12 @@ interface State {
   messages: Map<string, MessageEntity>
   toolCalls: Map<string, ToolCallEntity>
   promptFragments: Map<string, PromptFragmentEntity>
+  /** The employee roster; empty until the daemon answers. */
+  roster: RosterProfile[]
   /** Activity totals per agent, kept for every node on the canvas. */
   counts: Map<string, AgentCounts>
+  /** The tool currently running for each agent, if any. Null means idle / unknown. */
+  runningTools: Map<string, ToolCallEntity>
   /**
    * Ids already counted, so live updates increment each row once.
    * Ids are far cheaper to keep than full rows for agents nobody has opened.
@@ -41,17 +47,21 @@ interface State {
   selectedSessionId: string | undefined
   selectedAgentId: string | undefined
   loadedAgents: Set<string>
+  /** Memoized agent→employee matches, keyed by id + updatedAt. */
+  matchCache: Map<string, EmployeeMatch | undefined>
   /**
-   * The harness this view is bound to, taken from the URL.
+   * The host this view is bound to, taken from the URL.
    *
-   * Observer is opened by a harness and stays connected to it; there is no
-   * in-app harness picker.
+   * Observer is opened by a host and stays connected to it; there is no
+   * in-app host picker.
    */
   scopeHost: string | undefined
   scopeSession: string | undefined
   /** Deliveries the daemon could not record; surfaced as a banner. */
   diagnostics: api.DeliveryDiagnostics | undefined
   diagnosticsDismissed: boolean
+  /** For testing: injectable clock. */
+  _now?: () => number
 }
 
 function readScope(): { host: string | undefined; session: string | undefined } {
@@ -80,12 +90,15 @@ const state: State = {
   messages: new Map(),
   toolCalls: new Map(),
   promptFragments: new Map(),
+  roster: [],
   counts: new Map(),
+  runningTools: new Map(),
   countedMessages: new Set(),
   countedToolCalls: new Set(),
   selectedSessionId: undefined,
   selectedAgentId: undefined,
   loadedAgents: new Set(),
+  matchCache: new Map(),
   scopeHost: initialScope.host,
   scopeSession: initialScope.session,
   diagnostics: undefined,
@@ -139,6 +152,14 @@ export async function initialise(): Promise<void> {
     state.ready = true
     state.error = undefined
     notify()
+    // The roster decorates the canvas; losing it must not lose sessions.
+    try {
+      const { profiles } = await api.getRoster()
+      state.roster = profiles
+      notify()
+    } catch {
+      state.roster = []
+    }
     // Open what the harness asked for; otherwise the most recent session it owns.
     const scoped = selectSessions(state)
     const target = state.scopeSession
@@ -194,6 +215,11 @@ export async function selectSession(sessionId: string): Promise<void> {
   for (const [agentId, counts] of Object.entries(snapshot.counts ?? {})) {
     state.counts.set(agentId, { ...counts })
   }
+  for (const [agentId, tool] of Object.entries(snapshot.runningTools ?? {})) {
+    if (tool) state.runningTools.set(agentId, tool as ToolCallEntity)
+    else state.runningTools.delete(agentId)
+  }
+  ensureTick()
   notify()
 }
 
@@ -313,6 +339,7 @@ async function resync(): Promise<void> {
 }
 
 export function applyChanges(changes: Change[]): void {
+  let tickNeeded = false
   for (const change of changes) {
     if (change.op === "delete") {
       collectionFor(change.table)?.delete(change.id)
@@ -327,6 +354,7 @@ export function applyChanges(changes: Change[]): void {
         if (!state.counts.has(change.row.id)) {
           state.counts.set(change.row.id, { messages: 0, toolCalls: 0, todos: 0 })
         }
+        if (change.row.status === "running" || change.row.status === "starting") tickNeeded = true
         break
       case "edge":
         state.edges.set(change.row.id, change.row)
@@ -340,15 +368,25 @@ export function applyChanges(changes: Change[]): void {
         // Full rows are only kept for agents whose detail panel has been opened.
         if (state.loadedAgents.has(change.row.agentId)) state.messages.set(change.row.id, change.row)
         break
-      case "tool_call":
+      case "tool_call": {
         countOnce(state.countedToolCalls, change.row.id, change.row.agentId, "toolCalls")
         if (state.loadedAgents.has(change.row.agentId)) state.toolCalls.set(change.row.id, change.row)
+        // Track running tool for canvas regardless of whether detail is loaded.
+        if (change.row.status === "running") {
+          state.runningTools.set(change.row.agentId, change.row)
+          tickNeeded = true
+        } else {
+          const current = state.runningTools.get(change.row.agentId)
+          if (current?.id === change.row.id) state.runningTools.delete(change.row.agentId)
+        }
         break
+      }
       case "prompt_fragment":
         if (state.loadedAgents.has(change.row.agentId)) state.promptFragments.set(change.row.id, change.row)
         break
     }
   }
+  if (tickNeeded) ensureTick()
 }
 
 function countsFor(agentId: string): AgentCounts {
@@ -451,6 +489,128 @@ export function selectHostCapabilities(current: Readonly<State>, host: string | 
   return current.hosts.find((entry) => entry.host === host)
 }
 
+export function selectRoster(current: Readonly<State>): RosterProfile[] {
+  return current.roster
+}
+
+/**
+ * The employee seated on an agent node.
+ *
+ * The task text is whatever the host told us about why this agent exists:
+ * its delegation prompt, falling back to its description, then its type.
+ * Matches are memoized per revision so live updates do not re-run the
+ * matcher on every token.
+ *
+ * An explicit "subcontractor" node was deliberately staffed with nobody by
+ * the plugin; the canvas must not contradict that decision with a match of
+ * its own.
+ */
+export function selectEmployeeMatch(current: Readonly<State>, agent: AgentEntity): EmployeeMatch | undefined {
+  if (agent.agentType === "subcontractor") return undefined
+  const key = `${agent.id}:${agent.updatedAt}`
+  if (current.matchCache.has(key)) return current.matchCache.get(key)
+  const task = [agent.delegationPrompt, agent.description, agent.agentType]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(". ")
+  const match = matchEmployee(task)
+  current.matchCache.set(key, match)
+  return match
+}
+
 export function selectCounts(current: Readonly<State>, agentId: string): AgentCounts {
   return current.counts.get(agentId) ?? { messages: 0, toolCalls: 0, todos: 0 }
+}
+
+// ------------------------------------------------------------------ activity
+
+export interface CurrentActivity {
+  tool: ToolCallEntity
+  elapsedMs: number
+}
+
+/**
+ * Pure selector for current activity. Returns the running tool call plus
+ * elapsed milliseconds for a supplied now, or undefined when idle.
+ * Hosts that never report tool calls produce the same idle result.
+ */
+export function selectCurrentActivity(
+  current: Readonly<State>,
+  agentId: string,
+  now: number,
+): CurrentActivity | undefined {
+  const tool = current.runningTools.get(agentId)
+  if (!tool) return undefined
+  return { tool, elapsedMs: Math.max(0, now - tool.startedAt) }
+}
+
+export function formatElapsed(ms: number): string {
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const rem = seconds % 60
+  if (minutes < 60) return `${minutes}m ${rem}s`
+  const hours = Math.floor(minutes / 60)
+  const minRem = minutes % 60
+  return `${hours}h ${minRem}m`
+}
+
+function hasRunningAgents(current: Readonly<State>): boolean {
+  for (const agent of current.agents.values()) {
+    if (agent.status === "running" || agent.status === "starting") return true
+  }
+  return current.runningTools.size > 0
+}
+
+// One-second tick that runs only while at least one agent is live.
+let tickTimer: ReturnType<typeof setInterval> | undefined
+
+function ensureTick(): void {
+  if (tickTimer) return
+  if (!hasRunningAgents(state)) return
+  tickTimer = setInterval(() => {
+    if (!hasRunningAgents(state)) {
+      if (tickTimer) clearInterval(tickTimer)
+      tickTimer = undefined
+      return
+    }
+    notify()
+  }, 1000)
+  // Do not keep the process alive in tests.
+  if (tickTimer && typeof (tickTimer as unknown as { unref?: () => void }).unref === "function") {
+    ;(tickTimer as unknown as { unref: () => void }).unref!()
+  }
+}
+
+export function __resetForTests(): void {
+  state.sessions.clear()
+  state.agents.clear()
+  state.edges.clear()
+  state.todos.clear()
+  state.messages.clear()
+  state.toolCalls.clear()
+  state.promptFragments.clear()
+  state.roster = []
+  state.counts.clear()
+  state.runningTools.clear()
+  state.countedMessages.clear()
+  state.countedToolCalls.clear()
+  state.loadedAgents.clear()
+  state.matchCache.clear()
+  state.selectedSessionId = undefined
+  state.selectedAgentId = undefined
+  state.diagnostics = undefined
+  state.diagnosticsDismissed = false
+  state.cursor = 0
+  if (tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = undefined
+  }
+  version = 0
+}
+
+export function __stopTick(): void {
+  if (tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = undefined
+  }
 }

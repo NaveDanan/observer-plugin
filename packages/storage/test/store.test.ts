@@ -258,4 +258,85 @@ describe("Store", () => {
     expect(db.listRawEvents(sessionId("codex", key))).toHaveLength(1)
     db.close()
   })
+
+  it("returns the running tool per agent", () => {
+    const db = store()
+    const session = sessionId("codex", "s1")
+    const agent = agentId(session, "main")
+    const other = agentId(session, "agent:a1")
+    const now = 1_000
+    db.putAgent({
+      sessionId: session,
+      id: agent,
+      agentKey: "main",
+      agentType: "main",
+      displayName: null,
+      parentAgentId: null,
+      status: "running",
+      model: null,
+      modelConfidence: null,
+      description: null,
+      delegationPrompt: null,
+      summary: null,
+      startedAt: now,
+      endedAt: null,
+      updatedAt: now,
+      totalTokens: null,
+      durationMs: null,
+    })
+    db.putAgent({
+      sessionId: session,
+      id: other,
+      agentKey: "agent:a1",
+      agentType: "Explore",
+      displayName: null,
+      parentAgentId: agent,
+      status: "running",
+      model: null,
+      modelConfidence: null,
+      description: null,
+      delegationPrompt: null,
+      summary: null,
+      startedAt: now,
+      endedAt: null,
+      updatedAt: now,
+      totalTokens: null,
+      durationMs: null,
+    })
+    db.putToolCall({
+      id: `${agent}~t:1`,
+      sessionId: session,
+      agentId: agent,
+      callId: "1",
+      tool: "Bash",
+      title: null,
+      input: null,
+      output: null,
+      error: null,
+      status: "running",
+      startedAt: now,
+      endedAt: null,
+      durationMs: null,
+    })
+    db.putToolCall({
+      id: `${other}~t:2`,
+      sessionId: session,
+      agentId: other,
+      callId: "2",
+      tool: "Grep",
+      title: null,
+      input: null,
+      output: null,
+      error: null,
+      status: "ok",
+      startedAt: now,
+      endedAt: now + 10,
+      durationMs: 10,
+    })
+
+    const running = db.runningToolsByAgent(session)
+    expect(running[agent]?.tool).toBe("Bash")
+    expect(running[other]).toBeNull()
+    db.close()
+  })
 })

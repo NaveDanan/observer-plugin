@@ -7,11 +7,13 @@ import type {
   TodoEntity,
   ToolCallEntity,
 } from "@observer-ai/protocol"
+import type { EmployeeMatch } from "@observer-ai/roster"
 
 type Tab = "prompt" | "chat" | "todos" | "tools"
 
 export interface DetailPanelProps {
   agent: AgentEntity
+  match: EmployeeMatch | undefined
   messages: MessageEntity[]
   toolCalls: ToolCallEntity[]
   todos: TodoEntity[]
@@ -28,9 +30,10 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ]
 
 export function DetailPanel(props: DetailPanelProps): JSX.Element {
-  const { agent, messages, toolCalls, todos, promptFragments, capabilities, onClose } = props
+  const { agent, match, messages, toolCalls, todos, promptFragments, capabilities, onClose } = props
   const [tab, setTab] = useState<Tab>("chat")
   const closeRef = useRef<HTMLButtonElement>(null)
+  const employee = match?.profile
 
   useEffect(() => {
     closeRef.current?.focus()
@@ -45,7 +48,7 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
     <aside className="panel" role="dialog" aria-label={`Agent ${agent.displayName ?? agent.agentType}`}>
       <header className="panel-head">
         <div className="panel-id">
-          <h2>{agent.displayName ?? agent.agentType}</h2>
+          <h2>{employee ? `${employee.fullName} — activity` : (agent.displayName ?? agent.agentType)}</h2>
           <p className="panel-sub">
             <span className={`badge status-${agent.status}`}>{agent.status}</span>
             <span className="mono">{agent.model ?? "model unknown"}</span>

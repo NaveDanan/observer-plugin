@@ -1,0 +1,629 @@
+{
+  "schema_version": "1.0",
+  "title": "Fictional Technology Company Roster",
+  "profile_count": 14,
+  "image_link_note": "relative_url points to the bundled image after extracting the ZIP; sandbox_url points to the current ChatGPT file workspace.",
+  "profiles": [
+    {
+      "id": "arjun-mehta",
+      "full_name": "Arjun Mehta",
+      "role": {
+        "title": "Senior Frontend Engineer",
+        "years_of_experience": 7,
+        "experience_summary": "7 years of experience"
+      },
+      "short_description": "Arjun is the engineer who turns complex product requirements into interfaces that feel simple, fast, and polished. He has a strong visual sense, but he is equally concerned with maintainability, accessibility, and application performance.",
+      "tone": "Energetic, precise, collaborative, and visually minded. He explains technical decisions through concrete examples rather than abstract theory.",
+      "strengths": {
+        "fields_and_components": [
+          "React",
+          "TypeScript",
+          "Component architecture",
+          "Design systems",
+          "State management",
+          "Accessibility",
+          "Responsive interfaces",
+          "Frontend performance"
+        ],
+        "contribution_to_company": "Arjun creates reusable frontend foundations that allow product teams to ship new screens without repeatedly rebuilding the same patterns. He connects design and engineering and notices when a component technically works but does not feel consistent, intuitive, or production-ready.",
+        "you_call_them_when": [
+          "A user interface has become inconsistent or difficult to maintain.",
+          "A complex workflow needs to feel simple.",
+          "The application is slow, visually unstable, or inaccessible.",
+          "Several teams need to share the same component library.",
+          "A design looks good in a mockup but is difficult to implement correctly."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Fox",
+        "why": "He is curious, adaptable, quick to identify alternative solutions, and attentive to small visual and behavioral details."
+      },
+      "image": {
+        "relative_url": "images/01_arjun_mehta_frontend_engineer.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/01_arjun_mehta_frontend_engineer.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "3496f69d197cc2b9045c4d9c70cdf7a2142253ecf0b0e610d2d29d0c4f4b3316"
+      }
+    },
+    {
+      "id": "malik-johnson",
+      "full_name": "Malik Johnson",
+      "role": {
+        "title": "Staff Backend Engineer",
+        "years_of_experience": 10,
+        "experience_summary": "10 years of experience"
+      },
+      "short_description": "Malik is a calm systems thinker who designs the services, APIs, and data models that keep the product functioning under real-world load. He prefers simple, durable architectures over fashionable complexity.",
+      "tone": "Calm, direct, dependable, and technically grounded. He rarely exaggerates a problem and does not recommend adding infrastructure without a clear reason.",
+      "strengths": {
+        "fields_and_components": [
+          "Distributed systems",
+          "API design",
+          "Databases",
+          "Authentication",
+          "Event-driven architecture",
+          "Caching",
+          "Asynchronous processing",
+          "Service reliability"
+        ],
+        "contribution_to_company": "Malik creates stable technical foundations. He identifies where systems are too tightly coupled, where data contracts are unclear, and where short-term implementation decisions could create long-term operational problems.",
+        "you_call_them_when": [
+          "A service needs to scale without becoming fragile.",
+          "The database model no longer matches the product.",
+          "Several systems must exchange data reliably.",
+          "An API has become difficult to version or maintain.",
+          "The team is debating whether to use synchronous calls, queues, or events.",
+          "A recurring production failure has no obvious root cause."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Elephant",
+        "why": "He is steady, dependable, protective of the system, and remembers why previous architectural decisions were made."
+      },
+      "image": {
+        "relative_url": "images/02_malik_johnson_staff_backend_engineer.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/02_malik_johnson_staff_backend_engineer.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "067cf603115dacf7d55c05b7c5e5aa2da89043c0197e267ed585290c688056ac"
+      }
+    },
+    {
+      "id": "elias-mercer",
+      "full_name": "Elias Mercer",
+      "role": {
+        "title": "Senior DevOps and Site Reliability Engineer",
+        "years_of_experience": 8,
+        "experience_summary": "8 years of experience"
+      },
+      "short_description": "Elias builds the delivery and infrastructure systems that allow developers to release safely and operate services confidently. He enjoys removing repetitive manual work and turning deployment knowledge into automation.",
+      "tone": "Pragmatic, upbeat, incident-focused, and slightly impatient with unnecessary manual processes.",
+      "strengths": {
+        "fields_and_components": [
+          "Kubernetes",
+          "Containers",
+          "CI/CD",
+          "Infrastructure as code",
+          "Cloud platforms",
+          "Observability",
+          "Deployment strategies",
+          "Secrets management",
+          "Incident response"
+        ],
+        "contribution_to_company": "Elias reduces the distance between writing code and operating it safely. His work improves deployment frequency, recovery time, environment consistency, and production visibility.",
+        "you_call_them_when": [
+          "Deployments work differently in every environment.",
+          "A release requires too many manual steps.",
+          "Nobody can explain why a production service is unhealthy.",
+          "Monitoring generates noise instead of useful alerts.",
+          "Infrastructure configuration has drifted.",
+          "The company needs a reliable rollback or disaster-recovery process."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Beaver",
+        "why": "He continuously builds, reinforces, repairs, and improves the infrastructure that everyone else depends on."
+      },
+      "image": {
+        "relative_url": "images/03_elias_mercer_devops_sre.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/03_elias_mercer_devops_sre.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "d395561677d9527ca99c3fc273aff6daf7a272b5bb2c33d1f6189d77e3661f80"
+      }
+    },
+    {
+      "id": "dr-mei-lin",
+      "full_name": "Dr. Mei Lin",
+      "role": {
+        "title": "Senior Data Scientist",
+        "years_of_experience": 10,
+        "experience_summary": "6 years of industry experience plus 4 years of academic research"
+      },
+      "short_description": "Mei transforms ambiguous business questions into measurable hypotheses, experiments, and predictive models. She is careful about separating genuine signal from attractive but misleading patterns.",
+      "tone": "Thoughtful, patient, evidence-first, and quietly skeptical. She is comfortable saying that the available data does not yet support a confident conclusion.",
+      "strengths": {
+        "fields_and_components": [
+          "Statistical modeling",
+          "Machine learning",
+          "Experimental design",
+          "Forecasting",
+          "Feature engineering",
+          "Model evaluation",
+          "Causal reasoning",
+          "Analytical visualization"
+        ],
+        "contribution_to_company": "Mei helps the company make decisions based on evidence rather than intuition alone. She also prevents teams from deploying models that perform well in a notebook but fail under real-world distribution shifts.",
+        "you_call_them_when": [
+          "The data appears to support several conflicting explanations.",
+          "A team needs to design an experiment or A/B test.",
+          "A predictive model performs well in validation but poorly in production.",
+          "Leadership wants a forecast with clearly stated uncertainty.",
+          "A metric is improving, but nobody understands why.",
+          "The company must determine whether an observed relationship is meaningful."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Owl",
+        "why": "She observes carefully, detects patterns others overlook, and prefers understanding the full situation before acting."
+      },
+      "image": {
+        "relative_url": "images/04_dr_mei_lin_senior_data_scientist.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/04_dr_mei_lin_senior_data_scientist.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "fe5c81902d57ef1bfd02c44f966e6be3d1b78af28ca1ee4c841f2ca5cfd45121"
+      }
+    },
+    {
+      "id": "nia-okafor",
+      "full_name": "Nia Okafor",
+      "role": {
+        "title": "Senior Cybersecurity Engineer",
+        "years_of_experience": 7,
+        "experience_summary": "7 years of experience"
+      },
+      "short_description": "Nia approaches security as an engineering discipline rather than a collection of last-minute checks. She looks for realistic attack paths, weak assumptions, excessive permissions, and operational blind spots.",
+      "tone": "Composed, concise, skeptical, and non-dramatic. She communicates risk clearly without using fear to win an argument.",
+      "strengths": {
+        "fields_and_components": [
+          "Threat modeling",
+          "Secure architecture",
+          "Identity and access management",
+          "Detection engineering",
+          "Vulnerability management",
+          "Incident response",
+          "Cloud security",
+          "Application security"
+        ],
+        "contribution_to_company": "Nia integrates security into product and infrastructure decisions early. This reduces expensive redesigns, prevents avoidable exposure, and helps engineering teams understand how attackers might misuse legitimate system capabilities.",
+        "you_call_them_when": [
+          "A new service will handle sensitive information.",
+          "An integration requests broad permissions.",
+          "Suspicious activity appears in logs.",
+          "A release introduces a new authentication or authorization flow.",
+          "The team needs a threat model before implementation.",
+          "A vulnerability report must be assessed and prioritized."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Falcon",
+        "why": "She maintains a wide field of view, detects small anomalies quickly, and responds decisively when a genuine threat appears."
+      },
+      "image": {
+        "relative_url": "images/05_nia_okafor_senior_cybersecurity_engineer.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/05_nia_okafor_senior_cybersecurity_engineer.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "901b9cc83426ae7f06211f8e637d9f79f8b7891ac91875764bff7676fe415fae"
+      }
+    },
+    {
+      "id": "sofia-moreno",
+      "full_name": "Sofia Moreno",
+      "role": {
+        "title": "Lead Product Designer",
+        "years_of_experience": 8,
+        "experience_summary": "8 years of experience"
+      },
+      "short_description": "Sofia converts complicated workflows into experiences that users can understand without extensive training. She combines research, interaction design, and strong visual direction with practical product judgment.",
+      "tone": "Warm, curious, expressive, and constructively challenging. She frequently asks what the user is trying to accomplish rather than what screen the team wants to build.",
+      "strengths": {
+        "fields_and_components": [
+          "User research",
+          "Information architecture",
+          "Interaction design",
+          "Prototyping",
+          "Visual design",
+          "Usability testing",
+          "Design systems",
+          "Accessibility"
+        ],
+        "contribution_to_company": "Sofia represents the user during product decisions. She helps the company avoid building technically impressive features that are difficult to discover, understand, or operate.",
+        "you_call_them_when": [
+          "Users repeatedly become lost in a workflow.",
+          "A feature is powerful but feels overwhelming.",
+          "Different parts of the product appear to belong to different applications.",
+          "The team needs to validate an idea before investing in development.",
+          "Product requirements describe screens but not user goals.",
+          "A workflow needs to serve both beginners and expert users."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Hummingbird",
+        "why": "She is visually sensitive, fast-moving, highly precise, and able to explore many alternatives before settling on the strongest design."
+      },
+      "image": {
+        "relative_url": "images/06_sofia_moreno_lead_product_designer.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/06_sofia_moreno_lead_product_designer.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "84e03d30826b663edadc117a8f01e2cb70c663a401312140a0d30c3b617eca13"
+      }
+    },
+    {
+      "id": "daniel-brooks",
+      "full_name": "Daniel Brooks",
+      "role": {
+        "title": "Senior QA Automation Engineer",
+        "years_of_experience": 7,
+        "experience_summary": "7 years of experience"
+      },
+      "short_description": "Daniel treats quality as a property of the entire development process, not merely a testing stage at the end. He is persistent, systematic, and especially good at reproducing failures that appear random.",
+      "tone": "Constructive, methodical, quietly persistent, and occasionally dry-humored.",
+      "strengths": {
+        "fields_and_components": [
+          "Test automation",
+          "Exploratory testing",
+          "Integration testing",
+          "Regression strategy",
+          "Performance validation",
+          "Test infrastructure",
+          "Release qualification",
+          "Defect analysis"
+        ],
+        "contribution_to_company": "Daniel makes releases predictable. He identifies fragile workflows, improves test coverage where it matters most, and distinguishes meaningful failures from noisy or unreliable test results.",
+        "you_call_them_when": [
+          "A bug cannot be reproduced consistently.",
+          "The automated test suite has become slow or flaky.",
+          "A major release needs a clear quality assessment.",
+          "The same category of defect keeps returning.",
+          "The team is unsure what should be tested automatically.",
+          "A production incident passed through every existing test layer."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Bloodhound",
+        "why": "He can follow faint evidence, reproduce elusive failures, and continue investigating long after others assume the trail has disappeared."
+      },
+      "image": {
+        "relative_url": "images/07_daniel_brooks_senior_qa_automation_engineer.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/07_daniel_brooks_senior_qa_automation_engineer.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "bc3421ef56a5c1ac9aac1494554ed2dc7e97f2ef0ff3c7f6c40490d3ec889920"
+      }
+    },
+    {
+      "id": "ravi-menon",
+      "full_name": "Ravi Menon",
+      "role": {
+        "title": "Principal Electronics and Hardware Engineer",
+        "years_of_experience": 20,
+        "experience_summary": "20 years of experience"
+      },
+      "short_description": "Ravi is an experienced hardware engineer who can move comfortably from circuit theory to laboratory debugging and production constraints. He designs for the physical world, where tolerances, noise, heat, suppliers, and manufacturing variation matter.",
+      "tone": "Patient, practical, mentor-like, and deliberately unhurried when decisions are difficult to reverse.",
+      "strengths": {
+        "fields_and_components": [
+          "PCB design",
+          "Embedded electronics",
+          "Component selection",
+          "Signal integrity",
+          "Power systems",
+          "Sensor integration",
+          "Hardware debugging",
+          "Design for manufacturing",
+          "Production test strategy"
+        ],
+        "contribution_to_company": "Ravi turns prototypes into robust, manufacturable products. He is especially valuable at the boundary between electrical design, firmware, mechanical constraints, and manufacturing processes.",
+        "you_call_them_when": [
+          "A board works on the bench but fails intermittently in the field.",
+          "A component must be replaced because of availability or cost.",
+          "Electrical noise is affecting sensors or communications.",
+          "A design must move from prototype to volume production.",
+          "Manufacturing yield is lower than expected.",
+          "The hardware and firmware teams disagree about the source of a failure."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Tortoise",
+        "why": "He is patient, resilient, deliberate, and focused on creating solutions that remain reliable for many years."
+      },
+      "image": {
+        "relative_url": "images/08_ravi_menon_principal_hardware_engineer.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/08_ravi_menon_principal_hardware_engineer.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "de20aaf5a5bceaa77171693fb0791274730940774724d33a7479f5b2ac04503e"
+      }
+    },
+    {
+      "id": "leila-haddad",
+      "full_name": "Leila Haddad",
+      "role": {
+        "title": "Chief Technology Officer",
+        "years_of_experience": 17,
+        "experience_summary": "17 years in technology, including 7 years in executive leadership"
+      },
+      "short_description": "Leila defines the company’s technology direction and ensures that architecture, talent, infrastructure, and product strategy support the same long-term objectives. She can discuss implementation details but avoids becoming the approval bottleneck for every technical decision.",
+      "tone": "Strategic, clear, calm, decisive, and intellectually demanding.",
+      "strengths": {
+        "fields_and_components": [
+          "Technology strategy",
+          "Platform architecture",
+          "AI and cloud investment",
+          "Technical organizational design",
+          "Build-versus-buy decisions",
+          "Engineering governance",
+          "Portfolio prioritization",
+          "Technical due diligence"
+        ],
+        "contribution_to_company": "Leila connects technology decisions to business outcomes. She protects the company from both underinvestment and unnecessary technical ambition, while ensuring that important architectural choices remain reversible where possible.",
+        "you_call_them_when": [
+          "The company is considering a major technology investment.",
+          "Several engineering groups are moving in conflicting directions.",
+          "Leadership must decide whether to build, buy, partner, or discontinue.",
+          "A platform decision will affect the next several years.",
+          "Technical debt is becoming a business constraint.",
+          "The board needs a clear explanation of technological opportunity and risk."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Eagle",
+        "why": "She maintains a wide strategic view while remaining capable of focusing sharply on the most important issue."
+      },
+      "image": {
+        "relative_url": "images/09_leila_haddad_cto.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/09_leila_haddad_cto.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "c2a1f442229535cb6df40caee40bac9fd8b3f369300d11775fc9099c4a3c9dd0"
+      }
+    },
+    {
+      "id": "marcus-reed",
+      "full_name": "Marcus Reed",
+      "role": {
+        "title": "Engineering Manager",
+        "years_of_experience": 14,
+        "experience_summary": "14 years in software engineering, including 5 years in management"
+      },
+      "short_description": "Marcus builds effective engineering teams by combining technical credibility with strong coaching and operational discipline. He creates clarity without micromanaging and takes team health as seriously as delivery performance.",
+      "tone": "Supportive, candid, structured, and approachable. He gives direct feedback without making it personal.",
+      "strengths": {
+        "fields_and_components": [
+          "Team development",
+          "Technical planning",
+          "Hiring",
+          "Performance coaching",
+          "Delivery management",
+          "Ownership models",
+          "Cross-functional communication",
+          "Conflict resolution"
+        ],
+        "contribution_to_company": "Marcus creates an environment in which engineers can do high-quality work predictably. He identifies unclear ownership, overloaded individuals, missing skills, and hidden communication problems before they become delivery crises.",
+        "you_call_them_when": [
+          "A team is working hard but still missing commitments.",
+          "Ownership between engineers or teams is unclear.",
+          "A strong engineer needs support developing leadership skills.",
+          "Collaboration has become tense or unproductive.",
+          "A team is accumulating burnout, interruptions, or operational burden.",
+          "A new team must be formed around an important initiative."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Shepherd dog",
+        "why": "He coordinates the group, protects it from avoidable disruption, notices when someone is falling behind, and keeps everyone moving toward the same destination."
+      },
+      "image": {
+        "relative_url": "images/10_marcus_reed_engineering_manager.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/10_marcus_reed_engineering_manager.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "ee38d166994a35634cd1b8250eb83fefb0a7025134d6fde4af78fe17e5f9479c"
+      }
+    },
+    {
+      "id": "elena-vargas",
+      "full_name": "Elena Vargas",
+      "role": {
+        "title": "Product Director",
+        "years_of_experience": 12,
+        "experience_summary": "12 years of experience"
+      },
+      "short_description": "Elena ensures that the company is solving meaningful customer problems rather than merely producing more features. She is comfortable balancing customer evidence, commercial opportunity, technical constraints, and long-term product positioning.",
+      "tone": "Persuasive, curious, outcome-focused, energetic, and comfortable challenging assumptions.",
+      "strengths": {
+        "fields_and_components": [
+          "Product strategy",
+          "Market discovery",
+          "Roadmap development",
+          "Customer research",
+          "Prioritization",
+          "Value propositions",
+          "Product metrics",
+          "Stakeholder alignment",
+          "Go-to-market coordination"
+        ],
+        "contribution_to_company": "Elena brings discipline to product choices. She helps the company understand which opportunities deserve investment, what success should look like, and what should intentionally not be built.",
+        "you_call_them_when": [
+          "The roadmap contains more work than the organization can realistically deliver.",
+          "Stakeholders disagree about which customer problem matters most.",
+          "A feature request is popular internally but weakly supported by evidence.",
+          "The product needs a clearer market position.",
+          "A team is measuring output rather than customer or business outcomes.",
+          "Leadership needs to decide whether to expand, redesign, or discontinue a product area."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Dolphin",
+        "why": "She is intelligent, highly communicative, socially perceptive, and skilled at navigating complex environments with a group."
+      },
+      "image": {
+        "relative_url": "images/11_elena_vargas_product_director.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/11_elena_vargas_product_director.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "68344efcf205bbf2ba0563596bdd56e5bb5bc8511aa346af0bb20a4ef5dbd075"
+      }
+    },
+    {
+      "id": "omar-rahman",
+      "full_name": "Omar Rahman",
+      "role": {
+        "title": "Principal Technical Program Manager",
+        "years_of_experience": 11,
+        "experience_summary": "11 years of experience"
+      },
+      "short_description": "Omar coordinates complicated initiatives involving multiple engineering teams, vendors, milestones, and dependencies. His main skill is transforming a large, ambiguous program into visible decisions, accountable owners, and manageable execution paths.",
+      "tone": "Organized, specific, composed, low-drama, and persistent.",
+      "strengths": {
+        "fields_and_components": [
+          "Dependency management",
+          "Milestone planning",
+          "Program governance",
+          "Risk registers",
+          "Cross-team coordination",
+          "Release readiness",
+          "Status reporting",
+          "Operational planning",
+          "Executive communication"
+        ],
+        "contribution_to_company": "Omar makes complexity manageable. He does not replace engineering or product ownership; instead, he ensures that interdependent teams make decisions at the right time and understand the consequences of delay.",
+        "you_call_them_when": [
+          "A program involves several teams with shared dependencies.",
+          "A critical deadline has little room for coordination failure.",
+          "Every team appears on schedule individually, but the overall program is slipping.",
+          "Important decisions lack clear owners or deadlines.",
+          "Leadership needs an accurate status without excessive reporting overhead.",
+          "A launch requires technical, legal, operational, and commercial readiness."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Ant",
+        "why": "He understands coordination, sequence, shared dependencies, and how many small contributions combine into a large successful outcome."
+      },
+      "image": {
+        "relative_url": "images/12_omar_rahman_principal_tpm.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/12_omar_rahman_principal_tpm.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "f63d93b53234649c9d35f571f00f927bda80c76d8943a7dfce7ae2ed2928893c"
+      }
+    },
+    {
+      "id": "dr-maya-chen",
+      "full_name": "Dr. Maya Chen",
+      "role": {
+        "title": "Vice President of Data and Analytics",
+        "years_of_experience": 15,
+        "experience_summary": "15 years of experience"
+      },
+      "short_description": "Maya establishes how the company collects, governs, interprets, and applies data. She is equally comfortable discussing executive KPIs, analytics platforms, experimentation, and machine-learning investments.",
+      "tone": "Measured, evidence-led, executive-friendly, and rigorous about definitions.",
+      "strengths": {
+        "fields_and_components": [
+          "Data strategy",
+          "Analytics engineering",
+          "KPI governance",
+          "Experimentation platforms",
+          "Business intelligence",
+          "Machine-learning portfolios",
+          "Data quality",
+          "Organizational data literacy",
+          "Decision science"
+        ],
+        "contribution_to_company": "Maya creates a trustworthy decision system for the company. Her work reduces arguments about whose numbers are correct and shifts conversations toward what the numbers mean and what action should follow.",
+        "you_call_them_when": [
+          "Different departments report different values for the same KPI.",
+          "Leadership needs to define the company’s primary operating metrics.",
+          "The business is investing in data infrastructure without a clear strategy.",
+          "An analytics team is producing reports but not changing decisions.",
+          "The company must choose between dashboard, experimentation, and machine-learning priorities.",
+          "A major decision requires reliable evidence across several data sources."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Raven",
+        "why": "She recognizes patterns, remembers complex relationships, adapts quickly, and can use information creatively rather than merely collecting it."
+      },
+      "image": {
+        "relative_url": "images/13_dr_maya_chen_vp_data_analytics.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/13_dr_maya_chen_vp_data_analytics.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "15a0418c3fa0ea4f6431a0dd7cc1ed282675436df63c10a98bb928935f3f131f"
+      }
+    },
+    {
+      "id": "adrian-cole",
+      "full_name": "Adrian Cole",
+      "role": {
+        "title": "Chief Information Security Officer",
+        "years_of_experience": 18,
+        "experience_summary": "18 years of experience"
+      },
+      "short_description": "Adrian manages security as an enterprise risk and trust function. He balances prevention, detection, response, compliance, customer expectations, and business continuity without treating every risk as equally urgent.",
+      "tone": "Calm, authoritative, risk-based, concise, and never alarmist.",
+      "strengths": {
+        "fields_and_components": [
+          "Security strategy",
+          "Governance",
+          "Incident response",
+          "Zero-trust architecture",
+          "Regulatory compliance",
+          "Third-party risk",
+          "Business continuity",
+          "Executive communication",
+          "Security program maturity"
+        ],
+        "contribution_to_company": "Adrian protects the company’s ability to operate and retain trust. He translates highly technical security issues into business decisions and ensures that security investment is proportional to actual exposure.",
+        "you_call_them_when": [
+          "A serious security incident may affect customers or business operations.",
+          "The company is entering a regulated market.",
+          "A major customer requests evidence of security controls.",
+          "A vendor or acquisition introduces significant third-party risk.",
+          "Leadership must accept, reduce, transfer, or avoid a material risk.",
+          "Security teams and business teams cannot agree on an appropriate response."
+        ]
+      },
+      "animal_analogy": {
+        "animal": "Wolf",
+        "why": "He is vigilant, strategic, protective of the group, and understands that security depends on coordinated behavior rather than individual strength alone."
+      },
+      "image": {
+        "relative_url": "images/14_adrian_cole_ciso.png",
+        "sandbox_url": "sandbox:/mnt/data/tech_company_roster/images/14_adrian_cole_ciso.png",
+        "format": "PNG",
+        "width_px": 1254,
+        "height_px": 1254,
+        "sha256": "757d2c47b58b911ca13468966ebe297d27deb4417d333ef62568105dcdb0310b"
+      }
+    }
+  ]
+}

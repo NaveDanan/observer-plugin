@@ -6,6 +6,7 @@ import type {
   SessionSnapshot,
   StoredEvent,
 } from "@observer-ai/protocol"
+import type { RosterProfile } from "@observer-ai/roster"
 
 export interface Bootstrap {
   token: string
@@ -51,6 +52,10 @@ export function getSnapshot(sessionId: string): Promise<SessionSnapshot> {
 
 export function getAgentDetail(agentId: string): Promise<AgentDetail> {
   return request(`/v1/agents/${encodeURIComponent(agentId)}`)
+}
+
+export function getRoster(): Promise<{ profiles: RosterProfile[] }> {
+  return request("/v1/roster")
 }
 
 export function getRawEvents(sessionId: string): Promise<{ events: StoredEvent[] }> {

@@ -227,3 +227,66 @@ describe("HTTP API", () => {
     ])
   })
 })
+
+describe("Snapshot running tools", () => {
+  it("reports the running tool call per agent in the snapshot", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const broadcaster = new Broadcaster()
+    const app = await createServer({ store, pipeline, config, broadcaster, webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+
+    // Start a tool
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PreToolUse",
+      deliveryId: "d1",
+      payload: { session_id: "s1", tool_name: "Bash", tool_use_id: "t1", tool_input: { command: "sleep 10" } },
+    })
+
+    let snapshot = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${encodeURIComponent("claude:s1")}`,
+      headers: { authorization: `Bearer ${config.token}` },
+    })
+    let body = snapshot.json()
+    const agentId = body.agents[0].id
+    expect(body.runningTools[agentId]?.tool).toBe("Bash")
+    expect(body.runningTools[agentId]?.status).toBe("running")
+
+    // Finish it
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PostToolUse",
+      deliveryId: "d2",
+      payload: { session_id: "s1", tool_name: "Bash", tool_use_id: "t1", tool_input: {}, tool_response: "done" },
+    })
+
+    snapshot = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${encodeURIComponent("claude:s1")}`,
+      headers: { authorization: `Bearer ${config.token}` },
+    })
+    body = snapshot.json()
+    expect(body.runningTools[agentId]).toBeNull()
+
+    // Agent that never ran a tool reports null
+    pipeline.ingestHook({
+      host: "claude",
+      event: "SubagentStart",
+      deliveryId: "d3",
+      payload: { session_id: "s1", agent_id: "a1", agent_type: "Explore" },
+    })
+    snapshot = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${encodeURIComponent("claude:s1")}`,
+      headers: { authorization: `Bearer ${config.token}` },
+    })
+    body = snapshot.json()
+    const subId = body.agents.find((a: { agentKey: string }) => a.agentKey === "agent:a1")?.id
+    expect(body.runningTools[subId]).toBeNull()
+  })
+})

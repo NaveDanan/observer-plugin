@@ -14,15 +14,29 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
 
 - **A live agent graph.** Parent and child agents, with edges showing who
   delegated to whom.
+- **A company roster on every node.** Observer seats each agent as an employee
+  from a fixed cast of 14 profiles — the matcher reads the task text and picks
+  the best fit (the SRE for deployment trouble, QA for flaky tests, security
+  for threat models). Nodes show the employee's photo, name, tone and top
+  strengths; clicking a node opens their worker card on the left, with chat
+  history, tool calls and todos on the right.
+- **Guidance back to the model.** The OpenCode plugin offers the roster to the
+  root agent as subagent staffing: who is on the team, what each employee is
+  strong at, and when to reach for them. When a subagent is spawned it appends
+  a persona directive — name, tone, strengths — and records the seated
+  employee as the node's type; a subagent run without an employee is typed
+  `subcontractor` (`"guidance": false` in `~/.observer/config.json` turns this
+  off). Typing **`@observer`** in a message activates staffing for that
+  session on demand — even with guidance off — and `@observer off` disables it
+  again.
 - **Per-node model attribution.** Each node names the model it is running, and
   says so plainly when the host never reported one.
-- **Double-click for detail.** Prompt context, live chat history, that agent's
-  todo list, and its tool calls.
 - **Session goal and todos on the canvas** so the overall objective stays
   visible while subagents come and go.
 - **Honest fidelity.** Every host exposes different data. Observer labels each
   connection and prompt as `authoritative`, `reconciled` or `inferred`, and
-  never invents the parts a host does not expose.
+  never invents the parts a host does not expose — including employee seating:
+  no lexical match, no persona.
 
 ---
 
@@ -125,6 +139,7 @@ Two rules shape the whole design:
 | Path                     | Purpose                                                  |
 | ------------------------ | -------------------------------------------------------- |
 | `packages/protocol`      | Event schemas, entities, per-host capability declarations |
+| `packages/roster`        | Employee profiles, task→employee matcher, persona directives |
 | `packages/core`          | Reducer, status normalisation, secret redaction           |
 | `packages/storage`       | SQLite migrations, event log, entity projection           |
 | `packages/adapters`      | One translator per host                                   |

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NJ-LABS • Employee Card Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">N</div>
+      <div>
+        <div class="brand-title">NJ-LABS TECHNOLOGIES</div>
+        <div class="brand-subtitle">Employee Card Generator</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <a href="company_roster.json" target="_blank" rel="noopener">Roster JSON</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Controls -->
+    <section class="controls">
+      <h1>Build an employee card</h1>
+      <p class="muted">Select an employee — the template <code>emploee-card.png</code> is filled automatically. The portrait keeps its aspect ratio and sits on the bottom of the frame, zoomed out so the side artwork stays visible.</p>
+
+      <label class="label" for="employeeSelect">Employee</label>
+      <select id="employeeSelect" class="select"></select>
+
+      <div id="details" class="details"></div>
+
+      <div class="actions">
+        <button id="downloadBtn" class="btn primary">Download PNG</button>
+        <button id="printBtn" class="btn">Print</button>
+      </div>
+      <p class="hint">Tip: Downloaded PNG is rendered on a <code>&lt;canvas&gt;</code> at the native 1023×1537 of the template so it stays crisp for printing.</p>
+    </section>
+
+    <!-- Card preview -->
+    <section class="preview">
+      <div class="card-wrap">
+        <div id="card" class="card">
+          <!-- base template -->
+          <img id="cardTemplate" class="card-template" src="emploee-card.png" alt="NJ-LABS card template" />
+
+          <!-- photo overlay -->
+          <div class="photo-frame" aria-hidden="true">
+            <img id="photoImg" class="photo-img" alt="Employee portrait" />
+          </div>
+
+          <!-- name above ROLE — like NJ-LABS reference (Maya Chen large, above the line) -->
+          <div id="nameStack" class="name-stack" aria-label="Employee name">
+            <div id="nameMain" class="name-main"></div>
+          </div>
+
+          <!-- pill texts -->
+          <div id="pillRole" class="pill pill-role"></div>
+          <div id="pillDept" class="pill pill-dept"></div>
+          <div id="pillId" class="pill pill-id"></div>
+          <div id="pillAccess" class="pill pill-access"></div>
+        </div>
+      </div>
+      <p class="preview-caption">Live preview — exactly what the PNG will contain.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Template: <code>emploee-card.png</code> (1023×1537) • Profile images: <code>images/*</code> • Data: <code>company_roster.json:1</code></span>
+  </footer>
+
+  <!-- hidden canvas for export -->
+  <canvas id="exportCanvas" width="1023" height="1537" style="display:none"></canvas>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import websocket from "@fastify/websocket"
 import { HOST_CAPABILITIES, HostId, IngestBatch, PROTOCOL_VERSION } from "@observer-ai/protocol"
 import type { AgentDetail, SessionSnapshot } from "@observer-ai/protocol"
+import { behaviorDirective, ROSTER, rankEmployees } from "@observer-ai/roster"
 import type { Store } from "@observer-ai/storage"
 import { z } from "zod"
 import type { ObserverConfig } from "./config.js"
@@ -185,6 +186,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       edges: store.listEdges(session.id),
       todos: store.listSessionTodos(session.id),
       counts: store.countsByAgent(session.id),
+      runningTools: store.runningToolsByAgent(session.id),
     }
     return reply.send(snapshot)
   })
@@ -212,6 +214,37 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       promptFragments: store.listPromptFragments(agent.id),
     }
     return reply.send(detail)
+  })
+
+  /**
+   * The employee roster and the task matcher behind it.
+   *
+   * The UI renders these profiles on nodes and worker cards; the OpenCode
+   * plugin calls /match to seat the right persona on a delegated task and
+   * receives a ready-to-append behaviour directive.
+   */
+  app.get("/v1/roster", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    return reply.send({ profiles: ROSTER })
+  })
+
+  app.post("/v1/roster/match", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    const parsed = z
+      .object({ task: z.string().max(20_000), limit: z.number().int().min(1).max(14).optional() })
+      .safeParse(request.body)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid match request" })
+    const matches = rankEmployees(parsed.data.task, parsed.data.limit ?? 3)
+    return reply.send({
+      matches: matches.map((match) => ({
+        id: match.profile.id,
+        fullName: match.profile.fullName,
+        title: match.profile.title,
+        score: match.score,
+        reasons: match.reasons,
+        directive: behaviorDirective(match.profile, parsed.data.task),
+      })),
+    })
   })
 
   app.get("/v1/stream", { websocket: true }, (socket, request) => {

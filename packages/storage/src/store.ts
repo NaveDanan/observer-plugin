@@ -504,6 +504,30 @@ export class Store implements EntityStore {
     }
     return counts
   }
+
+  /**
+   * The tool call currently running for each agent in a session, if any.
+   *
+   * Not folded into countsByAgent: a method named for counts that also returns
+   * a tool call would be one name doing two jobs.
+   */
+  runningToolsByAgent(sessionId: string): Record<string, ToolCallEntity | null> {
+    const result: Record<string, ToolCallEntity | null> = {}
+    for (const agent of this.listAgents(sessionId)) result[agent.id] = null
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tool_calls WHERE session_id = ? AND status = 'running' ORDER BY started_at DESC`,
+      )
+      .all(sessionId) as Row[]
+    const seen = new Set<string>()
+    for (const row of rows) {
+      const tool = toToolCall(row)
+      if (seen.has(tool.agentId)) continue
+      seen.add(tool.agentId)
+      result[tool.agentId] = tool
+    }
+    return result
+  }
 }
 
 // ------------------------------------------------------------------ mappers

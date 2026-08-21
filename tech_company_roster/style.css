@@ -1,0 +1,168 @@
+:root{
+  --bg:#0a0a0f;
+  --panel:#12112a;
+  --panel-2:#171441;
+  --text:#eef2ff;
+  --muted:#a5a3c0;
+  --purple:#2a1a7a;
+  --accent:#7a5cff;
+  --accent-2:#00d4ff;
+  --pink:#ff2e9a;
+  --border:#2a2560;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;}
+a{color:var(--accent-2)}
+code{background:#1e1c3a;padding:2px 6px;border-radius:6px;font-size:.85em;color:#c7c5ff}
+
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--border);background:#0f0e1e;position:sticky;top:0;z-index:10;
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand-mark{
+  width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,#3a2bd6 0%,#00d4ff 100%);
+  display:grid;place-items:center;font-weight:900;color:white;letter-spacing:.5px;
+  box-shadow:0 4px 14px rgba(0,0,0,.35);font-size:20px;
+}
+.brand-title{font-weight:800;letter-spacing:.12em;font-size:14px}
+.brand-subtitle{color:var(--muted);font-size:12px;letter-spacing:.08em}
+.top-actions{font-size:13px}
+
+.layout{
+  display:grid;grid-template-columns:420px 1fr;gap:24px;
+  max-width:1200px;margin:24px auto;padding:0 18px;
+}
+@media (max-width:900px){.layout{grid-template-columns:1fr}}
+
+.controls{
+  background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:18px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+.controls h1{margin:0 0 8px;font-size:20px}
+.muted{color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 14px}
+.label{display:block;font-size:12px;letter-spacing:.08em;color:var(--muted);margin:12px 0 6px;font-weight:700}
+.select{
+  width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--border);
+  background:var(--panel-2);color:var(--text);font-size:14px;outline:none;
+}
+.select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(122,92,255,.2)}
+.details{
+  margin-top:14px;background:#0f0e23;border:1px solid var(--border);border-radius:12px;padding:12px;
+  font-size:13px;line-height:1.5;
+}
+.details h3{margin:0 0 6px;font-size:13px;letter-spacing:.06em;color:white}
+.details .field{margin:6px 0}
+.details .tag{display:inline-block;background:#201c4a;border:1px solid #2e2a72;color:#c9c6ff;padding:2px 7px;border-radius:999px;font-size:11px;margin:2px 4px 2px 0}
+.actions{display:flex;gap:10px;margin-top:14px}
+.btn{flex:1;padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:#1a1840;color:var(--text);font-weight:700;cursor:pointer}
+.btn.primary{background:linear-gradient(135deg,#6a5bff 0%,#00d4ff 100%);color:#0b0b12;border-color:transparent;box-shadow:0 6px 18px rgba(106,91,255,.35)}
+.btn:hover{filter:brightness(1.05)}
+.btn:active{transform:translateY(1px)}
+.hint{color:#8f8cb3;font-size:11px;margin-top:8px;line-height:1.4}
+
+.preview{display:flex;flex-direction:column;align-items:center;gap:10px}
+.card-wrap{
+  width:100%;display:flex;justify-content:center;
+}
+.card{
+  position:relative;
+  width:100%;
+  max-width:420px;
+  aspect-ratio:1023 / 1537;
+  background:#0a0a14;
+  border-radius:18px;
+  overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(122,92,255,.25) inset;
+}
+.card-template{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;user-select:none;pointer-events:none;
+}
+
+/* Photo: measured from template: left 112, top 486, right 530, bottom 1060 on 1023x1537 */
+.photo-frame{
+  position:absolute;
+  left:10.947%;   /* 112/1023 */
+  top:31.625%;    /* 486/1537 */
+  width:40.864%;  /* (530-112)/1023 */
+  height:37.347%; /* (1060-486)/1537 */
+  overflow:hidden;
+  border-radius:14px;
+  /* subtle inner border to match template's light purple edge */
+  box-shadow:0 0 0 2px rgba(122,92,255,.55) inset;
+  background: var(--photo-bg, #1a1740);
+}
+/* Portrait geometry (must stay in sync with PHOTO_ZOOM in app.js).
+   Source images are square (1254x1254); frame is portrait 418x574.
+   Plain `cover` scales to 574 and crops ~27% off each side, hiding the
+   side components. We scale to 80% of cover (459x459) and pin the image
+   to the frame bottom, so the subject sits on the frame edge instead of
+   floating, and only ~5% is trimmed per side. The 115px gap left at the
+   top is filled by --photo-bg, a gradient sampled from the portrait's
+   own top edge (see paintPhotoBackdrop in app.js). */
+.photo-img{
+  position:absolute;
+  left:50%;
+  bottom:0;
+  transform:translateX(-50%);
+  width:109.81%;   /* 459/418 */
+  height:79.97%;   /* 459/574 */
+  object-fit:cover;  /* square source into square box: never warps */
+  display:block;
+}
+
+/* name above ROLE — matches DATAVISTA reference: large, white, left-aligned, above the thin line */
+.name-stack{
+  position:absolute;
+  left:57.67%;   /* 590/1023 to sit slightly left of pills (652) like reference */
+  top:32.85%;    /* 505/1537 — aligned with photo top, above the 611px line */
+  width:33%;     /* ~337px at native, allows two-line wrap */
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;
+  pointer-events:none;
+}
+.name-main{
+  color:white;
+  font-weight:900;
+  font-size:22px;          /* ~52px at native 1023 → 22px at 420px card */
+  line-height:0.95;
+  letter-spacing:-0.03em;
+  text-shadow:0 1px 0 rgba(0,0,0,.75), 0 4px 14px rgba(0,0,0,.45);
+  white-space:normal;
+  overflow:hidden;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+}
+
+/* Pills: left 63.733% (652/1023), width 26% (266/1023), height 2.73% (42/1537) */
+.pill{
+  position:absolute;
+  left:63.733%;
+  width:26.1%;
+  height:2.73%;
+  display:flex;align-items:center;justify-content:center;
+  color:white;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  padding:0 8px;
+  pointer-events:none;
+  /* no background — let template's pill show, just text with subtle glow for legibility */
+  text-shadow:0 1px 4px rgba(0,0,0,.6);
+}
+.pill-role{top:44.1%}
+.pill-dept{top:52.12%}
+.pill-id{top:59.45%}
+.pill-access{top:67.05%}
+
+.preview-caption{color:var(--muted);font-size:12px}
+
+.footer{
+  max-width:1200px;margin:18px auto 30px;padding:0 18px;color:#8f8cb3;font-size:12px;text-align:center;
+}
+
+@media (max-width:480px){
+  .name-text{font-size:11px}
+  .pill{font-size:7.5px}
+}
