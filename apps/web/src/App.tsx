@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react"
+import { Suspense, lazy, useEffect, useState } from "react"
 import { SettingsIcon } from "lucide-react"
 import { Canvas } from "./Canvas"
-import { DetailPanel } from "./DetailPanel"
 import { EmployeeCardModal } from "./EmployeeCardModal"
-import { WorkerCard } from "./WorkerCard"
+import { SessionSidebar, useSidebarCollapsed } from "./SessionSidebar"
 import { SettingsPage, isSettingsTab, type SettingsTab } from "./settings/SettingsPage"
 import type { DeliveryDiagnostics } from "./api"
 import {
@@ -32,11 +31,23 @@ import {
   type AgentFilterMode,
 } from "./store"
 
+/**
+ * The activity panel, fetched on first use.
+ *
+ * It only mounts once an agent is selected, and it drags the whole markdown
+ * pipeline behind it — a parser, GFM, and the transcript renderers. None of
+ * that is needed to draw the canvas, which is what the first paint is for, so
+ * it stays out of the entry chunk and arrives on the click that needs it. The
+ * daemon is on localhost, so that fetch is not a meaningful wait.
+ */
+const DetailPanel = lazy(() => import("./DetailPanel").then((m) => ({ default: m.DetailPanel })))
+
 export function App(): JSX.Element {
   useStoreVersion()
   const state = getState()
   const now = Date.now()
   const settingsTab = useSettingsRoute()
+  const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
 
   useEffect(() => {
     void initialise()
@@ -115,7 +126,7 @@ export function App(): JSX.Element {
           )}
           {session && (
             <span className="tip-pill">
-              {selectedAgent ? "Double-click an Agent for their ID card" : "Click an Agent for its Worker card"}
+              {selectedAgent ? "Double-click an Agent for their ID card" : "Click an Agent to open its panel"}
             </span>
           )}
           {boundHost && (
@@ -148,120 +159,21 @@ export function App(): JSX.Element {
       )}
 
       <div className="body">
-        <nav className="sidebar" aria-label="Agent sessions">
-          <div className="section-header">
-            <span>Agent sessions</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <circle cx="5" cy="6" r="2.5" />
-              <circle cx="19" cy="6" r="2.5" />
-              <circle cx="12" cy="18" r="2.5" />
-              <path d="M6.5 8l4 8M17.5 8l-4 8" />
-            </svg>
-          </div>
-
-          <div className="session-list">
-            {sessions.length === 0 && (
-              <p className="muted small" style={{ padding: "8px" }}>
-                No agent sessions captured yet.
-              </p>
-            )}
-            {sessions.map((entry) => {
-              const isActive = entry.id === session?.id
-              const hostLabel =
-                entry.host === "opencode"
-                  ? "OpenCode"
-                  : entry.host === "claude"
-                    ? "Claude"
-                    : entry.host === "codex"
-                      ? "Codex"
-                      : entry.host
-              const liveCount = isActive
-                ? agents.filter((a) => a.status === "running" || a.status === "starting").length
-                : 0
-              return (
-                <div
-                  key={entry.id}
-                  className={`session-item ${isActive ? "is-active" : ""}`}
-                  onClick={() => void selectSession(entry.id)}
-                >
-                  <div className="session-title">{entry.title ?? entry.goal ?? entry.sessionKey}</div>
-                  <div className="session-meta">
-                    <span className="host-tag">{hostLabel}</span>
-                    <span>{new Date(entry.updatedAt).toLocaleDateString()}</span>
-                    {isActive && agents.length > 0 && (
-                      <span className="diff-badge">
-                        <span className="diff-add">
-                          {agents.length} agent{agents.length === 1 ? "" : "s"}
-                          {liveCount > 0 ? ` · ${liveCount} live` : ""}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-
-                  {isActive && agents.length > 0 && (
-                    <div className="agent-mini-list">
-                      {agents.map((agent) => {
-                        const match = matches.get(agent.id)
-                        const name = match?.profile.fullName ?? agent.displayName ?? agent.agentType
-                        return (
-                          <button
-                            key={agent.id}
-                            className={`agent-mini${agent.id === state.selectedAgentId ? " is-selected" : ""}`}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void selectAgent(agent.id)
-                            }}
-                            title={`${name} — ${agent.status}`}
-                          >
-                            {match ? (
-                              <img className="agent-mini-photo" src={match.profile.imageUrl} alt="" draggable={false} />
-                            ) : (
-                              <span className="agent-mini-photo agent-mini-initials">{initialsOf(name)}</span>
-                            )}
-                            <span className="agent-mini-name">{name}</span>
-                            <span className={`dot status-${agent.status}`} aria-hidden="true" />
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  {isActive && (
-                    <button
-                      className="danger small"
-                      style={{ marginTop: "6px" }}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void removeSession(entry.id)
-                      }}
-                    >
-                      Delete session
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="sidebar-footer">
-            <div className="connection-row">
-              <span className={`status-pill status-${state.connection}`}>{state.connection}</span>
-              <span className="muted small">{boundHost ? boundHost.label : "all hosts"}</span>
-            </div>
-          </div>
-        </nav>
-
-        {selectedAgent && (
-          <WorkerCard
-            agent={selectedAgent}
-            match={matches.get(selectedAgent.id)}
-            messages={selectMessages(state, selectedAgent.id)}
-            toolCalls={selectToolCalls(state, selectedAgent.id)}
-            todos={selectTodos(state, selectedAgent.id)}
-            onOpenCard={() => openCard(selectedAgent.id)}
-            onClose={() => void selectAgent(undefined)}
-          />
-        )}
+        <SessionSidebar
+          sessions={sessions}
+          activeSessionId={session?.id}
+          agents={agents}
+          matches={matches}
+          selectedAgentId={state.selectedAgentId}
+          connection={state.connection}
+          boundHostLabel={boundHost?.label}
+          now={now}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebar}
+          onSelectSession={(id) => void selectSession(id)}
+          onSelectAgent={(id) => void selectAgent(id)}
+          onRemoveSession={(id) => void removeSession(id)}
+        />
 
         <main className="stage">
           {session ? (
@@ -295,16 +207,21 @@ export function App(): JSX.Element {
         </main>
 
         {selectedAgent && (
-          <DetailPanel
-            agent={selectedAgent}
-            match={matches.get(selectedAgent.id)}
-            messages={selectMessages(state, selectedAgent.id)}
-            toolCalls={selectToolCalls(state, selectedAgent.id)}
-            todos={selectTodos(state, selectedAgent.id)}
-            promptFragments={selectPromptFragments(state, selectedAgent.id)}
-            capabilities={capabilities}
-            onClose={() => void selectAgent(undefined)}
-          />
+          /* The fallback is the panel's own empty shell, not a spinner: the
+             layout must not shift when the real one arrives. */
+          <Suspense fallback={<aside className="panel" aria-busy="true" />}>
+            <DetailPanel
+              agent={selectedAgent}
+              match={matches.get(selectedAgent.id)}
+              messages={selectMessages(state, selectedAgent.id)}
+              toolCalls={selectToolCalls(state, selectedAgent.id)}
+              todos={selectTodos(state, selectedAgent.id)}
+              promptFragments={selectPromptFragments(state, selectedAgent.id)}
+              capabilities={capabilities}
+              onOpenCard={() => openCard(selectedAgent.id)}
+              onClose={() => void selectAgent(undefined)}
+            />
+          </Suspense>
         )}
       </div>
 
@@ -403,9 +320,4 @@ function nodeElement(agentId: string): () => HTMLElement | null {
 function topFaultHosts(diagnostics: DeliveryDiagnostics): string {
   const hosts = [...new Set(diagnostics.recent.map((entry) => entry.host))].slice(0, 3)
   return hosts.length > 0 ? ` (${hosts.join(", ")})` : ""
-}
-
-function initialsOf(name: string): string {
-  const parts = name.replace(/^Dr\.\s*/, "").split(/\s+/).filter(Boolean)
-  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase()
 }

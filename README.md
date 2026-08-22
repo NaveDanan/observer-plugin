@@ -18,8 +18,8 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
   from a fixed cast of 14 profiles — the matcher reads the task text and picks
   the best fit (the SRE for deployment trouble, QA for flaky tests, security
   for threat models). Nodes show the employee's photo, name, tone and top
-  strengths; clicking a node opens their worker card on the left, with chat
-  history, tool calls and todos on the right.
+  strengths; clicking a node opens a panel on the right with their profile,
+  the chat transcript (tool calls interleaved), the prompt and todos.
 - **Guidance back to the model.** The OpenCode plugin offers the roster to the
   root agent as subagent staffing: who is on the team, what each employee is
   strong at, and when to reach for them. When a subagent is spawned it appends

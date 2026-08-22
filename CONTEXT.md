@@ -80,7 +80,15 @@ status from the parent's finished `task` call, or the child session going `idle`
 not finished.
 _Avoid_: Done, ended
 
-**Worker card**:
-The left-hand panel that opens with a node click: the employee's profile and why they were
-seated. Activity (chat, tools, todos) stays in the right-hand panel.
-_Avoid_: Profile panel, detail panel (that is the right side)
+**Detail panel**:
+The right-hand panel that opens with a node click, and the only surface that answers questions
+about one agent. Four tabs: **Profile** (the seated employee and why they were seated), **Chat**
+(the transcript, with tool calls interleaved into it), **Prompt**, and **Todos**.
+_Avoid_: Worker card (this was a separate left-hand panel until the profile was folded in here),
+activity panel (the panel is no longer only about activity)
+
+**Transcript**:
+The Chat tab's merged view of an agent's messages *and* its tool calls, ordered so a run of calls
+sits between the messages it happened between. Built by `buildTimeline`. There is no Tools tab —
+a tool call read apart from the sentence that explains it is the thing this merge exists to fix.
+_Avoid_: Thread (that is the `<ol>` inside it), tool log

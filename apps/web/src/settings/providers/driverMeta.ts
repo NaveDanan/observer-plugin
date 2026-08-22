@@ -10,24 +10,35 @@
  */
 
 import { HOST_CAPABILITIES } from "@observer-ai/protocol"
-import { BotIcon, BracesIcon, SparklesIcon, TerminalIcon, type LucideIcon } from "lucide-react"
+import { BotIcon } from "lucide-react"
+import { PROVIDER_ICON, type ProviderIcon } from "../../Icons"
+
+/**
+ * A provider's mark.
+ *
+ * Widened from `LucideIcon` so the real vendor marks can be used where they
+ * exist. Both sides render as `<Icon className="size-4" />`, and Tailwind's
+ * `size-*` beats the SVG's own `width`/`height` attributes, so the two kinds
+ * are interchangeable at every call site.
+ */
+export type DriverIcon = ProviderIcon | typeof BotIcon
 
 export interface DriverOption {
   /** The driver id, which is also the key of the host's default instance. */
   id: string
   label: string
-  icon: LucideIcon
+  icon: DriverIcon
   /** One line of what `observer install <driver>` writes, for help text. */
   installHint: string
   notes: readonly string[]
 }
 
-const DRIVER_ICONS: Record<string, LucideIcon> = {
-  opencode: TerminalIcon,
-  codex: BracesIcon,
-  claude: SparklesIcon,
-  copilot: BotIcon,
-}
+/**
+ * The vendors' own marks, shared with the session list so a host looks the
+ * same everywhere it is named. `BotIcon` remains the fallback for a driver
+ * this build has no artwork for — see `getDriverOption`.
+ */
+const DRIVER_ICONS: Partial<Record<string, DriverIcon>> = PROVIDER_ICON
 
 const INSTALL_HINTS: Record<string, string> = {
   opencode: "Installs an in-process plugin at ~/.config/opencode/plugins/observer.js.",

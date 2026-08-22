@@ -315,6 +315,12 @@
   background: var(--sidebar);
   color: var(--sidebar-foreground);
   border-right: 1px solid var(--sidebar-border);
+  transition: width 180ms ease;
+}
+/* Folded to a rail rather than hidden: 48px keeps every session one click
+   away and keeps the toggle in a fixed place, so re-opening is never a hunt. */
+.sidebar.is-collapsed {
+  width: 48px;
 }
 
 .section-header {
@@ -326,6 +332,67 @@
   font-weight: 500;
   color: var(--sidebar-muted-foreground);
 }
+.sidebar.is-collapsed .section-header {
+  justify-content: center;
+  padding: 14px 0 8px;
+}
+/* The one control that must stay reachable in both states, so it never
+   inherits the row hover treatment that would tie it to a session. */
+.sidebar-toggle {
+  flex: none;
+  color: var(--sidebar-muted-foreground);
+}
+.sidebar-toggle:hover {
+  color: var(--sidebar-foreground);
+}
+
+/* ------------------------------------------------------------ rail form -- */
+.session-rail {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 8px;
+  /* The rail is 48px wide; a visible scrollbar would eat a third of it. */
+  scrollbar-width: none;
+}
+.session-rail::-webkit-scrollbar {
+  display: none;
+}
+.session-rail-item {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: var(--sidebar-muted-foreground);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+.session-rail-item:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--sidebar-foreground);
+}
+.session-rail-item.is-active {
+  background: var(--sidebar-row-selected);
+  border-color: var(--sidebar-border);
+  color: var(--sidebar-foreground);
+}
+.session-rail-initial {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
 
 .session-list {
   flex: 1;
@@ -334,6 +401,12 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.session-empty {
+  padding: 8px;
+}
+.session-delete {
+  margin-top: 6px;
 }
 .session-item {
   padding: var(--sidebar-row-content-inset);
@@ -375,11 +448,28 @@
   color: var(--sidebar-muted-foreground);
 }
 .host-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 7px;
   background: var(--muted);
   border: 1px solid transparent;
   border-radius: 9999px;
   color: var(--muted-foreground);
+}
+/* Provider marks are drawn from `currentColor` plus one fill for the face, so
+   a two-tone mark reads correctly on both sides of `.dark` without shipping
+   two copies of the artwork. */
+.host-tag-icon {
+  flex: none;
+  --icon-fill: var(--foreground);
+}
+/* Relative, and therefore stale the moment it renders — but only ever by a
+   render, and the exact instant is in the `title`. Tabular figures stop the
+   row jittering as "9m ago" becomes "10m ago". */
+.session-updated {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .diff-badge {
   display: flex;
@@ -867,6 +957,55 @@
   background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 
+/* --------------------------------------------------------------- churn -- */
+/* Lines added and removed by an Agent's completed edits.
+ *
+ * Named `churn-*` rather than `diff-*` on purpose: `.diff-badge` and
+ * `.diff-add` are already spoken for by the session list, where they count
+ * *Agents*, not lines. Two different quantities sharing a class name would
+ * make either one impossible to restyle.
+ *
+ * Colour is the second carrier here, never the first — the `+` and `-` are in
+ * the markup, so the figure still reads correctly in a copied string, in a
+ * screen reader, and for the ~8% of men with a red/green deficiency who would
+ * otherwise see two identical grey numbers.
+ *
+ * Deliberately no `transition` on these colours. The value updates from a live
+ * event stream, and a transition would hand the compositor a fresh animation
+ * to run on every tool result across every node on the canvas. */
+.churn,
+.node-churn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.node-churn {
+  font-size: 11px;
+  flex: none;
+}
+.churn-added {
+  color: var(--success-foreground);
+}
+.churn-removed {
+  color: var(--error-foreground);
+}
+/* An inferred total, marked where the node foot has no room for the
+   `badge-soft` the detail panel uses. The dotted underline is the browser's
+   own `<abbr>` convention for "there is more to know here", and the `~` is the
+   part that survives without the stylesheet. */
+.node-churn.is-estimated {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--muted-foreground);
+  text-underline-offset: 3px;
+}
+.churn-estimate-mark {
+  color: var(--muted-foreground);
+  margin-right: -2px;
+}
+
 /* ---------------------------------------------------------- dots & badges */
 .dot,
 .marker {
@@ -1136,61 +1275,43 @@
   z-index: 6;
 }
 
-/* ------------------------------------------------------------ worker card */
-/* The left panel: who is seated here and why. Work lives on the right. */
-.worker-card {
-  width: 320px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 14px;
-  background: var(--sidebar);
-  color: var(--sidebar-foreground);
-  border-right: 1px solid var(--sidebar-border);
-  opacity: 1;
-  transition:
-    margin-left 200ms ease,
-    opacity 160ms ease;
+/* -------------------------------------------------------------- profile */
+/* Formerly a third docked column left of the canvas; now the activity
+   panel's first tab. The section styles below (`.worker-section`, `.reasons`,
+   `.skills`) kept their names because the markup and the vocabulary did not
+   change — only where it is mounted. */
+.profile {
+  gap: 0;
 }
-.worker-card.is-collapsed,
-.worker-card.collapsed {
-  margin-left: -320px;
-  opacity: 0;
-  pointer-events: none;
-}
-.worker-head {
+.profile-head {
   display: flex;
   gap: 12px;
   align-items: flex-start;
-  padding: 14px;
-  border-bottom: 1px solid var(--sidebar-border);
-  position: sticky;
-  top: 0;
-  background: var(--sidebar);
-  z-index: 1;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-hairline);
 }
-.worker-head h2 {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--sidebar-foreground);
-}
-.worker-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.worker-actions .pixel-btn {
-  height: 26px;
-  font-size: 11px;
-  padding: 0 8px;
-}
-.worker-id {
+.profile-id {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.profile-name {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+/* Sits under the identity block rather than in a corner: with the panel
+   header now carrying the close button, a second action floated top-right
+   would read as belonging to the panel rather than to the employee. */
+.profile-id .pixel-btn {
+  height: 26px;
+  margin-top: 6px;
+  font-size: 11px;
+  padding: 0 8px;
 }
 /* The job title is the one identity fact worth accenting; everything else in
    the header is muted around it. */
@@ -1200,13 +1321,13 @@
   color: var(--primary);
 }
 .worker-section {
-  padding: 12px 14px 0;
+  padding: 14px 0 0;
 }
 .worker-section h3 {
   margin: 0 0 7px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--sidebar-muted-foreground);
+  color: var(--muted-foreground);
 }
 .worker-tone {
   font-size: 13px;
@@ -1256,10 +1377,14 @@
 }
 
 /* --------------------------------------------------------- activity panel */
-/* The right-hand panel: chat, tools, todos. Deliberately separate from the
-   Worker card — identity and work are different questions. */
+/* The right-hand panel: profile, chat, prompt, todos. Everything about one
+   agent now lives behind these tabs — the profile used to be a separate
+   docked column, and splitting one subject across two surfaces meant the
+   reader had to know which half of the screen answered which question.
+   Wider than the 380px it was, because it inherited the Worker card's 320px
+   and code in the transcript is what needs the room. */
 .panel {
-  width: 380px;
+  width: 420px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1487,7 +1612,6 @@
   background: var(--card);
   border: 1px solid var(--app-hairline);
   border-radius: var(--radius-xl);
-  white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
   line-height: 1.55;
@@ -1509,33 +1633,255 @@
 .is-reasoning .msg-role {
   color: var(--muted-foreground);
 }
-.msg-text {
-  white-space: pre-wrap;
+
+/* ------------------------------------------------------------- markdown -- */
+/* Message text is parsed markdown now, not a `pre-wrap` blob. The rules below
+   are deliberately tight: this is a 400px panel beside a canvas, not an
+   article column, so headings barely outrank bold and vertical rhythm is
+   measured in single-digit pixels. */
+.md {
+  min-width: 0;
 }
-.msg-code {
-  display: block;
-  position: relative;
-  margin: 8px 0 2px;
-  padding: 10px;
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0.5em 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 0.9em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+.md h1 {
+  font-size: 1.15em;
+}
+.md h2 {
+  font-size: 1.08em;
+}
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 1em;
+}
+.md ul,
+.md ol {
+  margin: 0.5em 0;
+  padding-left: 1.35em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+.md li::marker {
+  color: var(--muted-foreground);
+}
+/* GFM task lists arrive as real checkboxes. Nothing here writes back to the
+   agent, so they are inert by definition — saying so with the cursor is more
+   honest than leaving a control that silently ignores clicks. */
+.md li input[type="checkbox"] {
+  margin-right: 0.4em;
+  cursor: default;
+  accent-color: var(--primary);
+}
+.md li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.35em;
+}
+.md blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 0 0.1em 0.8em;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+.md hr {
+  margin: 0.9em 0;
+  border: none;
+  border-top: 1px solid var(--app-hairline);
+}
+.md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md a:hover {
+  text-decoration-thickness: 2px;
+}
+.md strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+/* Inline code only — fenced blocks are intercepted before they reach `code`. */
+.md :not(pre) > code {
+  padding: 0.1em 0.35em;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  word-break: break-all;
+}
+/* Tables reliably overflow this panel, so they scroll in their own box rather
+   than making the whole message scroll sideways. */
+.md-table-scroll {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+.md th,
+.md td {
+  padding: 4px 9px;
+  text-align: left;
+  border-bottom: 1px solid var(--app-hairline);
+  white-space: nowrap;
+}
+.md th {
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.md tr:last-child td {
+  border-bottom: none;
+}
+
+/* ----------------------------------------------------------- inline chips */
+/* A skill the roster knows, or a tool this agent actually ran. Both are
+   restrained on purpose — see `ToolRun` for why the transcript stays quiet. */
+.inline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  margin: 0 1px;
+  vertical-align: baseline;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.inline-chip-label {
+  font-family: var(--font-mono);
+}
+/* Skills get the one accent in the transcript. They are rare — a message names
+   at most one or two — so the colour stays a signal rather than decoration. */
+.inline-chip.is-skill {
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+/* Tools are common, so they get weight without hue: a named tool should read
+   as a proper noun, not as a highlight. */
+.inline-chip.is-tool {
+  border-color: var(--app-hairline);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+/* ------------------------------------------------------------ code block */
+.code-block {
+  margin: 0.6em 0;
   background: var(--code-background);
   border: 1px solid var(--app-hairline);
   border-radius: var(--radius-lg);
-  overflow-x: auto;
-  max-width: 100%;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre;
-  color: var(--foreground);
+  overflow: hidden;
 }
-.msg-code:first-child {
+.code-block:first-child {
   margin-top: 0;
 }
-.msg-code-lang {
-  display: block;
-  margin-bottom: 6px;
+.code-block:last-child {
+  margin-bottom: 0;
+}
+.code-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 4px 3px 10px;
+  border-bottom: 1px solid var(--app-hairline);
+}
+.code-block-lang {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-block-tools {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.code-block-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+.code-block-btn:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.code-block-btn.is-on {
+  color: var(--primary);
+}
+.code-block-body {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.code-block pre,
+.code-block .shiki {
+  margin: 0;
+  padding: 9px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  /* Shiki inlines the theme's own background; the panel's `--code-background`
+     is the one that has to win, so the block matches every other surface. */
+  background: transparent !important;
+}
+.code-block[data-wrapped="true"] .code-block-body {
+  overflow-x: hidden;
+}
+.code-block[data-wrapped="true"] pre,
+.code-block[data-wrapped="true"] .shiki,
+.code-block[data-wrapped="true"] code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+/* One highlight pass carries both appearances: Shiki writes `--shiki-light`
+   and `--shiki-dark` on every token and these two rules choose between them.
+   Toggling the theme is a repaint, never a re-highlight.
+   The fallback matters — the un-highlighted `<pre>` wears the same class but
+   sets no variables, and must simply inherit the message's colour. */
+.code-block .shiki,
+.code-block .shiki span {
+  color: var(--shiki-light, currentColor);
+}
+.dark .code-block .shiki,
+.dark .code-block .shiki span {
+  color: var(--shiki-dark, currentColor);
 }
 /* A text caret, not a block: the 7px square was the pixel face's cursor. */
 .cursor {
@@ -1549,25 +1895,22 @@
   animation: observer-pulse 1.2s ease-in-out infinite;
 }
 
-/* ---------------------------------------------------------- todos & tools */
-.todos,
-.tools {
+/* ---------------------------------------------------------------- todos -- */
+.todos {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 12px 14px;
   list-style: none;
 }
-.todo,
-.tool {
+.todo {
   display: flex;
   gap: 8px;
   align-items: baseline;
   padding: 8px 0;
   border-bottom: 1px solid var(--app-hairline);
 }
-.todo:last-child,
-.tool:last-child {
+.todo:last-child {
   border-bottom: none;
 }
 /* A finished todo is still readable text; the strike-through is the signal,
@@ -1581,35 +1924,113 @@
   font-size: 13px;
   color: var(--foreground);
 }
-.tool {
-  display: block;
+
+/* ------------------------------------------------------- tool runs, inline */
+/* Tool calls used to be a sibling tab. They now sit in the transcript between
+   the messages they happened between, which is the only place the question
+   they answer — "why did it do that?" — actually gets asked.
+   Deliberately monochrome: a turn can hold forty calls, and giving each kind
+   an accent turns the thread into a barcode that the prose has to fight.
+   Colour is spent on the single thing that must not be missed — a failure. */
+.tool-run {
+  align-self: stretch;
+  max-width: 100%;
+  min-width: 0;
+  margin: -2px 0;
 }
-.tool-head {
+.tool-run-head,
+.tool-call-head {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+.tool-run-head:hover,
+.tool-call-head:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.tool-run-icon {
+  flex: none;
+  opacity: 0.7;
+}
+.tool-run-summary,
+.tool-call-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-run-chevron {
+  flex: none;
+  opacity: 0.6;
+  transition: transform 180ms ease;
+}
+.tool-run-chevron.is-open {
+  transform: rotate(180deg);
+}
+/* The one exception to the monochrome rule, and the icon changes too, so the
+   signal is not carried by hue alone. */
+.tool-run.is-failed .tool-run-head,
+.tool-call.status-error .tool-call-head {
+  color: var(--error-foreground);
+}
+.tool-run.is-running .tool-run-summary {
+  color: var(--foreground);
+}
+.tool-run .pulse-dot {
+  flex: none;
+}
+/* Indented and rule-led, so an expanded run visibly hangs off its own summary
+   rather than floating between two messages. */
+.tool-run-body {
+  margin: 2px 0 4px 13px;
+  padding-left: 10px;
+  border-left: 1px solid var(--app-hairline);
+}
+.tool-run-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tool-detail {
+  padding: 4px 0 6px;
+}
+.tool-detail-meta {
   display: flex;
   gap: 8px;
   align-items: center;
-  width: 100%;
-  padding: 4px 0;
-  cursor: pointer;
-  text-align: left;
-  background: transparent;
-  border: none;
-  color: var(--foreground);
-  font-family: inherit;
-  font-size: 13px;
-  transition: color 140ms ease;
+  flex-wrap: wrap;
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--muted-foreground);
 }
-.tool-head:hover {
-  color: var(--primary);
-}
-.tool-body {
-  padding: 6px 0 10px;
-}
-.tool-body h4 {
+.tool-detail h4 {
   margin: 8px 0 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--muted-foreground);
+}
+/* Output can be a megabyte of build log. Capped and scrollable, so one noisy
+   call cannot bury the rest of the conversation below it. */
+.tool-detail .pre {
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11px;
 }
 
 /* ------------------------------------------------------------------ fatal */
@@ -1637,16 +2058,16 @@
 }
 
 /* ---------------------------------------------------------------- narrow */
-/* A docked Worker card plus a docked activity panel plus the session list eats
-   most of a 1440px screen. Below 1400px the activity panel stops claiming
-   layout width and floats over the stage instead, so the canvas keeps its
-   room. Neither panel is removed — that trade needs a real toggle in the
-   store, which is not this file's to make. */
-@media (max-width: 1400px) {
+/* The Worker card used to be a third docked column here, and the three of them
+   together ate 940px before the canvas got any. It is now a tab inside the
+   activity panel, which buys back 320px and lets the panel be wide enough for
+   code. Below 1200px the panel stops claiming layout width and floats over the
+   stage instead, so the canvas keeps its room. */
+@media (max-width: 1200px) {
   .panel {
     position: absolute;
     inset: 0 0 0 auto;
-    width: 380px;
+    width: 420px;
     z-index: 8;
     box-shadow: var(--app-lift-floating);
   }
@@ -1662,9 +2083,20 @@
     border-bottom: 1px solid var(--sidebar-border);
     max-height: 30vh;
   }
-  /* Both panels become bottom sheets, so they round their top corners and
-     drop the side border they no longer have a neighbour for. */
-  .worker-card,
+  /* The rail form is a vertical idiom; stacked, it becomes a horizontal strip
+     of hosts across the top rather than a 48px column down the side. */
+  .sidebar.is-collapsed {
+    width: 100%;
+    max-height: none;
+  }
+  .sidebar.is-collapsed .session-rail {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 8px 8px;
+  }
+  /* A bottom sheet, so it rounds its top corners and drops the side border it
+     no longer has a neighbour for. */
   .panel {
     position: fixed;
     inset: auto 0 0 0;
@@ -1674,16 +2106,6 @@
     border-top: 1px solid var(--sidebar-border);
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     box-shadow: var(--app-lift-floating);
-  }
-  .worker-card {
-    z-index: 19;
-  }
-  .worker-card.is-collapsed,
-  .worker-card.collapsed {
-    margin-left: 0;
-    transform: translateY(100%);
-  }
-  .panel {
     z-index: 20;
   }
   .node,
@@ -1710,8 +2132,9 @@
     animation: none !important;
     opacity: 1 !important;
   }
-  .worker-card,
-  .panel {
+  .sidebar,
+  .panel,
+  .tool-run-chevron {
     transition: none !important;
   }
 }

@@ -1,46 +1,49 @@
-import { useRef, useState } from "react"
+import { useState } from "react"
 import type { AgentEntity, MessageEntity, TodoEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { describeReason } from "@observer-ai/roster"
-import { useDismissLayer } from "./dismissLayer"
 import { CARD_LAYOUT } from "./employeeCard"
 
-export interface WorkerCardProps {
+export interface ProfileTabProps {
   agent: AgentEntity
   match: EmployeeMatch | undefined
   messages: MessageEntity[]
   toolCalls: ToolCallEntity[]
   todos: TodoEntity[]
-  /** Raises the NJ-LABS ID card. Absent when nobody is seated. */
+  /** Raises the NJ-LABS ID card. Only offered when somebody is seated. */
   onOpenCard: () => void
-  onClose: () => void
 }
 
 /**
- * The seated employee's profile card, docked left of the canvas.
+ * Who is seated on this node, and why.
  *
- * Identity and behaviour live here (photo, tone, strengths, why they were
- * seated); the right-hand panel carries the work (chat, tools, todos).
+ * This used to be a third docked panel between the session list and the
+ * canvas. Three permanent columns spent 940px of a 1440px screen on chrome
+ * before the canvas — the thing the app is for — got any, and the profile was
+ * the column paying the least rent: it is read once when a node is selected
+ * and then ignored while its work is followed on the right. Folding it into
+ * the activity panel as a tab gives the canvas that width back and puts every
+ * question about one agent behind the same set of tabs.
+ *
+ * It is a plain section, not a dialog: the panel around it owns the heading,
+ * the close button and the dismiss layer, and a second Escape handler in here
+ * would race the one out there.
  */
-export function WorkerCard(props: WorkerCardProps): JSX.Element {
-  const { agent, match, messages, toolCalls, todos, onOpenCard, onClose } = props
-  const closeRef = useRef<HTMLButtonElement>(null)
+export function ProfileTab(props: ProfileTabProps): JSX.Element {
+  const { agent, match, messages, toolCalls, todos, onOpenCard } = props
   const employee = match?.profile
   const name = employee?.fullName ?? agent.displayName ?? agent.agentType
   // A photo that 404s must degrade to initials rather than a broken-image box.
+  // Keyed by URL, not a boolean, so re-seating this node retries the new one.
   const [brokenPhotoUrl, setBrokenPhotoUrl] = useState<string | undefined>(undefined)
   const photoSrc = employee && employee.imageUrl !== brokenPhotoUrl ? employee.imageUrl : undefined
   // Two different states, two different sentences. A subcontractor was staffed
   // with nobody on purpose; an unseated node is the matcher declining to guess.
   const isSubcontractor = agent.agentType === "subcontractor"
 
-  // Escape and focus are owned by the shared layer stack, not by a listener
-  // per panel: this panel and the activity panel always mount together.
-  useDismissLayer(onClose, { focusRef: closeRef })
-
   return (
-    <aside className="worker-card" role="complementary" aria-label={`Worker ${name}`}>
-      <header className="worker-head">
+    <div className="stack profile">
+      <header className="profile-head">
         <div className={`employee-photo large status-${agent.status}`}>
           {photoSrc ? (
             <img
@@ -49,9 +52,9 @@ export function WorkerCard(props: WorkerCardProps): JSX.Element {
               draggable={false}
               loading="lazy"
               decoding="async"
-              /* Intrinsic size of every roster portrait. Without it the
-                 photo well has no height until the 1.2MB source decodes,
-                 and the whole panel reflows underneath it. */
+              /* Intrinsic size of every roster portrait. Without it the photo
+                 well has no height until the source decodes, and everything
+                 below it reflows once it does. */
               width={CARD_LAYOUT.portrait.width}
               height={CARD_LAYOUT.portrait.height}
               onError={() => setBrokenPhotoUrl(photoSrc)}
@@ -63,24 +66,21 @@ export function WorkerCard(props: WorkerCardProps): JSX.Element {
           )}
           <span className={`dot status-${agent.status} photo-dot`} aria-hidden="true" />
         </div>
-        <div className="worker-id">
-          <h2>{name}</h2>
-          <p className="worker-title">{employee?.title ?? (isSubcontractor ? "subcontractor" : "no employee seated")}</p>
+        <div className="profile-id">
+          <h3 className="profile-name">{name}</h3>
+          <p className="worker-title">
+            {employee?.title ?? (isSubcontractor ? "subcontractor" : "no employee seated")}
+          </p>
           {employee && (
             <p className="muted small">
               {employee.experienceSummary} · {employee.animal}
             </p>
           )}
-        </div>
-        <div className="worker-actions">
           {employee && (
             <button className="pixel-btn" onClick={onOpenCard} title="Also: double-click the Agent on the canvas">
               ID CARD
             </button>
           )}
-          <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close worker card">
-            ✕
-          </button>
         </div>
       </header>
 
@@ -179,6 +179,6 @@ export function WorkerCard(props: WorkerCardProps): JSX.Element {
           </section>
         </>
       )}
-    </aside>
+    </div>
   )
 }

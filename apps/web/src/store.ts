@@ -494,10 +494,28 @@ function collectionFor(table: string): Map<string, unknown> | undefined {
 
 // ------------------------------------------------------------------ selectors
 
+/**
+ * The session list, newest-created first.
+ *
+ * Ordered by `startedAt` and not `updatedAt` on purpose. A session's
+ * `updatedAt` moves on every token a live agent emits, so an activity ordering
+ * reshuffles the list while it is being read: the row under the pointer slides
+ * away mid-click, and a session the reader is watching jumps to the top the
+ * instant it says anything. Creation time never changes, so a row's position
+ * is a fixed address for as long as the session exists.
+ *
+ * What that ordering used to communicate — which session is warm — is carried
+ * by the per-row "last update" label instead, where it can be read without
+ * also being a moving target. See `relativeTime`.
+ *
+ * `id` breaks ties so two sessions created in the same millisecond still have
+ * a total order; without it their relative position is left to the sort's
+ * implementation and can differ between renders.
+ */
 export function selectSessions(current: Readonly<State>): SessionEntity[] {
   return [...current.sessions.values()]
     .filter((session) => !current.scopeHost || session.host === current.scopeHost)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .sort((a, b) => b.startedAt - a.startedAt || a.id.localeCompare(b.id))
 }
 
 export function selectActiveSession(current: Readonly<State>): SessionEntity | undefined {

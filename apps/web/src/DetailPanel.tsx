@@ -8,9 +8,14 @@ import type {
   ToolCallEntity,
 } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
+import { ChatMarkdown } from "./chat/ChatMarkdown"
+import { EMPTY_VOCABULARY, type InlineVocabulary } from "./chat/InlineVocabulary"
+import { buildTimeline } from "./chat/timeline"
+import { ToolRun } from "./chat/ToolRun"
 import { useDismissLayer } from "./dismissLayer"
+import { ProfileTab } from "./ProfileTab"
 
-type Tab = "prompt" | "chat" | "todos" | "tools"
+type Tab = "profile" | "chat" | "prompt" | "todos"
 
 export interface DetailPanelProps {
   agent: AgentEntity
@@ -20,14 +25,24 @@ export interface DetailPanelProps {
   todos: TodoEntity[]
   promptFragments: PromptFragmentEntity[]
   capabilities: HostCapabilities | undefined
+  onOpenCard: () => void
   onClose: () => void
 }
 
+/**
+ * Profile leads because it answers "who am I looking at?", which is the first
+ * question after clicking a node — but Chat is what the panel *opens* on,
+ * because it is what the reader returns to. Order by question, default by
+ * frequency.
+ *
+ * There is no Tools tab. Tool calls are interleaved into the transcript, where
+ * a call sits next to the sentence that explains it; see `buildTimeline`.
+ */
 const TABS: Array<{ id: Tab; label: string }> = [
-  { id: "prompt", label: "Prompt" },
+  { id: "profile", label: "Profile" },
   { id: "chat", label: "Chat" },
+  { id: "prompt", label: "Prompt" },
   { id: "todos", label: "Todos" },
-  { id: "tools", label: "Tools" },
 ]
 
 /** An Agent that is still working, which is what the pulsing badge signals. */
@@ -36,20 +51,32 @@ function isLive(agent: AgentEntity): boolean {
 }
 
 export function DetailPanel(props: DetailPanelProps): JSX.Element {
-  const { agent, match, messages, toolCalls, todos, promptFragments, capabilities, onClose } = props
+  const { agent, match, messages, toolCalls, todos, promptFragments, capabilities, onOpenCard, onClose } = props
   const [tab, setTab] = useState<Tab>("chat")
   const closeRef = useRef<HTMLButtonElement>(null)
   const employee = match?.profile
 
-  // Shared layer stack: this panel mounts alongside the Worker card and, when
-  // the ID card is open, underneath it. Only the top layer answers Escape.
+  // Shared layer stack: when the ID card is open this panel sits underneath
+  // it, and only the top layer answers Escape.
   useDismissLayer(onClose, { focusRef: closeRef })
+
+  /**
+   * What the transcript may highlight: this employee's skills, and the tools
+   * this agent has actually called. Rebuilt only when either set changes, not
+   * on every streamed token.
+   */
+  const vocabulary = useMemo<InlineVocabulary>(() => {
+    const skills = new Map<string, string | undefined>()
+    for (const skill of employee?.skills ?? []) skills.set(skill.name.toLowerCase(), skill.description)
+    const tools = new Set(toolCalls.map((call) => call.tool.toLowerCase()))
+    return skills.size === 0 && tools.size === 0 ? EMPTY_VOCABULARY : { skills, tools }
+  }, [employee, toolCalls])
 
   return (
     <aside className="panel" role="dialog" aria-label={`Agent ${agent.displayName ?? agent.agentType}`}>
       <header className="panel-head">
         <div className="panel-id">
-          <h2>{employee ? `${employee.fullName} — activity` : (agent.displayName ?? agent.agentType)}</h2>
+          <h2>{employee ? employee.fullName : (agent.displayName ?? agent.agentType)}</h2>
           <p className="panel-sub">
             <span className={`badge status-${agent.status}${isLive(agent) ? " badge-running" : ""}`}>
               {isLive(agent) && <span className="pulse-dot" aria-hidden="true" />}
@@ -76,58 +103,38 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
             {entry.label}
             {entry.id === "chat" && messages.length > 0 && <span className="count">{messages.length}</span>}
             {entry.id === "todos" && todos.length > 0 && <span className="count">{todos.length}</span>}
-            {entry.id === "tools" && toolCalls.length > 0 && <span className="count">{toolCalls.length}</span>}
           </button>
         ))}
       </nav>
 
       <div className="panel-body">
+        {tab === "profile" && (
+          <ProfileTab
+            agent={agent}
+            match={match}
+            messages={messages}
+            toolCalls={toolCalls}
+            todos={todos}
+            onOpenCard={onOpenCard}
+          />
+        )}
+        {tab === "chat" && (
+          <ChatTab
+            messages={messages}
+            toolCalls={toolCalls}
+            agent={agent}
+            capabilities={capabilities}
+            vocabulary={vocabulary}
+          />
+        )}
         {tab === "prompt" && <PromptTab fragments={promptFragments} agent={agent} capabilities={capabilities} />}
-        {tab === "chat" && <ChatTab messages={messages} agent={agent} capabilities={capabilities} />}
         {tab === "todos" && <TodoTab todos={todos} agent={agent} capabilities={capabilities} />}
-        {tab === "tools" && <ToolTab calls={toolCalls} />}
       </div>
     </aside>
   )
 }
 
 // --------------------------------------------------------------------- chat
-
-/** Splits assistant text into prose and fenced code blocks. */
-function splitFences(text: string): Array<{ type: "text" | "code"; body: string; lang?: string }> {
-  const parts: Array<{ type: "text" | "code"; body: string; lang?: string }> = []
-  const pattern = /```([\w+-]*)\n?([\s\S]*?)```/g
-  let index = 0
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > index) parts.push({ type: "text", body: text.slice(index, match.index) })
-    parts.push({ type: "code", body: match[2] ?? "", lang: match[1] || undefined })
-    index = match.index + match[0].length
-  }
-  if (index < text.length) parts.push({ type: "text", body: text.slice(index) })
-  return parts.filter((part) => part.body.trim().length > 0 || part.type === "code")
-}
-
-function MessageBody({ text }: { text: string }): JSX.Element {
-  const parts = useMemo(() => splitFences(text), [text])
-  if (parts.length === 0) return <span />
-  return (
-    <>
-      {parts.map((part, index) =>
-        part.type === "code" ? (
-          <pre key={index} className="msg-code">
-            {part.lang && <span className="msg-code-lang">{part.lang}</span>}
-            <code>{part.body.replace(/\n$/, "")}</code>
-          </pre>
-        ) : (
-          <span key={index} className="msg-text">
-            {part.body.replace(/^\n+|\n+$/g, "")}
-          </span>
-        ),
-      )}
-    </>
-  )
-}
 
 const ROLE_LABEL: Record<MessageEntity["role"], string> = {
   user: "You",
@@ -136,30 +143,36 @@ const ROLE_LABEL: Record<MessageEntity["role"], string> = {
 }
 
 /**
- * Renders the agent's conversation as a chat thread.
+ * The agent's turn, as one transcript.
  *
- * User turns sit on the right, the agent's on the left, and consecutive turns
- * from the same speaker are grouped so a long reply reads as one continuous
- * message rather than a list of records.
+ * User turns sit right, the agent's left, and the tool calls that happened
+ * between two sentences sit inline between them — so "let me check the config"
+ * is immediately followed by the four reads it produced, rather than by the
+ * next sentence with the reads filed away in another tab.
  */
 function ChatTab({
   messages,
+  toolCalls,
   agent,
   capabilities,
+  vocabulary,
 }: {
   messages: MessageEntity[]
+  toolCalls: ToolCallEntity[]
   agent: AgentEntity
   capabilities: HostCapabilities | undefined
+  vocabulary: InlineVocabulary
 }): JSX.Element {
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
+  const rows = useMemo(() => buildTimeline(messages, toolCalls), [messages, toolCalls])
   const last = messages[messages.length - 1]
 
   useEffect(() => {
     if (!pinned.current) return
     const node = scroller.current
     if (node) node.scrollTop = node.scrollHeight
-  }, [last?.id, last?.text, messages.length])
+  }, [last?.id, last?.text, rows.length])
 
   const note =
     capabilities?.liveAssistantText === "none"
@@ -176,36 +189,51 @@ function ChatTab({
       ref={scroller}
       onScroll={(event) => {
         const el = event.currentTarget
-        // Only auto-scroll when the reader is already at the bottom.
+        // Only auto-scroll when the reader is already at the bottom. Expanding
+        // a tool call mid-thread must not yank them back down.
         pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90
       }}
     >
-      {messages.length === 0 ? (
+      {rows.length === 0 ? (
         <EmptyChat agent={agent} capabilities={capabilities} />
       ) : (
         <>
           {note && <p className="chat-note">{note}</p>}
           <ol className="thread">
-            {messages.map((message, index) => {
-              const previous = messages[index - 1]
-              const grouped = previous?.role === message.role && message.createdAt - previous.updatedAt < 120_000
-              return (
-                <li key={message.id} className={`msg is-${message.role}${grouped ? " is-grouped" : ""}`}>
-                  {!grouped && (
+            {rows.map((row) =>
+              row.kind === "tools" ? (
+                <ToolRun
+                  key={row.id}
+                  calls={row.calls}
+                  action={row.action}
+                  summary={row.summary}
+                  failed={row.failed}
+                  running={row.running}
+                />
+              ) : (
+                <li key={row.id} className={`msg is-${row.message.role}${row.grouped ? " is-grouped" : ""}`}>
+                  {!row.grouped && (
                     <div className="msg-meta">
-                      <span className="msg-role">{ROLE_LABEL[message.role]}</span>
-                      <time dateTime={new Date(message.createdAt).toISOString()}>
-                        {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <span className="msg-role">{ROLE_LABEL[row.message.role]}</span>
+                      <time dateTime={new Date(row.message.createdAt).toISOString()}>
+                        {new Date(row.message.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </time>
                     </div>
                   )}
                   <div className="msg-body">
-                    <MessageBody text={message.text} />
-                    {message.streaming && <span className="cursor" aria-label="still writing" />}
+                    <ChatMarkdown
+                      text={row.message.text}
+                      vocabulary={vocabulary}
+                      streaming={row.message.streaming}
+                    />
+                    {row.message.streaming && <span className="cursor" aria-label="still writing" />}
                   </div>
                 </li>
-              )
-            })}
+              ),
+            )}
           </ol>
         </>
       )}
@@ -353,63 +381,5 @@ function TodoTab({
         ))}
       </ol>
     </div>
-  )
-}
-
-// -------------------------------------------------------------------- tools
-
-function ToolTab({ calls }: { calls: ToolCallEntity[] }): JSX.Element {
-  const [openId, setOpenId] = useState<string | undefined>()
-  const ordered = useMemo(() => [...calls].reverse(), [calls])
-
-  if (calls.length === 0) {
-    return (
-      <div className="stack">
-        <div className="empty">
-          <p className="empty-title">No tool calls</p>
-          <p className="muted small">This agent has not run a tool yet.</p>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <ul className="tools">
-      {ordered.map((call) => (
-        <li key={call.id} className={`tool status-${call.status}`}>
-          <button
-            className="tool-head"
-            onClick={() => setOpenId(openId === call.id ? undefined : call.id)}
-            aria-expanded={openId === call.id}
-          >
-            <span className={`marker status-${call.status}`} aria-hidden="true" />
-            <span className="mono">{call.tool}</span>
-            {call.durationMs !== null && <span className="muted small">{call.durationMs}ms</span>}
-          </button>
-          {openId === call.id && (
-            <div className="tool-body">
-              {call.input !== null && call.input !== undefined && (
-                <>
-                  <h4>Input</h4>
-                  <pre className="pre">{JSON.stringify(call.input, null, 2)}</pre>
-                </>
-              )}
-              {call.output && (
-                <>
-                  <h4>Output</h4>
-                  <pre className="pre">{call.output}</pre>
-                </>
-              )}
-              {call.error && (
-                <>
-                  <h4>Error</h4>
-                  <pre className="pre error">{call.error}</pre>
-                </>
-              )}
-            </div>
-          )}
-        </li>
-      ))}
-    </ul>
   )
 }
