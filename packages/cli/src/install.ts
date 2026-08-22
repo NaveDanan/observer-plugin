@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { loadConfig } from "@observer-ai/daemon"
 import type { HostId } from "@observer-ai/protocol"
 import {
   emitterPath,
@@ -7,9 +8,12 @@ import {
   hookShellCommand,
   homeDir,
   nodePath,
+  opencodeAgentDir,
   opencodeAgentSource,
+  opencodeConfigBase,
   opencodePluginSource,
 } from "./paths.js"
+import { removeSeatAgents, syncSeatAgents } from "./seat-agents.js"
 
 export interface InstallResult {
   host: HostId
@@ -81,18 +85,17 @@ export function copilotHooksPath(): string {
   return join(home && home.length > 0 ? home : join(homeDir(), ".copilot"), "hooks", "observer.json")
 }
 
-function opencodeConfigBase(): string {
-  const xdg = process.env["XDG_CONFIG_HOME"]
-  return xdg && xdg.length > 0 ? xdg : join(homeDir(), ".config")
+function opencodeConfigRoot(): string {
+  return join(opencodeConfigBase(), "opencode")
 }
 
 export function opencodePluginPath(): string {
-  return join(opencodeConfigBase(), "opencode", "plugins", "observer.js")
+  return join(opencodeConfigRoot(), "plugins", "observer.js")
 }
 
 /** The agent definition that puts `@observer` in OpenCode's @ menu. */
 export function opencodeAgentPath(): string {
-  return join(opencodeConfigBase(), "opencode", "agent", "observer.md")
+  return join(opencodeAgentDir(), "observer.md")
 }
 
 export function hostConfigPath(host: HostId): string {
@@ -266,7 +269,24 @@ function installOpencode(): InstallResult {
     host: "opencode",
     action: existed ? "updated" : "installed",
     path,
-    notes: [`Restart OpenCode; plugins and agents load at startup.${agentNote}`],
+    notes: [`Restart OpenCode; plugins and agents load at startup.${agentNote}`, ...syncSeatAgentsQuietly()],
+  }
+}
+
+/**
+ * Reconciles the generated seat definitions as part of installing.
+ *
+ * Re-running the installer is the documented cure for a config that was edited
+ * without one, so this is where drift gets corrected. It is best-effort: a
+ * seats section Observer cannot read must not stop the plugin being installed,
+ * because the plugin is the part that observes and the seats are the part that
+ * merely steers.
+ */
+function syncSeatAgentsQuietly(): string[] {
+  try {
+    return syncSeatAgents(loadConfig().seats).notes
+  } catch {
+    return []
   }
 }
 
@@ -275,12 +295,21 @@ function removeOpencode(): InstallResult {
     removeFile("opencode", opencodePluginPath()),
     removeFile("opencode", opencodeAgentPath()),
   ]
-  const removed = results.some((result) => result.action === "removed")
+  // Generated seat definitions name a model the user chose through Observer,
+  // so leaving them behind would keep steering delegations after Observer is
+  // gone. Only files carrying Observer's marker are touched.
+  const seatAgents = removeSeatAgents()
+  const removedFiles = results.some((result) => result.action === "removed")
+  const notes: string[] = []
+  if (removedFiles) notes.push("Removed the Observer plugin and agent definition.")
+  if (seatAgents.length > 0) {
+    notes.push(`Removed ${seatAgents.length} generated seat agent definition${seatAgents.length === 1 ? "" : "s"}.`)
+  }
   return {
     host: "opencode",
-    action: removed ? "removed" : "unchanged",
+    action: removedFiles || seatAgents.length > 0 ? "removed" : "unchanged",
     path: opencodePluginPath(),
-    notes: removed ? ["Removed the Observer plugin and agent definition."] : [],
+    notes,
   }
 }
 

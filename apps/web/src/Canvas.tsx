@@ -37,7 +37,9 @@ export interface CanvasProps {
   hostLabel: string
   selectedAgentId: string | undefined
   now: number
-  onOpenAgent: (agentId: string) => void
+  /** Double-click, or Shift+Enter on a focused node: raises the ID card. */
+  onOpenCard: (agentId: string) => void
+  /** Single click, or Enter on a focused node: selects and docks the panels. */
   onSelectAgent: (agentId: string) => void
   /**
    * Brings one agent into view when this value changes.
@@ -212,8 +214,11 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
 /**
  * Interactive agent graph.
  *
- * Double-click (or Enter on a focused node) opens the agent detail panel, which
- * is the primary interaction described in the product brief.
+ * Two interactions, two results. A single click — or Enter on a focused node —
+ * selects an agent and docks its Worker card and activity panel. A double
+ * click, or Shift+Enter, additionally raises that employee's NJ-LABS ID card
+ * over the canvas. The two used to be wired to the same closure, which made
+ * the double-click path dead code.
  */
 function CanvasInner(props: CanvasProps): JSX.Element {
   const {
@@ -224,7 +229,7 @@ function CanvasInner(props: CanvasProps): JSX.Element {
     hostLabel,
     selectedAgentId,
     now,
-    onOpenAgent,
+    onOpenCard,
     onSelectAgent,
     focusAgentId,
   } = props
@@ -467,12 +472,24 @@ function CanvasInner(props: CanvasProps): JSX.Element {
             selected: agent.id === selectedAgentId,
             activity,
             match: matches.get(agent.id),
-            onOpen: () => onOpenAgent(agent.id),
+            onOpen: () => onSelectAgent(agent.id),
+            onOpenCard: () => onOpenCard(agent.id),
           },
           draggable: true,
         }
       }),
-    [agents, positions, manualPositions, matches, runningTools, hostLabel, selectedAgentId, now, onOpenAgent],
+    [
+      agents,
+      positions,
+      manualPositions,
+      matches,
+      runningTools,
+      hostLabel,
+      selectedAgentId,
+      now,
+      onSelectAgent,
+      onOpenCard,
+    ],
   )
 
   const flowEdges: Edge[] = useMemo(
@@ -584,7 +601,15 @@ function CanvasInner(props: CanvasProps): JSX.Element {
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         proOptions={{ hideAttribution: true }}
-        onNodeDoubleClick={(_event, node) => onOpenAgent(node.id)}
+        /*
+         * d3 binds `dblclick.zoom` to the pane, and node events bubble to it,
+         * so leaving this on zooms the graph every time a card opens — behind
+         * a modal the developer cannot see past. The zoom HUD, the keyboard
+         * and the wheel all still zoom, and they snap to the integer steps
+         * ADR 0002 requires, which a d3 double-click zoom does not.
+         */
+        zoomOnDoubleClick={false}
+        onNodeDoubleClick={(_event, node) => onOpenCard(node.id)}
         onNodeClick={(_event, node) => onSelectAgent(node.id)}
         onMoveStart={(event) => {
           // `event` is null for our own fitView/setViewport calls, so only a

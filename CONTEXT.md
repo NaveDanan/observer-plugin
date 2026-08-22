@@ -35,14 +35,50 @@ _Avoid_: Team, staff list
 
 **Seating / seated**:
 What the matcher does when a task arrives: it scores the task text against every employee and
-seats the best fit on the node. Seating is advisory metadata; it never changes which host agent
-actually runs.
+seats the best fit on the node. Seating is advisory by default: it labels the node and briefs the
+subagent, without changing which host agent runs. Seat control is the one thing that changes that.
 _Avoid_: Assignment (too strong — implies the host was told), matching (fine as a verb)
+
+**Seat spec**:
+The model, reasoning effort and skills a user assigned to an employee in `seats.employees` in
+`~/.observer/config.json`. A seat spec is *desired*: it says what an employee should run with.
+It is not seating (the matcher's runtime decision about who fits a task) and it is not an agent's
+`model` (observed — see below). Every field is optional; an omitted model means "inherit the
+session's model".
+_Avoid_: Assignment, agent config, model override
+
+**Seat control**:
+The opt-in flag (`seats.control`, off by default) that lets Observer act on the model and effort
+in a seat spec, by generating hidden per-employee OpenCode agent definitions and rewriting the
+host's `subagent_type`. With it off, model and effort are inert and Observer only observes.
+Skills are not gated by it: they are prompt text folded into the behaviour directive, so they
+carry none of the risk of pointing the host at an agent that does not exist.
+_Avoid_: Enforcement, takeover, steering
+
+**Model**:
+On an agent, always the *observed* model — what the host told us it ran, qualified by
+`modelConfidence: authoritative | reconciled | inferred`. The model a user *wants* an employee to
+run belongs to a seat spec and is never called the agent's model.
+_Avoid_: Using bare "model" for a configured preference
+
+**Effort**:
+The reasoning level a seat spec asks for, stored under the host's own name for it, `variant`.
+OpenCode applies a variant only to an agent's own configured model, so an effort with no model is
+a no-op — `diagnoseSeats` reports that rather than accepting it silently. Each model declares its
+own subset of the levels, so a level Observer does not recognise is a warning, not an error.
+_Avoid_: Reasoning budget, thinking level
 
 **Subcontractor**:
 A subagent that runs without an employee. Its type says so plainly on the node instead of
 borrowing a persona.
 _Avoid_: Unassigned (that is the matcher's seating state), fallback agent
+
+**Finished**:
+A subagent whose delegation ran to completion, whichever way the host said so: a `completed`
+status from the parent's finished `task` call, or the child session going `idle`. `failed` and
+`interrupted` are *ended*, not finished; a root agent going `idle` between turns is *waiting*,
+not finished.
+_Avoid_: Done, ended
 
 **Worker card**:
 The left-hand panel that opens with a node click: the employee's profile and why they were

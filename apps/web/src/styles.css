@@ -71,6 +71,31 @@
     U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
+/* Inter carries the NJ-LABS employee card and nothing else. It is deliberately
+   not preloaded in index.html: no interface surface uses it, so the browser
+   should only fetch it when a card actually opens. Weight 900 is a real master
+   on the variable axis — the reference implementation asked for Inter without
+   shipping it, so every machine without it drew a synthesised fake bold at the
+   card's largest type. See docs/adr/0003-employee-card-carve-out.md. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 /* ----------------------------------------------------------------- tokens */
 :root {
   /* Surfaces. Every one of these is a flat, opaque plate with a hard border;
@@ -311,6 +336,42 @@ code {
 .status-connected { color: var(--neon-emerald); background: var(--neon-emerald-wash); }
 .status-connecting { color: var(--neon-amber); background: var(--neon-amber-wash); }
 .status-offline { color: var(--neon-red); background: var(--neon-red-wash); }
+
+/* Canvas filter: All / Active / Finished subagent counts.
+   Selection follows the house idiom — cyan wash plus inset line, the same
+   treatment as `.tip-pill` and a selected session row — because cyan is the
+   selection colour in the ramp, not decoration. Counts are read text, so
+   they sit at --text-muted, never --text-dim. */
+.filter-group {
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--panel-bg);
+  border: 2px solid var(--pixel-black);
+  box-shadow: inset 1px 1px 0 var(--pixel-highlight), 2px 2px 0 var(--pixel-black);
+}
+.filter-btn {
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  border-right: 2px solid var(--pixel-black);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.filter-btn:last-child { border-right: none; }
+.filter-btn:hover { color: var(--text-main); }
+.filter-btn.is-on {
+  color: var(--neon-cyan);
+  background: var(--neon-cyan-wash);
+  box-shadow: inset 1px 1px 0 var(--neon-cyan-line);
+}
+.filter-count { font-size: 8px; }
 
 /* Delivery problems */
 .alert {
@@ -671,6 +732,16 @@ code {
     0 0 14px var(--neon-red-glow);
 }
 
+/* A finished subagent settles down. The photo dims through a filter — one
+   asset, not two — the status dot holds steady, and the badge cools to the
+   completed-work blue. Removing animation here is always safe under
+   prefers-reduced-motion: there is nothing left to remove. */
+.node.is-done .employee-photo img,
+.node.is-done .employee-initials {
+  filter: saturate(0.45) brightness(0.75);
+}
+.node.is-done .dot { animation: none; }
+
 /* Selection wins over every status modifier. Declared last, and mirrored onto
    React Flow's own `.selected` class so a canvas-driven selection matches. */
 .node.is-selected,
@@ -861,6 +932,13 @@ code {
   font-weight: 700;
   box-shadow: 2px 2px 0 var(--pixel-black), 0 0 10px var(--neon-blue-glow);
 }
+/* A finished subagent's badge. Emerald means *live* in this ramp, so the
+   settled state borrows completed-work blue instead — the same tint-on-wash
+   pair as `.badge.status-completed`, no pulse, no glow. */
+.badge-done {
+  color: var(--neon-blue-text);
+  background: var(--neon-blue-wash);
+}
 
 /* The one live-state signal that reads at a glance across a full canvas. */
 .pulse-dot {
@@ -1025,6 +1103,8 @@ code {
   z-index: 1;
 }
 .worker-head h2 { margin: 0; font-size: 15px; color: var(--text-main); line-height: 1.2; font-weight: 700; }
+.worker-actions { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; }
+.worker-actions .pixel-btn { font-size: 9px; padding: 4px 6px; }
 .worker-id { flex: 1; min-width: 0; }
 .worker-title { margin: 3px 0 5px; font-size: 11px; color: var(--neon-cyan); }
 .worker-section { padding: 12px 14px 0; }
@@ -1407,4 +1487,213 @@ code {
   .panel { z-index: 20; }
   .node,
   .employee-node { width: 240px; }
+}
+
+/* ==========================================================================
+   NJ-LABS employee card — an explicit carve-out from ADR 0002
+
+   Everything below breaks the two rules at the top of this file: it has
+   rounded corners and it names its own colours. That is deliberate and it is
+   scoped. The card is a reproduction of a printed artifact — the 1023x1537
+   template raster is the artwork, and these rules only place text and a
+   portrait into holes already cut in it. The interface rules govern
+   interface; they do not get to redesign a photograph of a thing.
+
+   The boundary is this selector list. Nothing here styles an element outside
+   `.nj-overlay`, and no token here is reachable from `:root`, so the card's
+   purple can never leak into the interface ramp.
+   See docs/adr/0003-employee-card-carve-out.md.
+   ========================================================================== */
+
+.nj-overlay {
+  /* The artifact's palette. A second token block, on purpose: these are
+     facts about the printed card, not entries in the interface ramp. */
+  --nj-scrim: rgba(4, 3, 12, 0.88);
+  --nj-ink: #ffffff;
+  --nj-photo-fallback: #1a1740;
+  --nj-photo-edge: rgba(122, 92, 255, 0.55);
+  --nj-pill-shadow: rgba(0, 0, 0, 0.6);
+  --nj-name-shadow-near: rgba(0, 0, 0, 0.75);
+  --nj-name-shadow-far: rgba(0, 0, 0, 0.45);
+  --nj-drop: rgba(0, 0, 0, 0.55);
+
+  position: fixed;
+  inset: 0;
+  /* Above both bottom sheets (19 and 20) at every breakpoint. */
+  z-index: 40;
+  display: flex;
+  /* `margin: auto` on the card, not `align-items: center`: a centred flex item
+     that outgrows its scroll container has its top clipped and unreachable,
+     which is exactly what a 1023:1537 card does on a short viewport. */
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 24px;
+  overflow: auto;
+  background: var(--nj-scrim);
+  animation: nj-card-in 120ms steps(3, end);
+}
+
+.nj-card {
+  /*
+   * The one length the card is built from. Everything typographic below is a
+   * multiple of it, so the card scales as a single unit and the geometry
+   * variables — emitted from CARD_LAYOUT in employeeCard.ts — never restate a
+   * number this file also knows.
+   *
+   * Height-driven below ~1.5:1 viewports, width-driven on a narrow one, and
+   * floored at 280px so a short window stops shrinking the card and scrolls
+   * the overlay instead. A 4pt ID card is not a more responsive ID card.
+   */
+  --nj-card-w: clamp(280px, min(92vw, calc(88vh * var(--nj-aspect))), 640px);
+
+  position: relative;
+  flex: none;
+  margin: auto;
+  width: var(--nj-card-w);
+  aspect-ratio: var(--nj-aspect);
+  border-radius: calc(var(--nj-card-w) * var(--nj-card-radius));
+  overflow: hidden;
+  background: var(--nj-photo-fallback);
+  box-shadow: 0 24px 70px var(--nj-drop);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--nj-ink);
+  /* The global reset pixelates every image for the canvas. The card is a
+     photographic raster; pixelating it would shred the artwork. */
+  image-rendering: auto;
+}
+
+.nj-card img { image-rendering: auto; }
+
+.nj-card-template {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+.nj-photo-frame {
+  position: absolute;
+  left: var(--nj-photo-left);
+  top: var(--nj-photo-top);
+  width: var(--nj-photo-width);
+  height: var(--nj-photo-height);
+  overflow: hidden;
+  border-radius: calc(var(--nj-card-w) * var(--nj-photo-radius));
+  box-shadow: 0 0 0 2px var(--nj-photo-edge) inset;
+}
+
+.nj-photo-img {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  /* Both from photoImageBox(): 0.80 of cover, bottom-pinned. */
+  width: var(--nj-photo-img-width);
+  height: var(--nj-photo-img-height);
+  object-fit: cover;
+  display: block;
+}
+
+.nj-name {
+  position: absolute;
+  left: var(--nj-name-left);
+  top: var(--nj-name-top);
+  width: var(--nj-name-width);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-weight: 900;
+  line-height: var(--nj-name-line-height);
+  letter-spacing: var(--nj-name-letter-spacing);
+  text-shadow: 0 1px 0 var(--nj-name-shadow-near), 0 4px 14px var(--nj-name-shadow-far);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Past fitNameFontSize's floor there is no size that fits, so the last line
+   of defence is a clip rather than a name running across the pills. */
+.nj-name > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nj-pill {
+  position: absolute;
+  left: var(--nj-pill-left);
+  width: var(--nj-pill-width);
+  height: var(--nj-pill-height);
+  /* A line box, not a flex centre: `text-overflow` needs a block container.
+     The purple pill and its caption are painted into the template — these
+     divs contribute text only. */
+  display: block;
+  text-align: center;
+  line-height: calc(var(--nj-card-w) * var(--nj-pill-line));
+  padding: 0 calc(var(--nj-card-w) * var(--nj-pill-padding));
+  font-weight: 800;
+  letter-spacing: var(--nj-pill-letter-spacing);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px var(--nj-pill-shadow);
+  pointer-events: none;
+}
+
+.nj-pill-role { top: var(--nj-pill-role-top); }
+.nj-pill-department { top: var(--nj-pill-department-top); }
+.nj-pill-employeeId { top: var(--nj-pill-employeeId-top); }
+.nj-pill-accessLevel { top: var(--nj-pill-accessLevel-top); }
+
+/* The close control is interface, not artifact, so it stays square. */
+.nj-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-main);
+  background: var(--panel-bg);
+  border: 2px solid var(--pixel-black);
+  box-shadow: 2px 2px 0 var(--pixel-black);
+  cursor: pointer;
+}
+
+.nj-close:hover {
+  background: var(--neon-cyan);
+  color: var(--on-neon);
+}
+
+/* Every value the artwork sets in type is repeated here as real text, so the
+   card is readable without seeing it. */
+.nj-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes nj-card-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (max-width: 900px) {
+  .nj-overlay { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nj-overlay { animation: none !important; }
 }

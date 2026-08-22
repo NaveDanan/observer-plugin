@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto"
-import { type AdapterEvent, type HookRequest, adapterIdFor, normalizeHook } from "@observer-ai/adapters"
+import { type AdapterEvent, type HookRequest, adapterIdFor, ignoresHook, normalizeHook } from "@observer-ai/adapters"
 import { type RedactionOptions, redactText, redactValue, reduce } from "@observer-ai/core"
 import { type Change, type EventBody, type IngestEvent, IngestEvent as IngestEventSchema } from "@observer-ai/protocol"
 import type { Store } from "@observer-ai/storage"
 import type { CaptureConfig, ObserverConfig } from "./config.js"
-import type { Diagnostics } from "./diagnostics.js"
+import type { Diagnostics, DropReason } from "./diagnostics.js"
 
 export interface PipelineOptions {
   store: Store
@@ -49,9 +49,7 @@ export class Pipeline {
       this.diagnostics?.record({
         host: request.host,
         event: request.event,
-        // A payload the emitter could not parse is a different problem from an
-        // event Observer simply does not map, and needs a different fix.
-        reason: request.payloadError ? "malformed" : "unmapped",
+        reason: emptyResultReason(request),
         detail: request.payloadError,
         payload: request.payload,
       })
@@ -201,4 +199,19 @@ export function describeCapture(capture: CaptureConfig): string[] {
   return Object.entries(capture)
     .filter(([, enabled]) => !enabled)
     .map(([key]) => key)
+}
+
+/**
+ * Explains why a delivery produced no events.
+ *
+ * Three different situations arrive here as the same empty array, and each
+ * needs a different response from the user: a payload the emitter could not
+ * parse is a broken hook, an event the adapter knowingly draws nothing for is
+ * routine, and anything else is coverage Observer is missing. Order matters -
+ * a payload that failed to parse cannot be trusted to say what it was, so
+ * `malformed` is decided first.
+ */
+function emptyResultReason(request: HookRequest): DropReason {
+  if (request.payloadError) return "malformed"
+  return ignoresHook(request) ? "ignored" : "unmapped"
 }

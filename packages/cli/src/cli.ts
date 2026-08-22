@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs"
 import { HOSTS, HOST_CAPABILITIES, type HostId } from "@observer-ai/protocol"
 import { configPath, databasePath, dataDir, logPath, spoolDir } from "@observer-ai/storage"
-import { loadConfig } from "@observer-ai/daemon"
+import { diagnoseSeats, loadConfig } from "@observer-ai/daemon"
 import { HOST_EVENTS, hostConfigPath, install, isInstalled, uninstall } from "./install.js"
 import {
   CODEX_PLUGIN_NAME,
@@ -13,6 +13,7 @@ import {
   uninstallCodexPlugin,
 } from "./codex-plugin.js"
 import { openBrowser, diagnostics, start, status, stop } from "./daemon-control.js"
+import { runConfig } from "./config-ui.js"
 import { canvasUrl, detectHarness, detectSession } from "./harness.js"
 import { daemonPath, emitterPath, opencodePluginSource } from "./paths.js"
 
@@ -30,6 +31,9 @@ Usage
                                    opened it (auto-detected; --all to unbind)
   observer install <host...|all>   Install Observer into a host
   observer uninstall <host...|all> Remove Observer from a host
+  observer config                  Assign a model, reasoning effort and skills
+                                   to each employee (interactive; prints the
+                                   current seats when not on a terminal)
   observer doctor                  Diagnose the local setup
   observer where                   Print the paths Observer uses
   observer version                 Print the version
@@ -38,6 +42,9 @@ Options
   --plugin        With "install codex": install as a Codex plugin instead of
                   writing hooks directly, so it appears in the ChatGPT desktop
                   app's Plugins directory.
+  --probe         With "config": ask OpenCode for its model list instead of
+                  reading the on-disk catalogue. Slower, but picks up models
+                  from providers declared only in opencode.json.
 
 Hosts
   ${HOSTS.join(", ")}
@@ -159,6 +166,9 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
 
+    case "config":
+      return await runConfig(rest.includes("--probe") ? { probeHost: true } : {})
+
     case "doctor":
       return doctor()
 
@@ -236,6 +246,24 @@ async function doctor(): Promise<number> {
   print(`  ${pad("redaction", 20)} ${config.redaction.enabled ? "on" : "off"}`)
   print(`  ${pad("retentionDays", 20)} ${config.retentionDays}`)
 
+  // Seats get a section here as well as their own UI because this is where a
+  // user looks when an employee is not running the model they configured, and
+  // the answer is usually `control` being off rather than anything broken.
+  const seats = diagnoseSeats(config.seats)
+  const seated = Object.keys(config.seats.employees).length
+  print("")
+  print("Seats")
+  print(`  ${pad("control", 20)} ${config.seats.control ? "on" : "off"}`)
+  print(`  ${pad("configured", 20)} ${seated} employee${seated === 1 ? "" : "s"}`)
+  print(`  ${pad("in effect", 20)} ${seats.effective ? "yes" : "no"}`)
+  if (config.seats.control)
+    print(`  ${pad("applies to", 20)} \`general\` delegations only - any other agent keeps its own prompt, tools and model`)
+  for (const issue of seats.issues) {
+    if (issue.severity === "error") problems++
+    print(`  ${pad(issue.severity, 20)} ${issue.message}`)
+  }
+  if (seated === 0) print(`      configure with: observer config`)
+
   // Deliveries that never became events. This is the section that explains a
   // canvas which stays empty while agents are clearly running.
   const delivery = daemon.running ? await diagnostics() : undefined
@@ -278,6 +306,7 @@ async function doctor(): Promise<number> {
 
 const REASON_HELP: Record<string, string> = {
   unmapped: "host events Observer did not translate",
+  ignored: "recognised but not drawn on the canvas (expected)",
   malformed: "payload was not valid JSON",
   invalid: "failed schema validation",
   filtered: "removed by capture settings",

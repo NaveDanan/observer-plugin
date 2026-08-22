@@ -99,6 +99,28 @@ export function homeDir(): string {
   return process.env["HOME"] ?? process.env["USERPROFILE"] ?? join("/tmp")
 }
 
+/**
+ * The root OpenCode reads its user-level configuration from.
+ *
+ * Lives here rather than in `install.ts` so `seat-agents.ts` can resolve the
+ * agent directory without importing the installer that imports it back.
+ */
+export function opencodeConfigBase(): string {
+  const xdg = process.env["XDG_CONFIG_HOME"]
+  return xdg && xdg.length > 0 ? xdg : join(homeDir(), ".config")
+}
+
+/**
+ * The directory OpenCode scans for agent definitions.
+ *
+ * OpenCode globs `{agent,agents}/**\/*.md` under its config root and names each
+ * agent after the file, so everything Observer drops in here becomes a
+ * selectable `subagent_type`.
+ */
+export function opencodeAgentDir(): string {
+  return join(opencodeConfigBase(), "opencode", "agent")
+}
+
 /** Codex's own state directory. */
 export function codexHome(): string {
   const override = process.env["CODEX_HOME"]

@@ -105,6 +105,9 @@ importers:
       '@observer-ai/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@observer-ai/roster':
+        specifier: workspace:*
+        version: link:../roster
       '@observer-ai/storage':
         specifier: workspace:*
         version: link:../storage

@@ -20,8 +20,7 @@ describe("roster API", () => {
     while (closers.length > 0) closers.pop()?.()
   })
 
-  async function setup() {
-    const config = makeConfig()
+  async function setup(config = makeConfig()) {
     const store = new Store({ path: ":memory:" })
     const changes: Change[] = []
     const pipeline = new Pipeline({ store, config, onChanges: (batch) => changes.push(...batch) })
@@ -72,5 +71,62 @@ describe("roster API", () => {
       payload: { task: 42 },
     })
     expect(bad.statusCode).toBe(400)
+  })
+})
+
+describe("configured skills reach the directive the plugin appends", () => {
+  const closers: Array<() => void> = []
+  afterEach(() => {
+    while (closers.length > 0) closers.pop()?.()
+  })
+
+  async function matchWith(config: ObserverConfig, task: string) {
+    const store = new Store({ path: ":memory:" })
+    const pipeline = new Pipeline({ store, config, onChanges: () => {} })
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/roster/match",
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+      payload: { task, limit: 1 },
+    })
+    return response.json().matches[0]
+  }
+
+  const K8S_TASK = "Kubernetes deployment is unhealthy in every environment"
+
+  it("omits the skills line when nothing is configured", async () => {
+    const match = await matchWith(makeConfig(), K8S_TASK)
+    expect(match.id).toBe("elias-mercer")
+    expect(match.directive).not.toContain("Skills available to you")
+  })
+
+  it("renders a configured skill on the matched employee's directive", async () => {
+    const config = makeConfig({
+      seats: { control: false, employees: { "elias-mercer": { skills: [{ name: "argocd", description: "" }] } } },
+    })
+    const match = await matchWith(config, K8S_TASK)
+    expect(match.directive).toContain("Skills available to you: argocd.")
+  })
+
+  it("applies skills even with seat control off, because they are only prompt text", async () => {
+    const config = makeConfig({
+      seats: { control: false, employees: { "elias-mercer": { skills: [{ name: "argocd", description: "" }] } } },
+    })
+    expect(config.seats.control).toBe(false)
+    expect((await matchWith(config, K8S_TASK)).directive).toContain("argocd")
+  })
+
+  it("leaves other employees' directives alone", async () => {
+    const config = makeConfig({
+      seats: { control: false, employees: { "arjun-mehta": { skills: [{ name: "react", description: "" }] } } },
+    })
+    const match = await matchWith(config, K8S_TASK)
+    expect(match.id).toBe("elias-mercer")
+    expect(match.directive).not.toContain("react")
   })
 })

@@ -129,6 +129,68 @@ describe("Diagnostics", () => {
     store.close()
   })
 
+  it("counts a deliberately undrawn part as ignored rather than a fault", () => {
+    const { pipeline, diagnostics, store } = setup()
+    // OpenCode emits thousands of these per session. Before `ignored` existed
+    // they all landed on `unmapped` and the UI told the user Observer was
+    // failing to record its own routine traffic.
+    pipeline.ingestHook({
+      host: "opencode",
+      event: "message.part.updated",
+      deliveryId: "d1",
+      payload: { part: { type: "step-start", id: "prt", messageID: "m1" } },
+      context: { sessionKey: "root", agentKey: "main", at: 5 },
+    })
+
+    const snapshot = diagnostics.snapshot()
+    expect(snapshot.counters.ignored).toBe(1)
+    expect(snapshot.counters.unmapped).toBe(0)
+    expect(snapshot.faults).toBe(0)
+    // Faults are the only thing worth sampling, so this must not crowd them out.
+    expect(snapshot.recent).toHaveLength(0)
+    store.close()
+  })
+
+  it("still faults on a part type no adapter recognises", () => {
+    const { pipeline, diagnostics, store } = setup()
+    // The regression guard: if the ignore list ever becomes a catch-all, a new
+    // OpenCode part type would go unnoticed and simply never be drawn.
+    pipeline.ingestHook({
+      host: "opencode",
+      event: "message.part.updated",
+      deliveryId: "d1",
+      payload: { part: { type: "quantum-flux", id: "prt", messageID: "m1" } },
+      context: { sessionKey: "root", agentKey: "main", at: 5 },
+    })
+
+    const snapshot = diagnostics.snapshot()
+    expect(snapshot.counters.unmapped).toBe(1)
+    expect(snapshot.counters.ignored).toBe(0)
+    expect(snapshot.faults).toBe(1)
+    expect(snapshot.recent[0]).toMatchObject({ host: "opencode", reason: "unmapped" })
+    store.close()
+  })
+
+  it("reports a broken payload as malformed even when the event looks ignorable", () => {
+    const { pipeline, diagnostics, store } = setup()
+    // A payload the emitter could not parse cannot be trusted to say what it
+    // was, so the parse failure is the finding, not the part type inside it.
+    pipeline.ingestHook({
+      host: "opencode",
+      event: "message.part.updated",
+      deliveryId: "d1",
+      payload: { part: { type: "step-start" } },
+      payloadError: "Unexpected end of JSON input",
+      context: { sessionKey: "root", agentKey: "main", at: 5 },
+    })
+
+    const snapshot = diagnostics.snapshot()
+    expect(snapshot.counters.malformed).toBe(1)
+    expect(snapshot.counters.ignored).toBe(0)
+    expect(snapshot.faults).toBe(1)
+    store.close()
+  })
+
   it("keeps only the most recent samples", () => {
     const diagnostics = new Diagnostics(3)
     for (let i = 0; i < 10; i++) {

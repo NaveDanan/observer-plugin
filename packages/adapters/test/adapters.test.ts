@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { normalizeHook } from "@observer-ai/adapters"
+import { ignoresHook, normalizeHook } from "@observer-ai/adapters"
 import type { AdapterEvent } from "@observer-ai/adapters"
 
 function kinds(events: AdapterEvent[]): string[] {
@@ -282,6 +282,41 @@ describe("opencode adapter", () => {
     expect(events[0]?.body).toMatchObject({ kind: "prompt.fragment", promptKind: "system", availability: "available" })
   })
 
+  it("lands the plugin's end-of-delegation signal on the subagent node", () => {
+    // Emitted with the child session's resolution, so it must keep it.
+    const events = normalizeHook({
+      host: "opencode",
+      event: "observer.agent-status",
+      deliveryId: "d",
+      payload: { status: "completed" },
+      context: { ...context, agentKey: "session:child", parentAgentKey: "main" },
+    })
+    expect(events[0]?.agentKey).toBe("session:child")
+    expect(find(events, "agent.status")).toMatchObject({ status: "completed" })
+
+    const failed = normalizeHook({
+      host: "opencode",
+      event: "observer.agent-status",
+      deliveryId: "d",
+      payload: { status: "failed" },
+      context,
+    })
+    expect(find(failed, "agent.status")).toMatchObject({ status: "failed" })
+  })
+
+  it("treats an out-of-contract status as unmapped rather than inventing a state", () => {
+    // The plugin only ever sends completed or failed; anything else is drift
+    // between the two ends and must surface as a gap, not as a drawn state.
+    const events = normalizeHook({
+      host: "opencode",
+      event: "observer.agent-status",
+      deliveryId: "d",
+      payload: { status: "running" },
+      context,
+    })
+    expect(events).toEqual([])
+  })
+
   it("never throws on malformed payloads", () => {
     expect(() =>
       normalizeHook({
@@ -292,5 +327,54 @@ describe("opencode adapter", () => {
         context,
       }),
     ).not.toThrow()
+  })
+})
+
+describe("adapter ignore list", () => {
+  const context = { sessionKey: "root", agentKey: "main", at: 5 }
+
+  function partUpdate(type: unknown, event = "message.part.updated"): Parameters<typeof ignoresHook>[0] {
+    return {
+      host: "opencode",
+      event,
+      deliveryId: "d",
+      payload: { part: { type, id: "prt", messageID: "m1" } },
+      context,
+    }
+  }
+
+  it("declares OpenCode step parts as deliberately undrawn", () => {
+    // These outnumber the parts Observer draws several to one, so counting them
+    // as faults is what put a five-figure alarm in front of the user.
+    expect(ignoresHook(partUpdate("step-start"))).toBe(true)
+    expect(ignoresHook(partUpdate("step-finish"))).toBe(true)
+    expect(ignoresHook(partUpdate("patch"))).toBe(true)
+    expect(normalizeHook(partUpdate("step-start"))).toEqual([])
+  })
+
+  it("does not claim a part type it has never heard of", () => {
+    // The allowlist must never become a catch-all: an unknown type is how
+    // Observer learns OpenCode shipped something new worth drawing.
+    expect(ignoresHook(partUpdate("quantum-flux"))).toBe(false)
+    expect(ignoresHook(partUpdate(undefined))).toBe(false)
+  })
+
+  it("does not claim a part type Observer actually draws", () => {
+    expect(ignoresHook(partUpdate("text"))).toBe(false)
+    expect(ignoresHook(partUpdate("tool"))).toBe(false)
+  })
+
+  it("is scoped to the event that carries parts", () => {
+    // A `part` key on some other event is not the same delivery shape, and
+    // silencing it would hide a real gap in that event's coverage.
+    expect(ignoresHook(partUpdate("step-start", "session.updated"))).toBe(false)
+  })
+
+  it("answers false for hosts with no opinion, and never throws", () => {
+    const noOpinion = { host: "claude" as const, event: "SomeFutureEvent", deliveryId: "d", payload: {} }
+    const broken = { host: "opencode" as const, event: "message.part.updated", deliveryId: "d", payload: null }
+    expect(ignoresHook(noOpinion)).toBe(false)
+    expect(() => ignoresHook(broken)).not.toThrow()
+    expect(ignoresHook(broken)).toBe(false)
   })
 })

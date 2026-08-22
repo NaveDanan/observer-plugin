@@ -162,6 +162,37 @@ describe("reduce", () => {
     expect(store.agents.get(agentId(SESSION, "agent:a1"))?.status).toBe("completed")
   })
 
+  // The plugin reports a finished delegation as agent.status completed/failed;
+  // the host's own session.idle for the child may still arrive afterwards, in
+  // either order. These pin the guard those deliveries rely on.
+  it("keeps a completed agent terminal when a late idle reports after it", () => {
+    const store = new MemoryStore()
+    reduce(store, event({ kind: "agent.started", agentType: "Explore" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "completed" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "idle" }, { agentKey: "agent:a1" }))
+
+    expect(store.agents.get(agentId(SESSION, "agent:a1"))?.status).toBe("completed")
+  })
+
+  it("still upgrades an idle agent to completed", () => {
+    const store = new MemoryStore()
+    reduce(store, event({ kind: "agent.started", agentType: "Explore" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "idle" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "completed" }, { agentKey: "agent:a1" }))
+
+    expect(store.agents.get(agentId(SESSION, "agent:a1"))?.status).toBe("completed")
+  })
+
+  it("makes failed stick against later non-terminal statuses like completed does", () => {
+    const store = new MemoryStore()
+    reduce(store, event({ kind: "agent.started", agentType: "Explore" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "failed" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "idle" }, { agentKey: "agent:a1" }))
+    reduce(store, event({ kind: "agent.status", status: "running" }, { agentKey: "agent:a1" }))
+
+    expect(store.agents.get(agentId(SESSION, "agent:a1"))?.status).toBe("failed")
+  })
+
   it("collapses repeated writes to one change per row", () => {
     const store = new MemoryStore()
     const changes = reduce(store, event({ kind: "session.started", title: "t", model: "m", cwd: "/w" }))

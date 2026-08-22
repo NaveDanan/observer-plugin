@@ -17,6 +17,16 @@ import * as api from "./api"
 
 type ConnectionState = "connecting" | "live" | "offline"
 
+/**
+ * Which subagents the canvas shows.
+ *
+ * Both non-"all" modes keep every root agent visible: a canvas with no anchor
+ * is disorienting. See `agentMatchesFilter` for the exact membership.
+ */
+export type AgentFilterMode = "all" | "active" | "finished"
+
+const AGENT_FILTER_MODES: readonly AgentFilterMode[] = ["all", "active", "finished"]
+
 interface State {
   ready: boolean
   connection: ConnectionState
@@ -46,6 +56,17 @@ interface State {
   countedToolCalls: Set<string>
   selectedSessionId: string | undefined
   selectedAgentId: string | undefined
+  /** Which subagents the canvas shows. A view preference, not a session fact. */
+  agentFilter: AgentFilterMode
+  /**
+   * The agent whose NJ-LABS employee card modal is open.
+   *
+   * Separate from `selectedAgentId` because selection and openness are no
+   * longer the same event: a click selects an agent and docks its panels, a
+   * double-click additionally raises the card over the top of them. Folding
+   * this into the selection would make every click open a modal.
+   */
+  cardAgentId: string | undefined
   loadedAgents: Set<string>
   /** Memoized agent→employee matches, keyed by id + updatedAt. */
   matchCache: Map<string, EmployeeMatch | undefined>
@@ -97,6 +118,8 @@ const state: State = {
   countedToolCalls: new Set(),
   selectedSessionId: undefined,
   selectedAgentId: undefined,
+  agentFilter: "all",
+  cardAgentId: undefined,
   loadedAgents: new Set(),
   matchCache: new Map(),
   scopeHost: initialScope.host,
@@ -206,6 +229,7 @@ export function dismissDiagnostics(): void {
 export async function selectSession(sessionId: string): Promise<void> {
   state.selectedSessionId = sessionId
   state.selectedAgentId = undefined
+  state.cardAgentId = undefined
   notify()
   const snapshot = await api.getSnapshot(sessionId)
   state.sessions.set(snapshot.session.id, snapshot.session)
@@ -223,11 +247,49 @@ export async function selectSession(sessionId: string): Promise<void> {
   notify()
 }
 
+/**
+ * The card that survives a selection change.
+ *
+ * Clicking a different node moves the docked panels to that agent, so a card
+ * still showing the previous one would be lying about what is selected. The
+ * card stays open only when the selection lands back on its own agent, which
+ * is what a double-click does: it fires a click before it fires itself.
+ */
+export function nextCardAgentId(cardAgentId: string | undefined, selectedAgentId: string | undefined): string | undefined {
+  return cardAgentId !== undefined && cardAgentId === selectedAgentId ? cardAgentId : undefined
+}
+
 export async function selectAgent(agentId: string | undefined): Promise<void> {
   state.selectedAgentId = agentId
+  state.cardAgentId = nextCardAgentId(state.cardAgentId, agentId)
   notify()
   if (!agentId || state.loadedAgents.has(agentId)) return
   await loadAgentDetail(agentId)
+}
+
+/**
+ * Raises the employee card over the canvas.
+ *
+ * The card is the seated employee's identity, so an agent nobody is seated
+ * on has no card to show; `App` decides that from the match and this stays a
+ * plain id.
+ */
+export function openEmployeeCard(agentId: string): void {
+  state.cardAgentId = agentId
+  notify()
+}
+
+export function closeEmployeeCard(): void {
+  if (state.cardAgentId === undefined) return
+  state.cardAgentId = undefined
+  notify()
+}
+
+/** Switches which subagents the canvas shows. */
+export function setAgentFilter(mode: AgentFilterMode): void {
+  if (!AGENT_FILTER_MODES.includes(mode) || state.agentFilter === mode) return
+  state.agentFilter = mode
+  notify()
 }
 
 export async function loadAgentDetail(agentId: string): Promise<void> {
@@ -268,6 +330,7 @@ export async function removeSession(sessionId: string): Promise<void> {
     const next = [...state.sessions.values()][0]
     state.selectedSessionId = next?.id
     state.selectedAgentId = undefined
+    state.cardAgentId = undefined
   }
   notify()
 }
@@ -453,6 +516,81 @@ export function selectEdges(current: Readonly<State>, sessionId: string | undefi
   return [...current.edges.values()].filter((edge) => edge.sessionId === sessionId)
 }
 
+// -------------------------------------------------------------- canvas filter
+
+/**
+ * Statuses whose work has ended.
+ *
+ * `failed` and `interrupted` count as finished for filtering — their work is
+ * over, even though they carry their own warning labels visually. Kept as a
+ * plain string set so a status the protocol does not know about yet can be
+ * classified at runtime rather than vanishing from the canvas.
+ */
+const FINISHED_STATUSES: ReadonlySet<string> = new Set(["idle", "completed", "failed", "interrupted"])
+
+/**
+ * True when an agent's work has ended, whatever its host calls that.
+ *
+ * Takes a plain string deliberately: hosts drift ahead of the protocol enum,
+ * and the fail-safe below only works if an unknown value can reach this
+ * function without a cast stripping the doubt away.
+ */
+export function isFinishedStatus(status: string): boolean {
+  return FINISHED_STATUSES.has(status)
+}
+
+/**
+ * Whether an agent is on the canvas under a filter mode.
+ *
+ * The root agent is always visible, in every mode: it is the anchor the graph
+ * hangs from, and hiding it makes a filtered canvas unreadable. A subagent is
+ * shown when its work matches the mode's question — "still going?" for
+ * active, "done or dead?" for finished. Active is phrased as *not finished*
+ * on purpose, so an unknown future status stays on the canvas instead of
+ * silently disappearing; finished is a closed set because claiming work ended
+ * when we cannot say so would be a lie of exactly the kind filtering exists
+ * to prevent.
+ */
+export function agentMatchesFilter(
+  agent: Pick<AgentEntity, "status" | "parentAgentId">,
+  mode: AgentFilterMode,
+): boolean {
+  if (mode === "all") return true
+  // Roots stay put; the filter is about which subagents to show beside them.
+  if (!agent.parentAgentId) return true
+  const finished = isFinishedStatus(agent.status)
+  return mode === "finished" ? finished : !finished
+}
+
+/**
+ * The agents the canvas draws under the current filter, spawn order kept.
+ */
+export function selectVisibleAgents(current: Readonly<State>, sessionId: string | undefined): AgentEntity[] {
+  return selectAgents(current, sessionId).filter((agent) => agentMatchesFilter(agent, current.agentFilter))
+}
+
+/**
+ * Per-segment counts for the filter control.
+ *
+ * Roots are excluded on purpose: they are visible in all three modes, so
+ * counting them would inflate every segment by the same constant and break
+ * the arithmetic the counts exist to reassure with — ALL = ACTIVE + FINISHED.
+ */
+export function selectFilterCounts(
+  current: Readonly<State>,
+  sessionId: string | undefined,
+): Record<AgentFilterMode, number> {
+  const counts = { all: 0, active: 0, finished: 0 }
+  if (!sessionId) return counts
+  for (const agent of current.agents.values()) {
+    if (agent.sessionId !== sessionId || !agent.parentAgentId) continue
+    counts.all++
+    if (isFinishedStatus(agent.status)) counts.finished++
+    else counts.active++
+  }
+  return counts
+}
+
 export function selectTodos(current: Readonly<State>, agentId: string | undefined): TodoEntity[] {
   if (!agentId) return []
   return [...current.todos.values()].filter((todo) => todo.agentId === agentId).sort((a, b) => a.position - b.position)
@@ -619,6 +757,8 @@ export function __resetForTests(): void {
   state.matchCache.clear()
   state.selectedSessionId = undefined
   state.selectedAgentId = undefined
+  state.agentFilter = "all"
+  state.cardAgentId = undefined
   state.diagnostics = undefined
   state.diagnosticsDismissed = false
   state.cursor = 0

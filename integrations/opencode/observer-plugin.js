@@ -21,8 +21,22 @@
  *    the task description — which the host then decorates into the session
  *    title, so the join has to normalise before it compares.
  *  - Manual activation: typing `@observer` in a message turns staffing on for
- *    the session (`@observer off` turns it off), overriding `"guidance": false`
- *    in ~/.observer/config.json for that session.
+ *    the session (`@observer off` turns it off), overriding the `"guidance"`
+ *    setting in ~/.observer/config.json for that session in either direction.
+ *    The activation is carried into the model through the system prompt, never
+ *    by adding message parts: the host builds and identifies its own parts
+ *    before plugins are called, so a part a plugin appends has no id and fails
+ *    the host's save-time schema check, which aborts the whole turn.
+ *  - Seat control (`"seats": { "control": true }`, off by default): points a
+ *    seated delegation at the hidden per-employee agent definition the
+ *    installer generated, so the employee runs on the model and reasoning
+ *    effort the user assigned. This is the only thing the plugin does that
+ *    changes what the host runs rather than what it is told, and it is the
+ *    only thing that can fail a delegation, so it never rewrites
+ *    `subagent_type` without first confirming the target exists — and it only
+ *    ever replaces a `subagent_type` in `NEUTRAL_AGENT_TYPES`, because every
+ *    other agent carries a prompt or a tool restriction that is not Observer's
+ *    to discard.
  */
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -41,7 +55,46 @@ const UNKNOWN_SESSION_RETRY_MS = 5000
 /** Guards the parent walk against a malformed parentID chain. */
 const MAX_SESSION_DEPTH = 32
 
+/**
+ * How long the host's agent list is trusted before it is asked again.
+ *
+ * OpenCode globs its agent directory once, at startup, and does not rescan —
+ * a definition written mid-session is invisible until the host restarts. So
+ * this is really a one-shot lookup, and the TTL exists for two narrower
+ * reasons: it collapses a burst of parallel delegations into a single loopback
+ * request, and it stops an answer taken before the host finished registering
+ * its agents from being believed for the rest of the session.
+ */
+const AGENT_LIST_TTL_MS = 30 * 1000
+
 const MAIN_AGENT_KEY = "main"
+
+/**
+ * The `subagent_type` values seat control is allowed to replace.
+ *
+ * `subagent_type` does not select a model. It selects a whole agent definition
+ * — prompt, tool permissions, mode, everything — so substituting Observer's
+ * generated seat agent for it discards whatever the named agent was for.
+ * `general` is the only built-in that carries no prompt and no tool
+ * restriction, which makes the swap genuinely lossless: it changes the model
+ * and nothing else. Every other agent, built-in or user-written, encodes
+ * intent Observer did not author. `explore` is the case that decides this:
+ * it ships a specialised prompt *and* a deny-by-default permission set that
+ * allows only reads and searches, and silently
+ * trading a read-only guarantee for a model preference is not a trade Observer
+ * gets to make on the user's behalf.
+ *
+ * A delegation to anything else is therefore left alone, exactly as if the
+ * generated agent were missing. If OpenCode ever ships another agent with no
+ * prompt and no tool restriction, adding it here is the whole change.
+ *
+ * **This list is duplicated as `NEUTRAL_AGENT_TYPES` in
+ * `packages/cli/src/seat-agents.ts`**, which describes the rule to the user in
+ * the installer's notes. The plugin is dependency-free plain JavaScript copied
+ * verbatim into the user's config directory, so it cannot import the original.
+ * Change one, change both.
+ */
+const NEUTRAL_AGENT_TYPES = new Set(["general"])
 
 /**
  * OpenCode names a child session after the delegation that spawned it and then
@@ -50,6 +103,29 @@ const MAIN_AGENT_KEY = "main"
  * the two can be joined.
  */
 const SUBAGENT_TITLE_SUFFIX = /\s*\(\s*@?[\w.\-]+\s+subagent\s*\)\s*$/i
+
+/**
+ * The OpenCode agent name for an employee's generated definition.
+ *
+ * **This is a copy of `seatAgentName` in `packages/cli/src/seat-agents.ts`**,
+ * which is what writes the files this looks up. The plugin is dependency-free
+ * plain JavaScript copied verbatim into the user's config directory, so it
+ * cannot import the original. The two must agree exactly: if they drift, the
+ * installer writes `observer-a` and the plugin asks for `observer-b`, the
+ * lookup misses, and seat control silently stops working. Change one, change
+ * both.
+ *
+ * The character class is a strict subset of the `[\w.\-]` that
+ * SUBAGENT_TITLE_SUFFIX accepts, so a generated name never breaks the join
+ * between a child session and its delegation.
+ */
+function seatAgentName(employeeId) {
+  const slug = String(employeeId)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return `observer-${slug.length > 0 ? slug : "unknown"}`
+}
 
 /**
  * Normalises a description or a session title into a join key: whitespace
@@ -121,9 +197,13 @@ function briefingFromProfiles(profiles) {
  *
  * "@observer" turns staffing on for the session, "@observer off" turns it
  * back off. Returns "on", "off", or undefined when no mention is present.
+ *
+ * The trailing boundary is "not a word character" rather than "whitespace or
+ * end": people punctuate. Requiring whitespace made "@observer off, thanks"
+ * backtrack past the "off" and activate — the opposite of what was asked.
  */
 function observerMention(text) {
-  const match = /(?:^|\s)@observer\b(?:\s+(off|on))?(?=\s|$)/i.exec(text)
+  const match = /(?:^|\s)@observer\b(?:\s+(off|on))?(?![\w-])/i.exec(text)
   if (!match) return undefined
   return (match[1] ?? "on").toLowerCase()
 }
@@ -143,6 +223,95 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
    */
   const guidanceEnabled = config.guidance !== false
   let briefing = undefined
+
+  /**
+   * Seat control: whether Observer may point a delegation at the generated
+   * agent that carries an employee's model and reasoning effort.
+   *
+   * Off unless the user says otherwise, because rewriting `subagent_type`
+   * changes what they are billed for, changes which agent name the permission
+   * prompt names, and — if the target does not exist — fails the delegation
+   * outright with "Unknown agent type". Read once at startup, like `guidance`:
+   * the generated agent files only load when OpenCode starts, so a config read
+   * later in the session could only disagree with what the host has loaded.
+   */
+  const seatControl = config.seats?.control === true
+  const seatSpecs = (config.seats && config.seats.employees) || {}
+
+  /**
+   * Names of the agents the host currently knows, or undefined when we could
+   * not find out.
+   *
+   * The host is asked rather than the filesystem, deliberately. The task tool
+   * fails a delegation when its own agent registry has no entry for
+   * `subagent_type`, and `/agent` is that same registry — a file on disk that
+   * the host has not loaded would pass a filesystem check and still fail the
+   * task. Only the host's answer is evidence.
+   */
+  let agentNames = undefined
+  let agentNamesAt = 0
+  let agentNamesInFlight = undefined
+
+  const knownAgents = async () => {
+    if (agentNames && Date.now() - agentNamesAt < AGENT_LIST_TTL_MS) return agentNames
+    if (agentNamesInFlight) return agentNamesInFlight
+    agentNamesInFlight = (async () => {
+      try {
+        const response = await client.app.agents()
+        const list = response?.data ?? response
+        if (!Array.isArray(list)) return undefined
+        agentNames = new Set(list.map((agent) => agent?.name).filter((name) => typeof name === "string"))
+        agentNamesAt = Date.now()
+        return agentNames
+      } catch {
+        // A failed lookup is never cached as "no agents": that would turn one
+        // unlucky request into a session-long refusal to apply any seat.
+        return undefined
+      } finally {
+        agentNamesInFlight = undefined
+      }
+    })()
+    return agentNamesInFlight
+  }
+
+  /**
+   * Points a delegation at an employee's generated agent, if and only if that
+   * agent really exists *and* the delegation is one a seat may replace.
+   *
+   * Every uncertainty returns without touching `args`: control off, no model
+   * configured for this employee, a `subagent_type` outside
+   * `NEUTRAL_AGENT_TYPES`, the host unreachable, the definition never
+   * generated, or OpenCode not restarted since it was. Leaving
+   * `subagent_type` alone costs the user their model preference for one task.
+   * Getting it wrong costs them the task, or — worse, for a specialised agent
+   * — costs them that agent's tool restrictions without saying so. Those are
+   * not close.
+   */
+  const applySeatAgent = async (args, employeeId) => {
+    if (!seatControl) return
+    const spec = seatSpecs[employeeId]
+    // A seat with no model has nothing to apply — OpenCode honours a variant
+    // only alongside an agent's own model, so no file was generated either.
+    if (!spec || typeof spec.model !== "string" || spec.model.length === 0) return
+    // Rewrite whichever spelling the host used, and never introduce one it did
+    // not: a key the host does not read is at best noise.
+    const key =
+      typeof args.subagent_type === "string"
+        ? "subagent_type"
+        : typeof args.subagentType === "string"
+          ? "subagentType"
+          : undefined
+    if (!key) return
+    // Compared exactly, not case-folded or trimmed. The host resolves
+    // `subagent_type` by exact lookup too, so a value this misses is one the
+    // host was going to reject anyway — normalising here would only let
+    // Observer act on a delegation that was never going to run.
+    if (!NEUTRAL_AGENT_TYPES.has(args[key])) return
+    const name = seatAgentName(employeeId)
+    const agents = await knownAgents()
+    if (!agents || !agents.has(name)) return
+    args[key] = name
+  }
 
   const apiGet = async (path) => {
     const response = await fetch(`http://127.0.0.1:${config.port}${path}`, {
@@ -490,6 +659,38 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
               false,
             )
           }
+          // A finished `task` call is the one deterministic statement that a
+          // delegation ran to its end: it ends visibly in the parent's own
+          // message stream, while the host's `session.idle` for the child
+          // session is not guaranteed. Report the fact to the child's node so
+          // the canvas can state it as finished even when that idle never comes.
+          if (part.type === "tool" && part.tool === "task") {
+            try {
+              const status =
+                part.state?.status === "completed"
+                  ? "completed"
+                  : part.state?.status === "error"
+                    ? "failed"
+                    : undefined
+              // Only terminal states report; streaming updates stay silent.
+              if (status) {
+                // The join reads the same key the backfill writer recorded.
+                // A claim without any callID — the backfill path cannot always
+                // know it — simply never matches: joining on anything fuzzier
+                // could finish the wrong subagent.
+                const callID = part.callID ?? part.id
+                for (const [childSessionID, claim] of staffedSessions) {
+                  if (!claim.callID || claim.statusReported || claim.callID !== callID) continue
+                  // One report per delegation: hosts re-send finished parts.
+                  claim.statusReported = true
+                  await forward("observer.agent-status", { status }, childSessionID)
+                  break
+                }
+              }
+            } catch {
+              // Telemetry is best-effort; it never breaks the host session.
+            }
+          }
           await forward(type, properties, part.sessionID, { role })
           return
         }
@@ -523,40 +724,37 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           sessionID,
         )
       }
-      // Manual activation. The synthetic part reaches the model but not the
-      // user-message capture above, which filters synthetic parts out.
+      // Manual activation. Recorded only: the instruction reaches the model
+      // through the system prompt on this same turn, because the host composes
+      // the system prompt after this hook. Appending a part here instead would
+      // abort the turn — see the note at the top of the file.
       const mention = observerMention(text)
-      if (mention && Array.isArray(output?.parts)) {
-        activated.set(sessionID, mention !== "off")
-        output.parts.push({
-          type: "text",
-          synthetic: true,
-          text:
-            mention === "off"
-              ? "Observer staffing deactivated (@observer off): run the rest of this session without roster guidance."
-              : "Observer staffing activated (@observer): for the rest of this session, delegate work through subagents whenever it helps and staff them with the best-fitting teammate from your team roster.",
-        })
-      }
+      if (mention) activated.set(sessionID, mention !== "off")
     },
 
     /**
      * Read-only capture of the composed system prompt, then roster guidance:
      * the root agent is briefed on who is on the team so it can pick the
-     * right subagent for each task. A manual @observer activation injects
-     * the briefing even when guidance is disabled in config.
+     * right subagent for each task.
+     *
+     * A manual @observer decision outranks the config in both directions: it
+     * briefs even when guidance is disabled, and stays silent after
+     * `@observer off` even when guidance is enabled. `undefined` means the
+     * user never said, so the config decides.
      */
     async "experimental.chat.system.transform"(input, output) {
       if (!input?.sessionID || !Array.isArray(output?.system)) return
       await forward("observer.system", { system: output.system.slice(0, 12) }, input.sessionID)
       const manual = await isActivated(input.sessionID)
-      if (guidanceEnabled || manual) {
-        const text = await loadBriefing()
-        if (text) output.system.push(text)
-        if (manual && text) {
-          output.system.push(
-            "The user activated Observer staffing with @observer: look for chances to delegate to subagents and seat them from the roster.",
-          )
-        }
+      if (manual === false) return
+      if (!guidanceEnabled && !manual) return
+      const text = await loadBriefing()
+      if (!text) return
+      output.system.push(text)
+      if (manual) {
+        output.system.push(
+          "The user activated Observer staffing with @observer: look for chances to delegate to subagents and seat them from the roster.",
+        )
       }
     },
 
@@ -573,13 +771,23 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       if (!args || typeof args.prompt !== "string" || args.prompt.length === 0) return
       // Activation is checked against the session tree's root, not the raw
       // session: `@observer` is typed once but governs every subagent below it,
-      // including a subagent that spawns its own.
-      if (!guidanceEnabled && !(await isActivated(input?.sessionID))) return
+      // including a subagent that spawns its own. An explicit `@observer off`
+      // outranks globally enabled guidance, the same way it does for the brief.
+      const manual = await isActivated(input?.sessionID)
+      if (manual === false) return
+      if (!guidanceEnabled && !manual) return
       const callID = input?.callID ?? input?.callId ?? input?.id
       try {
         // A delegation to the @observer agent is the activation ack, not work:
         // the node keeps its own type instead of wearing an employee persona.
-        if (typeof args.subagentType === "string" && args.subagentType.toLowerCase() === "observer") {
+        //
+        // OpenCode spells this parameter `subagent_type`; `subagentType` never
+        // existed, so this branch had never run and every @observer activation
+        // was seated as an employee. Both spellings are read anyway: the
+        // fallback is one `??`, and the cost of guessing wrong again is a
+        // silent behaviour change rather than a visible error.
+        const subagentType = args.subagent_type ?? args.subagentType
+        if (typeof subagentType === "string" && subagentType.toLowerCase() === "observer") {
           recordDelegation(args.description, callID, { prompt: args.prompt, agentType: "observer" })
           return
         }
@@ -591,6 +799,14 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
         if (seat?.directive) {
           args.prompt = `${args.prompt}\n\n---\nObserver staffing note:\n${seat.directive}`
         }
+        // The directive above is the persona's only home. It is deliberately
+        // not baked into the generated agent file: it is built per task by the
+        // daemon (and carries the seat's configured skills), it has to reach
+        // employees who have no generated file at all, and it must survive the
+        // fallback below when the file is missing. Putting it in both places
+        // would brief the subagent twice; putting it only in the file would
+        // lose the persona exactly when seat control quietly declines.
+        if (seat) await applySeatAgent(args, seat.id)
       } catch {
         // Guidance is best-effort; a down daemon changes nothing.
       }

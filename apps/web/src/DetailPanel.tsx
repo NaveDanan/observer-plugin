@@ -8,6 +8,7 @@ import type {
   ToolCallEntity,
 } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
+import { useDismissLayer } from "./dismissLayer"
 
 type Tab = "prompt" | "chat" | "todos" | "tools"
 
@@ -40,14 +41,9 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
   const closeRef = useRef<HTMLButtonElement>(null)
   const employee = match?.profile
 
-  useEffect(() => {
-    closeRef.current?.focus()
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose])
+  // Shared layer stack: this panel mounts alongside the Worker card and, when
+  // the ID card is open, underneath it. Only the top layer answers Escape.
+  useDismissLayer(onClose, { focusRef: closeRef })
 
   return (
     <aside className="panel" role="dialog" aria-label={`Agent ${agent.displayName ?? agent.agentType}`}>

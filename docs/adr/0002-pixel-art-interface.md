@@ -89,6 +89,15 @@ reaches further than a stylesheet:
 - **Motion is opt-out.** `prefers-reduced-motion: reduce` kills the dash flow, the live pulse and the
   panel slide globally, rather than naming individual selectors that later get renamed away.
 
+## Amended: the employee card is out of scope
+
+Both of the rules above — zero radius, no colour outside `:root` — are broken on purpose by exactly
+one surface, the NJ-LABS employee ID card that opens on double-clicking an agent node. That card is
+a reproduction of a printed object rather than something Observer designs, so these rules do not
+reach it. The exception is real, it is bounded by the `.nj-overlay` selector list in `styles.css`,
+and its reasoning is in `0003-employee-card-carve-out.md`. Nothing else in the interface moved: the
+docked Worker card panel is unchanged, and the card's own close button is still square.
+
 Rejected for now: Playwright visual-regression snapshots. They suit pixel art unusually well, since
 exact pixel comparison has none of the antialiasing noise that normally makes screenshot tests
 flaky — worth revisiting once the look has stabilised, but premature before then.

@@ -99,5 +99,15 @@ export type { DiagnosticsSnapshot, DropReason, DropSample } from "./diagnostics.
 export { createServer } from "./server.js"
 export { loadConfig, saveConfig, DEFAULT_CONFIG } from "./config.js"
 export type { ObserverConfig, CaptureConfig } from "./config.js"
+export { applySeatSkills, diagnoseSeats, seatFor, DEFAULT_SEATS, SEAT_VARIANTS, SeatSpecSchema, SeatsConfigSchema } from "./seats.js"
+export type {
+  SeatDiagnosis,
+  SeatIssue,
+  SeatIssueCode,
+  SeatIssueSeverity,
+  SeatSpec,
+  SeatVariant,
+  SeatsConfig,
+} from "./seats.js"
 export { CopilotTailer } from "./copilot-tailer.js"
 export { drainSpool } from "./spool.js"

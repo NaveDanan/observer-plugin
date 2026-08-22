@@ -3,6 +3,30 @@ import { normalizeTodoStatus } from "@observer-ai/core"
 import { type Adapter, type AdapterEvent, type HookRequest, asRecord, pickNumber, pickString, toText } from "./types.js"
 
 /**
+ * OpenCode message part types Observer deliberately draws nothing for.
+ *
+ * This is the exact complement of the four types `normalize` handles below
+ * (`text`, `reasoning`, `tool`, `subtask`); together they cover the whole
+ * `Part` union as of OpenCode 1.18.21. The plugin forwards every part it sees,
+ * and `step-start` / `step-finish` alone outnumber the drawn types several to
+ * one, so without this list routine traffic reads as a fault.
+ *
+ * A part type in neither list is a genuine gap - OpenCode added something
+ * Observer does not yet understand - and must keep counting as `unmapped` so
+ * it shows up in `observer doctor`. Only ever add a type here deliberately.
+ */
+const UNDRAWN_PART_TYPES = new Set([
+  "step-start",
+  "step-finish",
+  "patch",
+  "snapshot",
+  "file",
+  "agent",
+  "retry",
+  "compaction",
+])
+
+/**
  * OpenCode adapter.
  *
  * OpenCode is the highest-fidelity host: the plugin runs in-process with the
@@ -16,6 +40,13 @@ import { type Adapter, type AdapterEvent, type HookRequest, asRecord, pickNumber
 export const opencodeAdapter: Adapter = {
   host: "opencode",
   adapterId: "opencode-plugin@1",
+  ignores(request: HookRequest): boolean {
+    // Scoped to the one event that carries parts: an unrelated event that
+    // happens to mention `step-start` in its payload is still unmapped.
+    if (request.event !== "message.part.updated") return false
+    const type = pickString(asRecord(asRecord(request.payload)["part"]), "type")
+    return type !== undefined && UNDRAWN_PART_TYPES.has(type)
+  },
   normalize(request: HookRequest): AdapterEvent[] {
     const p = asRecord(request.payload)
     const context = asRecord(request.context)
@@ -209,6 +240,18 @@ export const opencodeAdapter: Adapter = {
         }
         const model = pickString(p, "model")
         if (model) push({ kind: "agent.model", model, confidence: "authoritative" })
+        break
+      }
+
+      case "observer.agent-status": {
+        // The plugin's end-of-delegation signal: the parent's `task` call
+        // finished, which is proof the host need not restate as a child
+        // `session.idle`. Anything outside the contract stays unmapped so a
+        // drifted payload shows up rather than being silently drawn.
+        const status = pickString(p, "status")
+        if (status === "completed" || status === "failed") {
+          push({ kind: "agent.status", status })
+        }
         break
       }
 

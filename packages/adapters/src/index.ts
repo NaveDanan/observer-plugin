@@ -34,3 +34,21 @@ export function normalizeHook(request: HookRequest): AdapterEvent[] {
 export function adapterIdFor(host: HostId): string {
   return ADAPTERS[host]?.adapterId ?? `${host}-unknown`
 }
+
+/**
+ * Whether the host's adapter recognises this delivery and deliberately
+ * produces nothing for it.
+ *
+ * Answers `false` whenever it cannot be sure - unknown host, adapter with no
+ * opinion, or an adapter that threw - because the safe default is to report an
+ * empty result as a gap in Observer's coverage rather than hide it.
+ */
+export function ignoresHook(request: HookRequest): boolean {
+  const adapter = ADAPTERS[request.host]
+  if (!adapter?.ignores) return false
+  try {
+    return adapter.ignores(request)
+  } catch {
+    return false
+  }
+}

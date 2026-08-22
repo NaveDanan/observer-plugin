@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import type { AgentEntity, MessageEntity, TodoEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { describeReason } from "@observer-ai/roster"
+import { useDismissLayer } from "./dismissLayer"
+import { CARD_LAYOUT } from "./employeeCard"
 
 export interface WorkerCardProps {
   agent: AgentEntity
@@ -9,6 +11,8 @@ export interface WorkerCardProps {
   messages: MessageEntity[]
   toolCalls: ToolCallEntity[]
   todos: TodoEntity[]
+  /** Raises the NJ-LABS ID card. Absent when nobody is seated. */
+  onOpenCard: () => void
   onClose: () => void
 }
 
@@ -18,7 +22,8 @@ export interface WorkerCardProps {
  * Identity and behaviour live here (photo, tone, strengths, why they were
  * seated); the right-hand panel carries the work (chat, tools, todos).
  */
-export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }: WorkerCardProps): JSX.Element {
+export function WorkerCard(props: WorkerCardProps): JSX.Element {
+  const { agent, match, messages, toolCalls, todos, onOpenCard, onClose } = props
   const closeRef = useRef<HTMLButtonElement>(null)
   const employee = match?.profile
   const name = employee?.fullName ?? agent.displayName ?? agent.agentType
@@ -29,14 +34,9 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
   // with nobody on purpose; an unseated node is the matcher declining to guess.
   const isSubcontractor = agent.agentType === "subcontractor"
 
-  useEffect(() => {
-    closeRef.current?.focus()
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose])
+  // Escape and focus are owned by the shared layer stack, not by a listener
+  // per panel: this panel and the activity panel always mount together.
+  useDismissLayer(onClose, { focusRef: closeRef })
 
   return (
     <aside className="worker-card" role="complementary" aria-label={`Worker ${name}`}>
@@ -47,6 +47,13 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
               src={photoSrc}
               alt={employee?.fullName ?? name}
               draggable={false}
+              loading="lazy"
+              decoding="async"
+              /* Intrinsic size of every roster portrait. Without it the
+                 photo well has no height until the 1.2MB source decodes,
+                 and the whole panel reflows underneath it. */
+              width={CARD_LAYOUT.portrait.width}
+              height={CARD_LAYOUT.portrait.height}
               onError={() => setBrokenPhotoUrl(photoSrc)}
             />
           ) : (
@@ -65,9 +72,16 @@ export function WorkerCard({ agent, match, messages, toolCalls, todos, onClose }
             </p>
           )}
         </div>
-        <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close worker card">
-          ✕
-        </button>
+        <div className="worker-actions">
+          {employee && (
+            <button className="pixel-btn" onClick={onOpenCard} title="Also: double-click the Agent on the canvas">
+              ID CARD
+            </button>
+          )}
+          <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close worker card">
+            ✕
+          </button>
+        </div>
       </header>
 
       {!employee && (

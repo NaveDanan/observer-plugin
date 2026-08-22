@@ -1,0 +1,226 @@
+import { emitKeypressEvents } from "node:readline"
+import { type ObserverConfig, type SeatsConfig, loadConfig, saveConfig } from "@observer-ai/daemon"
+import { ROSTER } from "@observer-ai/roster"
+import { type Viewport, render, renderReport } from "./config-ui-render.js"
+import { type ConfigUIState, type EmployeeRow, type Key, applied, initialState, reduce } from "./config-ui-state.js"
+import { describeCatalogue, listModels } from "./models.js"
+import { syncSeatAgents } from "./seat-agents.js"
+
+/**
+ * The terminal shell for `observer config`.
+ *
+ * Everything here is I/O and nothing here is behaviour: it reads the config,
+ * feeds keypresses to `reduce`, writes what `render` returns, and performs the
+ * one thing a pure function cannot. That split is why this file has no tests
+ * and the other two have many — what is left to assert on here is Node's own
+ * API, not Observer's.
+ */
+
+/**
+ * Terminal control, not colour.
+ *
+ * `NO_COLOR` asks a program not to *colour* its output, and this UI never
+ * does: the renderer emits no SGR sequences at all, so there is nothing to
+ * suppress. Screen and cursor control is a different thing, and without it a
+ * full-screen UI would scribble over the user's scrollback.
+ */
+const ALT_SCREEN_ON = "\u001B[?1049h"
+const ALT_SCREEN_OFF = "\u001B[?1049l"
+const CURSOR_HIDE = "\u001B[?25l"
+const CURSOR_SHOW = "\u001B[?25h"
+const HOME_AND_CLEAR = "\u001B[H\u001B[2J"
+
+/** What the apply layer exposes, as this file needs it. */
+type SyncSeatAgents = typeof syncSeatAgents
+
+export function rosterRows(): EmployeeRow[] {
+  return ROSTER.map((profile) => ({ id: profile.id, name: profile.fullName, role: profile.title }))
+}
+
+export interface ConfigCommandOptions {
+  /** Ask the host for its model list. Costs seconds; opt in with `--probe`. */
+  probeHost?: boolean
+}
+
+/**
+ * Runs `observer config`, interactively when it can and as a report when it
+ * cannot.
+ *
+ * The non-TTY branch is not a courtesy. Raw mode on a pipe throws on some
+ * platforms and blocks forever on others, and a command that hangs in CI is a
+ * worse failure than one that never ran — the same reason the hook emitter
+ * guards on `isTTY` before it reads stdin.
+ */
+export async function runConfig(options: ConfigCommandOptions = {}): Promise<number> {
+  const config = loadConfig()
+  const roster = rosterRows()
+
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    for (const line of renderReport(config.seats, roster)) process.stdout.write(`${line}\n`)
+    return 0
+  }
+
+  // Models the config already names are pinned into the list, so an existing
+  // seat is never invisible in the picker that is supposed to edit it.
+  const configured = Object.values(config.seats.employees)
+    .map((seat) => seat.model)
+    .filter((model): model is string => typeof model === "string" && model.length > 0)
+  const models = listModels({
+    include: configured,
+    ...(options.probeHost === true ? { probeHost: true } : {}),
+  })
+
+  let state = initialState({ seats: config.seats, roster, models })
+  if (models.length === 0) state = { ...state, status: describeCatalogue(models) }
+
+  return drive(config, state, syncSeatAgents)
+}
+
+function drive(config: ObserverConfig, start: ConfigUIState, sync: SyncSeatAgents | undefined): Promise<number> {
+  const stdin = process.stdin
+  const stdout = process.stdout
+  let state = start
+  let saves = 0
+  let restored = false
+
+  const restore = (): void => {
+    if (restored) return
+    restored = true
+    try {
+      if (stdin.isTTY) stdin.setRawMode(false)
+      stdin.pause()
+      stdout.write(CURSOR_SHOW + ALT_SCREEN_OFF)
+    } catch {
+      // A terminal that has already gone away cannot be restored, and failing
+      // to restore it must not become the error the user sees.
+    }
+  }
+
+  // Registered before raw mode is entered, so nothing between here and the
+  // event loop can leave a terminal with echo off and no cursor.
+  process.once("exit", restore)
+  process.once("SIGINT", () => {
+    restore()
+    process.exit(130)
+  })
+  process.once("SIGTERM", () => {
+    restore()
+    process.exit(143)
+  })
+  process.once("uncaughtException", (error: unknown) => {
+    restore()
+    process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`)
+    process.exit(1)
+  })
+
+  const paint = (): void => {
+    const viewport: Viewport = { rows: stdout.rows ?? 24, columns: stdout.columns ?? 100 }
+    stdout.write(`${HOME_AND_CLEAR}${render(state, viewport).join("\n")}\n`)
+  }
+
+  return new Promise<number>((resolve) => {
+    const finish = (): void => {
+      stdin.off("keypress", onKey)
+      stdout.off("resize", paint)
+      restore()
+      for (const line of farewell(state, saves)) process.stdout.write(`${line}\n`)
+      resolve(0)
+    }
+
+    const onKey = (_sequence: string, key: Key | undefined): void => {
+      const next = reduce(state, key ?? {})
+      if (next === state) return
+      state = next
+
+      if (state.request === "save") {
+        const outcome = save(config, state.seats, sync)
+        if (outcome.saved) saves++
+        state = applied(state, outcome)
+      }
+      if (state.request === "quit") {
+        finish()
+        return
+      }
+      paint()
+    }
+
+    emitKeypressEvents(stdin)
+    stdin.setRawMode(true)
+    stdin.resume()
+    stdout.write(ALT_SCREEN_ON + CURSOR_HIDE)
+    paint()
+    stdin.on("keypress", onKey)
+    stdout.on("resize", paint)
+  })
+}
+
+/**
+ * Writes the seats and asks the apply layer to catch up.
+ *
+ * The config is re-read rather than reusing the object this process started
+ * with: an `observer start` in another terminal may have rewritten the file
+ * since, and losing someone's port change to save a model choice would be a
+ * nasty trade. `saveConfig` is atomic and lossless, so the merge is a field
+ * assignment and not a hand-rolled JSON write.
+ */
+function save(
+  config: ObserverConfig,
+  seats: SeatsConfig,
+  sync: SyncSeatAgents | undefined,
+): { saved: boolean; status: string } {
+  try {
+    const latest = loadConfig()
+    latest.seats = seats
+    saveConfig(latest)
+    config.seats = seats
+  } catch (error) {
+    return { saved: false, status: `Could not save: ${error instanceof Error ? error.message : String(error)}` }
+  }
+
+  // The save has already happened. Anything the apply layer does or fails to
+  // do from here is reported, never rolled back: the file on disk is the
+  // user's config and a generated agent definition is a cache of it.
+  return { saved: true, status: `Saved. ${applyNote(seats, sync)}` }
+}
+
+/**
+ * What the apply layer did, in the words it chose.
+ *
+ * `syncSeatAgents` is called whether or not `control` is on, because turning
+ * control *off* is precisely when stale `observer-*.md` definitions need
+ * removing — leaving them behind would keep a host pointed at a model the
+ * user has just said they no longer want applied.
+ *
+ * `notes` leads rather than `written.length`, on the apply layer's own
+ * instruction: a run that finds every file already correct writes nothing and
+ * reports `written: []`, so counting writes would tell a user "0 agent
+ * definitions" about a config that is fully in force.
+ */
+function applyNote(seats: SeatsConfig, sync: SyncSeatAgents | undefined): string {
+  if (sync === undefined) {
+    return "Agent definitions were not regenerated: the apply layer is not present in this build."
+  }
+  try {
+    const result = sync(seats)
+    const churn: string[] = []
+    if (result.written.length > 0) churn.push(`${result.written.length} written`)
+    if (result.removed.length > 0) churn.push(`${result.removed.length} removed`)
+    const suffix = churn.length > 0 ? ` (${churn.join(", ")})` : ""
+    if (result.notes.length > 0) return `${result.notes.join(" ")}${suffix}`
+    return seats.control
+      ? `Agent definitions are up to date${suffix}.`
+      : `Seat control is off, so no agent definitions are in force${suffix}. Skills apply anyway.`
+  } catch (error) {
+    return `Config saved, but agent definitions failed: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+function farewell(state: ConfigUIState, saves: number): string[] {
+  if (state.dirty) return ["Left without saving. The config on disk is unchanged."]
+  if (saves === 0) return ["No changes."]
+  return [
+    state.seats.control
+      ? "Seats saved. Seat control is on, so OpenCode subagents will run the models you chose."
+      : "Seats saved. Seat control is off, so models and efforts stay inert - skills still apply.",
+  ]
+}

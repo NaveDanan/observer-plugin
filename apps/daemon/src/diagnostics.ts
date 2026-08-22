@@ -13,6 +13,11 @@
 export type DropReason =
   /** No adapter produced events: unknown event name, or missing session id. */
   | "unmapped"
+  /**
+   * The adapter recognised the delivery and deliberately drew nothing from it,
+   * e.g. an OpenCode `step-start` part. Routine traffic, not a fault.
+   */
+  | "ignored"
   /** The hook payload was not valid JSON when it reached the emitter. */
   | "malformed"
   /** An adapter produced an event that failed schema validation. */
@@ -43,6 +48,7 @@ export interface DiagnosticsSnapshot {
 
 const EMPTY_COUNTERS: Record<DropReason, number> = {
   unmapped: 0,
+  ignored: 0,
   malformed: 0,
   invalid: 0,
   filtered: 0,

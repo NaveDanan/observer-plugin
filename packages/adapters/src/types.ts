@@ -30,6 +30,21 @@ export interface Adapter {
   host: HostId
   adapterId: string
   normalize(request: HookRequest): AdapterEvent[]
+  /**
+   * Whether this delivery is one the adapter recognises and deliberately draws
+   * nothing for.
+   *
+   * `normalize` returning an empty list is ambiguous: it means either "I have
+   * no use for this" or "I failed to translate this". The first is normal
+   * operation and must stay silent; the second is the signal that the host
+   * gained something Observer should start drawing, and is worth showing a
+   * user. Only the adapter knows which of the two it just did, so it says so
+   * here rather than leaving the daemon to guess from an empty array.
+   *
+   * Answer from an allowlist of known-uninteresting deliveries, never a
+   * denylist, or a genuinely new host event will be silently swallowed.
+   */
+  ignores?(request: HookRequest): boolean
 }
 
 // ------------------------------------------------------------------ helpers

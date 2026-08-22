@@ -11,6 +11,7 @@ import { z } from "zod"
 import type { ObserverConfig } from "./config.js"
 import type { Pipeline } from "./pipeline.js"
 import type { Diagnostics } from "./diagnostics.js"
+import { applySeatSkills } from "./seats.js"
 import { Broadcaster } from "./broadcaster.js"
 
 const HookRequestSchema = z.object({
@@ -242,7 +243,10 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
         title: match.profile.title,
         score: match.score,
         reasons: match.reasons,
-        directive: behaviorDirective(match.profile, parsed.data.task),
+        // Configured skills are folded in here, at match time, so the
+        // directive the plugin appends already carries them. The roster
+        // package stays config-free and the plugin needs no change.
+        directive: behaviorDirective(applySeatSkills(match.profile, config.seats), parsed.data.task),
       })),
     })
   })

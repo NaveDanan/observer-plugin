@@ -2,15 +2,20 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { HOST_EVENTS, hostConfigPath, install, isInstalled, uninstall } from "../dist/index.js"
+import { HOST_EVENTS, hostConfigPath, install, isInstalled, seatAgentDir, syncSeatAgents, uninstall } from "../dist/index.js"
 
 let home: string
 let originalHome: string | undefined
+let originalObserverHome: string | undefined
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "observer-cli-"))
   originalHome = process.env["HOME"]
+  originalObserverHome = process.env["OBSERVER_HOME"]
   process.env["HOME"] = home
+  // `install("opencode")` reads the Observer config to reconcile seat agents.
+  // Redirect it: a test must never read or write the developer's own config.
+  process.env["OBSERVER_HOME"] = join(home, ".observer")
   delete process.env["XDG_CONFIG_HOME"]
   delete process.env["CODEX_HOME"]
   delete process.env["COPILOT_HOME"]
@@ -19,6 +24,8 @@ beforeEach(() => {
 afterEach(() => {
   if (originalHome === undefined) delete process.env["HOME"]
   else process.env["HOME"] = originalHome
+  if (originalObserverHome === undefined) delete process.env["OBSERVER_HOME"]
+  else process.env["OBSERVER_HOME"] = originalObserverHome
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -114,6 +121,24 @@ describe("install", () => {
     const agentPath = join(dirname(hostConfigPath("opencode")), "..", "agent", "observer.md")
     expect(existsSync(agentPath)).toBe(false)
   })
+
+  it("removes generated seat agents on uninstall, alongside the plugin and observer.md", () => {
+    install("opencode")
+    syncSeatAgents({ control: true, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-5" } } } as any)
+    const seatPath = join(seatAgentDir(), "observer-arjun-mehta.md")
+    expect(existsSync(seatPath)).toBe(true)
+
+    const result = uninstall("opencode")
+
+    // A definition naming a model the user chose through Observer must not
+    // outlive Observer: it would keep steering delegations after the plugin
+    // that explains it is gone.
+    expect(existsSync(seatPath)).toBe(false)
+    expect(existsSync(hostConfigPath("opencode"))).toBe(false)
+    expect(existsSync(join(seatAgentDir(), "observer.md"))).toBe(false)
+    expect(result.action).toBe("removed")
+    expect(result.notes.join("\n")).toContain("1 generated seat agent definition")
+  })
 })
 
 describe("uninstall", () => {
@@ -151,5 +176,17 @@ describe("uninstall", () => {
   it("is safe when nothing is installed", () => {
     expect(uninstall("claude").action).toBe("unchanged")
     expect(uninstall("opencode").action).toBe("unchanged")
+  })
+
+  it("reports removing seat agents alone, without claiming it removed a plugin it never found", () => {
+    // Seat definitions can outlive the plugin: `observer uninstall opencode`
+    // run twice, or a config directory restored from a backup. The second run
+    // must not narrate a plugin removal that did not happen.
+    syncSeatAgents({ control: true, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-5" } } } as any)
+    const result = uninstall("opencode")
+
+    expect(result.action).toBe("removed")
+    expect(result.notes.join("\n")).toContain("1 generated seat agent definition")
+    expect(result.notes.join("\n")).not.toContain("Removed the Observer plugin")
   })
 })

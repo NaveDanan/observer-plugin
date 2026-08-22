@@ -28,11 +28,12 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
   `subcontractor` (`"guidance": false` in `~/.observer/config.json` turns this
   off). Typing **`@observer`** in a message activates staffing for that
   session on demand — even with guidance off — and `@observer off` disables it
-  again. Observer installs a small agent definition next to the plugin, so
-  `@observer` appears in OpenCode's `@` menu; selecting it inserts the mention,
-  which is what activates staffing.
+  again, even with guidance on. Observer installs a small agent definition next
+  to the plugin, so `@observer` appears in OpenCode's `@` menu; selecting it
+  inserts the mention, which is what activates staffing.
 - **Per-node model attribution.** Each node names the model it is running, and
   says so plainly when the host never reported one.
+- **Seat control, if you ask for it.** Off by default; see below.
 - **Session goal and todos on the canvas** so the overall objective stays
   visible while subagents come and go.
 - **Honest fidelity.** Every host exposes different data. Observer labels each
@@ -115,6 +116,114 @@ rm -rf ~/.observer
 
 ---
 
+## Seat control
+
+By default Observer only watches. Seating an employee on a node labels it and
+briefs the subagent; it does not change which model the host runs. **Seat
+control** is the opt-in flag that changes that.
+
+In `~/.observer/config.json`:
+
+```jsonc
+{
+  "seats": {
+    "control": true,
+    "employees": {
+      "arjun-mehta": { "model": "anthropic/claude-opus-4-5", "variant": "high" },
+      "dr-mei-lin":  { "model": "openai/gpt-5", "skills": ["forecasting"] }
+    }
+  }
+}
+```
+
+Run `observer install opencode` after editing, then **restart OpenCode**.
+
+### What it actually does
+
+OpenCode's task tool takes no model parameter. The only lever is
+`subagent_type`, so `observer install opencode` writes one hidden agent
+definition per configured employee into `~/.config/opencode/agent/observer-*.md`,
+and the plugin points a seated delegation at it. That is the whole mechanism.
+
+The generated definition is built to be indistinguishable from the built-in
+`general` subagent except for the model: empty prompt, `mode: subagent`, and
+the same permissions — including the `todowrite: deny` that `general` carries
+and a bare agent file does not. That parity is checked against a live
+`opencode serve`, because it is the only thing that makes replacing `general`
+a fair swap rather than a quiet change of what a subagent may do.
+
+### What you should expect to change
+
+- **Permission prompts name a different agent.** The task tool asks for
+  permission using the agent name it was handed, so a seated delegation now
+  prompts for `observer-arjun-mehta` instead of `general`. This is the most
+  visible effect and the main reason the flag defaults off.
+- **Billing.** Delegations run on the model you named, not the session's.
+
+### What it will not do
+
+- **It only ever replaces a `general` delegation.** `subagent_type` does not
+  name a model, it names a whole agent definition — prompt, permissions,
+  everything. `general` is the only built-in that ships with no prompt and no
+  restriction, which is what makes swapping it lossless: the model changes and
+  nothing else. If the model delegates to `explore` — which carries a
+  specialised prompt *and* a deny-by-default permission set that allows only
+  reads and searches — or to any other built-in, or to an agent you wrote
+  yourself, Observer leaves it alone. You keep that agent's behaviour and its
+  restrictions; you lose the model preference for that one task. Trading a
+  read-only guarantee for a model preference, silently, is not a trade Observer
+  will make on your behalf.
+- **It skips a reasoning effort your model does not offer.** OpenCode checks
+  `variant` against the model when the delegation runs, not when the file
+  loads, so `"variant": "xhigh"` on a model offering only low/medium/high would
+  write a perfectly valid file and then fail the task. Observer checks it
+  against OpenCode's own model catalogue first and writes no file at all,
+  telling you which efforts that model does offer. When the catalogue is
+  missing, or has never heard of your model, the file is written as before — an
+  unknown model is not a wrong model.
+- **Nothing happens without a restart.** OpenCode reads agent definitions once
+  at startup and never rescans, so files written by the installer are invisible
+  to a session that was already running.
+- **A missing definition is a no-op, never an error.** If the agent the plugin
+  wants is not in the host's registry — config edited without re-running the
+  installer, agent directory cleaned out, config carried to another machine by
+  dotfiles — the plugin leaves `subagent_type` exactly as it found it. You lose
+  the model preference for that task; you do not lose the task.
+- **A reasoning effort with no model does nothing.** OpenCode applies a
+  `variant` only to an agent's own configured model, so `{"variant": "high"}`
+  alone is inert. `observer doctor` and the installer say so rather than
+  pretending otherwise.
+- **`control: false` really is off.** Turning it off deletes every generated
+  definition rather than merely ignoring it, so you cannot keep paying for a
+  model you stopped asking for.
+
+### Only OpenCode
+
+| | OpenCode | Codex | Claude Code | Copilot CLI |
+| --- | --- | --- | --- | --- |
+| Seat `model` | applied to `general` delegations, with `control` on | **ignored** | **ignored** | **ignored** |
+| Seat `variant` (effort) | applied, needs a model the effort exists on | **ignored** | **ignored** | **ignored** |
+| Seat `skills` | applied | applied | applied | applied |
+
+The other three hosts integrate through a subprocess hook that fires *after* a
+subagent has been created. There is no point at which Observer could name a
+model, so it does not offer to. Setting `model` or `variant` for an employee
+you only ever run under Codex or Claude Code changes nothing at all, and
+Observer would rather say that than imply a setting works everywhere.
+
+Skills are the exception, and are not gated on `control`: they are prompt text
+folded into the persona directive the daemon already returns, so they carry
+none of the risk of pointing a host at an agent that does not exist.
+
+### Removing it
+
+`observer uninstall opencode` deletes the generated definitions along with the
+plugin. Files in that directory that Observer did not write are left alone —
+ownership is proved by a marker line inside the file, so deleting that line is
+how you adopt a generated definition as your own.
+
+---
+
 ## How it works
 
 ```text
@@ -132,7 +241,9 @@ Two rules shape the whole design:
 1. **Never disturb the agent.** The hook process exits 0 with empty stdout no
    matter what happens, so Observer cannot block a tool call or be mistaken for
    a hook decision. If the daemon is down, deliveries spool to disk and replay
-   on the next start.
+   on the next start. Seat control is the single opt-in exception, and it is
+   built to fail towards this rule: when it cannot confirm the agent it wants
+   exists, it changes nothing.
 2. **Never claim data you do not have.** Adapters translate; they do not guess.
    Anything reconstructed is marked as such and rendered differently.
 
@@ -229,6 +340,7 @@ become an event:
 | `unmapped`  | The host sent an event Observer does not translate yet          |
 | `malformed` | The hook payload was not valid JSON when it reached the emitter |
 | `invalid`   | An adapter produced something that failed schema validation     |
+| `ignored`   | Recognised by the adapter, deliberately not drawn on the canvas |
 | `filtered`  | Removed on purpose by your capture settings                     |
 | `duplicate` | Already recorded; expected while replaying the spool            |
 

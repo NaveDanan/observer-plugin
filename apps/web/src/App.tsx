@@ -1,18 +1,22 @@
 import { useEffect } from "react"
 import { Canvas } from "./Canvas"
 import { DetailPanel } from "./DetailPanel"
+import { EmployeeCardModal } from "./EmployeeCardModal"
 import { WorkerCard } from "./WorkerCard"
 import type { DeliveryDiagnostics } from "./api"
 import {
+  closeEmployeeCard,
   dismissDiagnostics,
   getState,
   initialise,
+  openEmployeeCard,
   removeSession,
   selectActiveSession,
   selectAgent,
   selectAgents,
   selectEdges,
   selectEmployeeMatch,
+  selectFilterCounts,
   selectHostCapabilities,
   selectMessages,
   selectPromptFragments,
@@ -20,7 +24,10 @@ import {
   selectSessions,
   selectToolCalls,
   selectTodos,
+  selectVisibleAgents,
+  setAgentFilter,
   useStoreVersion,
+  type AgentFilterMode,
 } from "./store"
 
 export function App(): JSX.Element {
@@ -35,12 +42,37 @@ export function App(): JSX.Element {
   const sessions = selectSessions(state)
   const session = selectActiveSession(state)
   const agents = selectAgents(state, session?.id)
-  const edges = selectEdges(state, session?.id)
+  /**
+   * What the canvas draws: every agent, or the active/finished slice.
+   *
+   * The sidebar keeps the full roster — hiding a node on the canvas must not
+   * pretend it stopped existing in the session. Matches stay keyed off the
+   * full list so re-revealing a filtered node does not re-run seating.
+   */
+  const visibleAgents = selectVisibleAgents(state, session?.id)
+  /** Hidden nodes take their edges with them; layout already ignores edges whose endpoints are absent. */
+  const visibleIds = new Set(visibleAgents.map((agent) => agent.id))
+  const visibleEdges = selectEdges(state, session?.id).filter(
+    (edge) => visibleIds.has(edge.fromAgentId) && visibleIds.has(edge.toAgentId),
+  )
+  const filterCounts = selectFilterCounts(state, session?.id)
   const capabilities = selectHostCapabilities(state, session?.host)
   const boundHost = selectHostCapabilities(state, state.scopeHost)
   const selectedAgent = state.selectedAgentId ? state.agents.get(state.selectedAgentId) : undefined
   /** Employee seated per node, computed once per agent revision. */
   const matches = new Map(agents.map((agent) => [agent.id, selectEmployeeMatch(state, agent)]))
+  /**
+   * The card only exists for a seated employee, so an unseated node or a
+   * subcontractor double-clicks to nothing. The Worker card already says why
+   * nobody is there; inventing an ID card for them would contradict it.
+   */
+  const cardProfile = state.cardAgentId ? matches.get(state.cardAgentId)?.profile : undefined
+
+  const openCard = (agentId: string): void => {
+    if (!matches.get(agentId)?.profile) return
+    void selectAgent(agentId)
+    openEmployeeCard(agentId)
+  }
 
   if (state.error && !state.ready) {
     return (
@@ -71,8 +103,17 @@ export function App(): JSX.Element {
         )}
 
         <div className="topbar-right">
-          {session && !selectedAgent && (
-            <span className="tip-pill">Click an Agent for its Worker card</span>
+          {session && (
+            <CanvasFilterControl
+              mode={state.agentFilter}
+              counts={filterCounts}
+              onChange={setAgentFilter}
+            />
+          )}
+          {session && (
+            <span className="tip-pill">
+              {selectedAgent ? "Double-click an Agent for their ID card" : "Click an Agent for its Worker card"}
+            </span>
           )}
           {boundHost && (
             <span className="bound" title={boundHost.notes.join("\n")}>
@@ -206,6 +247,7 @@ export function App(): JSX.Element {
             messages={selectMessages(state, selectedAgent.id)}
             toolCalls={selectToolCalls(state, selectedAgent.id)}
             todos={selectTodos(state, selectedAgent.id)}
+            onOpenCard={() => openCard(selectedAgent.id)}
             onClose={() => void selectAgent(undefined)}
           />
         )}
@@ -218,15 +260,15 @@ export function App(): JSX.Element {
               </div>
               <Canvas
                 key={session.id}
-                agents={agents}
-                edges={edges}
+                agents={visibleAgents}
+                edges={visibleEdges}
                 matches={matches}
                 runningTools={state.runningTools}
                 hostLabel={capabilities?.label ?? session.host}
                 selectedAgentId={state.selectedAgentId}
                 focusAgentId={state.selectedAgentId}
                 now={now}
-                onOpenAgent={(id) => void selectAgent(id)}
+                onOpenCard={openCard}
                 onSelectAgent={(id) => void selectAgent(id)}
               />
             </div>
@@ -254,8 +296,58 @@ export function App(): JSX.Element {
           />
         )}
       </div>
+
+      {cardProfile && state.cardAgentId && (
+        <EmployeeCardModal
+          key={state.cardAgentId}
+          profile={cardProfile}
+          onClose={closeEmployeeCard}
+          returnFocus={nodeElement(state.cardAgentId)}
+        />
+      )}
     </div>
   )
+}
+
+/**
+ * The All / Active / Finished segmented control, in the topbar hint area.
+ *
+ * Lives here and not in the sidebar because it scopes the canvas — the widest
+ * surface on screen — while the sidebar is session navigation; a filter next
+ * to the session list would read as filtering that list. The topbar already
+ * carries per-session state pills, so counts fit its idiom, and it stays
+ * visible when the docked panels eat the stage's width.
+ */
+function CanvasFilterControl(props: {
+  mode: AgentFilterMode
+  counts: Record<AgentFilterMode, number>
+  onChange: (mode: AgentFilterMode) => void
+}): JSX.Element {
+  return (
+    <div className="filter-group" role="group" aria-label="Which agents the canvas shows">
+      {(["all", "active", "finished"] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          className={`filter-btn${props.mode === mode ? " is-on" : ""}`}
+          aria-pressed={props.mode === mode}
+          onClick={() => props.onChange(mode)}
+        >
+          {mode} <span className="filter-count">{props.counts[mode]}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Finds the canvas node a card was opened from, so Escape hands focus back to
+ * it. React Flow swallows the mousedown that would otherwise have focused the
+ * node, so the element focus came *from* is usually the canvas, not the node.
+ */
+function nodeElement(agentId: string): () => HTMLElement | null {
+  const selector = `.react-flow__node[data-id="${agentId.replace(/"/g, String.raw`\"`)}"] .node`
+  return () => document.querySelector<HTMLElement>(selector)
 }
 
 /** Names the hosts responsible for failed deliveries, when they are known. */

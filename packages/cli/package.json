@@ -17,6 +17,7 @@
     "@observer-ai/daemon": "workspace:*",
     "@observer-ai/hook-emitter": "workspace:*",
     "@observer-ai/protocol": "workspace:*",
+    "@observer-ai/roster": "workspace:*",
     "@observer-ai/storage": "workspace:*"
   }
 }

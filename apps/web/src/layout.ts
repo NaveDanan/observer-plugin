@@ -83,11 +83,18 @@ export interface Position {
  *    parents and children in every scenario measured. Depth stops reading
  *    vertically.
  *
- * So layout cannot solve width; zooming out solves width. `layered` is kept
- * because it is the narrowest option that never inverts a parent and child,
- * and because it reserves a uniform LAYER_GAP band between depths — `mrtree`
- * compacts subtrees independently and lets that gap collapse to NODE_GAP, so
- * "which depth is this Agent at" stops being readable off the y coordinate.
+ * So no ELK algorithm wraps a wide layer without drawing a child above its
+ * parent. `layered` is kept because it is the narrowest option that never
+ * inverts a parent and child, and because it reserves a uniform LAYER_GAP
+ * band between depths — `mrtree` compacts subtrees independently and lets
+ * that gap collapse to NODE_GAP, so "which depth is this Agent at" stops
+ * being readable off the y coordinate.
+ *
+ * Width is solved downstream instead: `layoutGraph` keeps ELK's
+ * crossing-minimised left-to-right order per depth band untouched and folds
+ * each band into rows of at most MAX_BAND_COLUMNS columns itself, where the
+ * depth ordering makes the parent-above-child invariant structural rather
+ * than something the layout algorithm has to be talked into.
  */
 const LAYOUT_OPTIONS: Record<string, string> = {
   "elk.algorithm": "layered",
@@ -100,11 +107,116 @@ const LAYOUT_OPTIONS: Record<string, string> = {
 }
 
 /**
+ * Columns per wrapped row within one depth band.
+ *
+ * Since no ELK algorithm wraps a layer without inverting a parent and child
+ * (see `LAYOUT_OPTIONS` above), `layoutGraph` runs ELK purely for its
+ * crossing-minimised sibling order, then re-lays each depth band onto a grid
+ * of at most this many columns. The wrap cannot invert anything: bands are
+ * laid out strictly in depth order, so every row of band d sits entirely
+ * above every row of band d+1, and depth(child) = depth(parent) + 1 is a
+ * structural property of `computeDepths`, not something to re-prove per edge.
+ *
+ * The value is a flat cap rather than a per-band `ceil(sqrt(n · aspect))`
+ * because a derived K makes every existing position in a band depend on the
+ * band's population: the 21st sibling bumps K from 6 to 7 and re-chunks the
+ * entire band under a developer who is reading one of its nodes. A flat cap
+ * is append-only — a new sibling joins the last row that has room, or opens
+ * the next one — which is the same stability rule `considerModelOrder` buys
+ * upstream. Measured on the flagship fan-out, root + 20 subagents (all
+ * unseated, so 150px rows), laid out under each candidate cap:
+ *
+ * | K | rows      | canvas      | zoom to fit a 1800x1000 pane |
+ * | - | --------- | ----------- | ---------------------------- |
+ * | 4 | 5 rows    | 1344 x 1182 | 0.85                         |
+ * | 5 | 4 x 5     | 1692 x 984  | 1.02                         |
+ * | 6 | 6,6,6,2   | 2040 x 984  | 0.88                         |
+ *
+ * 5 wins: five columns span 5·(NODE_WIDTH + NODE_GAP) − NODE_GAP = 1692px,
+ * which fits a ~1800px canvas pane at zoom 1.0 — a full band reads without
+ * any zoom-out — and it is the only cap whose wrapped flagship graph fits
+ * BOTH dimensions of that pane without zooming out (aspect 1.72 ≈ 16:9,
+ * versus 6912 x 570 unwrapped). Four columns goes tall enough to force
+ * zoom-out anyway; six needs a wider pane than most windows give the canvas
+ * once the worker card is open, and leaves a ragged row of 2.
+ *
+ * Rows are left-aligned, not centred: centring shifts every node in a row
+ * sideways whenever that row's population changes — which during a spawn
+ * burst is constantly — while left-align never moves a placed node.
+ *
+ * Rows inside a band are separated by NODE_GAP and depth bands by
+ * LAYER_GAP, so a wrapped band still reads as ONE depth: tight vertical
+ * spacing = same depth, loose = new depth. The cost of wrapping, accepted:
+ * an edge from an upper row to a lower band passes behind the rows between
+ * it and its child. React Flow draws edges under nodes, so that reads as a
+ * line slipping behind a sibling rather than a broken graph; unwrapping to
+ * avoid it was the single endless row this constant exists to fix.
+ */
+export const MAX_BAND_COLUMNS = 5
+
+/** An agent ELK has placed, carrying its x as the within-band order key. */
+interface Placed {
+  id: string
+  order: number
+}
+
+/**
+ * Folds each depth band into rows of at most MAX_BAND_COLUMNS columns.
+ *
+ * `placed` arrives in any order; within a band it is sorted by `order` (the
+ * ELK x coordinate, or array index on the fallback path), which preserves
+ * exactly the left-to-right order the layout algorithm decided — only the
+ * geometry is re-flowed. Bands are laid out strictly in depth order and rows
+ * are assigned y monotonically, so a parent can never be drawn below its
+ * child: every row of band d ends above where band d+1 begins.
+ *
+ * Both paths (ELK and fallback) go through here, so their shapes stay
+ * identical by construction.
+ */
+function wrapDepthBands(
+  placed: Placed[],
+  depths: Map<string, number>,
+  heightOf: (id: string) => number,
+): Map<string, Position> {
+  const bands = new Map<number, Placed[]>()
+  for (const node of placed) {
+    const depth = depths.get(node.id) ?? 0
+    const band = bands.get(depth)
+    if (band) band.push(node)
+    else bands.set(depth, [node])
+  }
+
+  const positions = new Map<string, Position>()
+  let y = 0
+  for (const depth of [...bands.keys()].sort((a, b) => a - b)) {
+    const band = (bands.get(depth) ?? []).sort((a, b) => a.order - b.order)
+    for (let start = 0; start < band.length; start += MAX_BAND_COLUMNS) {
+      const row = band.slice(start, start + MAX_BAND_COLUMNS)
+      row.forEach((node, column) => {
+        positions.set(node.id, { x: Math.round(column * (NODE_WIDTH + NODE_GAP)), y: Math.round(y) })
+      })
+      // The next row starts below the tallest node in this one, so a row of
+      // seated nodes does not overlap the row beneath it.
+      const tallest = row.reduce((max, node) => Math.max(max, heightOf(node.id)), NODE_HEIGHT)
+      y += tallest + NODE_GAP
+    }
+    // The loop above left a NODE_GAP after the deepest row; widen it to the
+    // LAYER_GAP that separates this depth band from the next.
+    y += LAYER_GAP - NODE_GAP
+  }
+  return positions
+}
+
+/**
  * Lays the agent graph out top-down.
  *
  * Agents with no recorded parent are treated as roots, which keeps orphaned
  * nodes visible: a subagent whose parent edge has not been reconciled yet must
  * still appear on the canvas rather than vanish.
+ *
+ * ELK decides sibling order and crossing minimisation; its coordinates are
+ * then folded into wrapped depth bands (see `MAX_BAND_COLUMNS`), because ELK
+ * itself will not wrap a wide layer without drawing children above parents.
  *
  * `heights` carries the reserved height per agent id, because a seated node is
  * substantially taller than an unseated one. Anything missing falls back to
@@ -115,10 +227,10 @@ export async function layoutGraph(
   edges: EdgeEntity[],
   heights?: ReadonlyMap<string, number>,
 ): Promise<Map<string, Position>> {
-  const positions = new Map<string, Position>()
-  if (agents.length === 0) return positions
+  if (agents.length === 0) return new Map()
 
   const heightOf = (id: string): number => heights?.get(id) ?? NODE_HEIGHT
+  const depths = computeDepths(agents, edges)
   const ids = new Set(agents.map((agent) => agent.id))
   const graph = {
     id: "root",
@@ -131,36 +243,19 @@ export async function layoutGraph(
 
   try {
     const result = await elk.layout(graph)
-    for (const child of result.children ?? []) {
-      positions.set(child.id, { x: Math.round(child.x ?? 0), y: Math.round(child.y ?? 0) })
-    }
-    if (positions.size === agents.length) return positions
-    throw new Error("incomplete layout")
+    const placed: Placed[] = (result.children ?? []).map((child) => ({
+      id: child.id,
+      order: child.x ?? 0,
+    }))
+    if (placed.length !== agents.length) throw new Error("incomplete layout")
+    return wrapDepthBands(placed, depths, heightOf)
   } catch {
     // Layout must never blank the canvas. Fall back to depth-ordered rows so
-    // the parent/child structure stays readable even without ELK.
-    positions.clear()
-    const depths = computeDepths(agents, edges)
-    const byDepth = new Map<number, AgentEntity[]>()
-    for (const agent of agents) {
-      const depth = depths.get(agent.id) ?? 0
-      const row = byDepth.get(depth) ?? []
-      row.push(agent)
-      byDepth.set(depth, row)
-    }
-    // Each row starts below the tallest node in the row above, so a deep tree
-    // of seated nodes does not overlap itself.
-    let y = 0
-    for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
-      const row = byDepth.get(depth) ?? []
-      row.forEach((agent, index) => {
-        positions.set(agent.id, { x: Math.round(index * (NODE_WIDTH + NODE_GAP)), y: Math.round(y) })
-      })
-      const tallest = row.reduce((max, agent) => Math.max(max, heightOf(agent.id)), NODE_HEIGHT)
-      y += tallest + LAYER_GAP
-    }
+    // the parent/child structure stays readable even without ELK, wrapped by
+    // the same bands as the ELK path. Array order stands in for ELK's x.
+    const placed: Placed[] = agents.map((agent, index) => ({ id: agent.id, order: index }))
+    return wrapDepthBands(placed, depths, heightOf)
   }
-  return positions
 }
 
 /** Distance from a root agent. Used by the fallback layout and by tests. */

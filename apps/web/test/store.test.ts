@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest"
 import type { AgentEntity, EdgeEntity, SessionEntity, ToolCallEntity } from "@observer-ai/protocol"
-import { selectCurrentActivity, selectEmployeeMatch, selectSessions, stripHostTitleSuffix } from "../src/store"
+import {
+  agentMatchesFilter,
+  isFinishedStatus,
+  selectCurrentActivity,
+  selectEmployeeMatch,
+  selectFilterCounts,
+  selectSessions,
+  selectVisibleAgents,
+  stripHostTitleSuffix,
+} from "../src/store"
 import { NODE_HEIGHT, SEATED_NODE_HEIGHT, computeDepths, layoutGraph } from "../src/layout"
+import { displayStatusLabel, isDoneNode } from "../src/AgentNode"
 
 function session(host: SessionEntity["host"], key: string, updatedAt: number): SessionEntity {
   return {
@@ -243,5 +253,161 @@ describe("node heights", () => {
     expect(gapOf(seated) - gapOf(unseated)).toBe(SEATED_NODE_HEIGHT - NODE_HEIGHT)
   })
 
+})
+
+// ------------------------------------------------------------------ filter
+
+function roster(): AgentEntity[] {
+  return [
+    agent({ id: "r", agentKey: "main", parentAgentId: null, status: "idle" }),
+    agent({ id: "s-run", status: "running" }),
+    agent({ id: "s-starting", status: "starting" }),
+    agent({ id: "s-idle", status: "idle" }),
+    agent({ id: "s-done", status: "completed" }),
+    agent({ id: "s-failed", status: "failed" }),
+    agent({ id: "s-interrupted", status: "interrupted" }),
+  ]
+}
+
+type FilterMode = "all" | "active" | "finished"
+
+function stateWithFilter(agents: AgentEntity[], mode: FilterMode) {
+  return {
+    agents: new Map(agents.map((entry) => [entry.id, entry])),
+    agentFilter: mode,
+  } as unknown as Parameters<typeof selectVisibleAgents>[0]
+}
+
+const visibleIds = (agents: AgentEntity[], mode: FilterMode): string[] =>
+  selectVisibleAgents(stateWithFilter(agents, mode), "opencode:s1").map((a) => a.id)
+
+describe("canvas filter", () => {
+  it("shows every agent in all mode", () => {
+    expect(visibleIds(roster(), "all")).toHaveLength(7)
+  })
+
+  it("keeps the root and unfinished work in active mode", () => {
+    expect(visibleIds(roster(), "active")).toEqual(["r", "s-run", "s-starting"])
+  })
+
+  it("keeps the root and ended work in finished mode", () => {
+    expect(visibleIds(roster(), "finished")).toEqual(["r", "s-idle", "s-done", "s-failed", "s-interrupted"])
+  })
+
+  it("always shows the root, whatever the mode", () => {
+    for (const mode of ["all", "active", "finished"] as const) {
+      expect(visibleIds(roster(), mode)).toContain("r")
+    }
+    // Even a lone root with nothing else on the canvas.
+    const lone = [agent({ id: "only", agentKey: "main", parentAgentId: null, status: "idle" })]
+    expect(visibleIds(lone, "active")).toEqual(["only"])
+  })
+
+  it("counts a starting subagent as active but not finished", () => {
+    expect(visibleIds(roster(), "active")).toContain("s-starting")
+    expect(visibleIds(roster(), "finished")).not.toContain("s-starting")
+  })
+
+  it("files failed and interrupted under finished — their work ended", () => {
+    // They keep their own warning labels visually; the filter only asks
+    // whether there is anything left to watch.
+    expect(visibleIds(roster(), "finished")).toEqual(
+      expect.arrayContaining(["s-failed", "s-interrupted"]),
+    )
+    expect(visibleIds(roster(), "active")).not.toContain("s-failed")
+    expect(visibleIds(roster(), "active")).not.toContain("s-interrupted")
+  })
+
+  it("treats an unknown status as active so a node never vanishes silently", () => {
+    // A host drifting ahead of the protocol enum must stay on the canvas.
+    const drifted = roster().concat(agent({ id: "s-paused", status: "paused" as AgentEntity["status"] }))
+    expect(visibleIds(drifted, "all")).toContain("s-paused")
+    expect(visibleIds(drifted, "active")).toContain("s-paused")
+    expect(visibleIds(drifted, "finished")).not.toContain("s-paused")
+  })
+
+  it("survives an empty roster", () => {
+    expect(selectVisibleAgents(stateWithFilter([], "finished"), "opencode:s1")).toEqual([])
+    const counts = selectFilterCounts(stateWithFilter([], "active"), "opencode:s1")
+    expect(counts).toEqual({ all: 0, active: 0, finished: 0 })
+  })
+
+  it("returns nothing without a session", () => {
+    expect(selectVisibleAgents(stateWithFilter(roster(), "all"), undefined)).toEqual([])
+  })
+
+  it("counts subagents per segment so ALL = ACTIVE + FINISHED", () => {
+    // Roots are excluded: they sit in every segment's view anyway, and
+    // counting them would break the sum the counts exist to reassure with.
+    const counts = selectFilterCounts(stateWithFilter(roster(), "all"), "opencode:s1")
+    expect(counts).toEqual({ all: 6, active: 2, finished: 4 })
+    expect(counts.active + counts.finished).toBe(counts.all)
+  })
+})
+
+describe("filter predicate", () => {
+  it("classifies ended work as finished", () => {
+    for (const status of ["idle", "completed", "failed", "interrupted"]) {
+      expect(isFinishedStatus(status)).toBe(true)
+    }
+  })
+
+  it("leaves live and unknown statuses outside the finished set", () => {
+    for (const status of ["starting", "running", "paused"]) {
+      expect(isFinishedStatus(status)).toBe(false)
+    }
+  })
+
+  it("lets everything through in all mode", () => {
+    expect(agentMatchesFilter({ status: "failed", parentAgentId: "p" }, "all")).toBe(true)
+  })
+
+  it("never filters out a root agent", () => {
+    expect(agentMatchesFilter({ status: "idle", parentAgentId: null }, "finished")).toBe(true)
+  })
+})
+
+describe("status display label", () => {
+  it("reads a finished subagent's idle as finished, not waiting", () => {
+    expect(displayStatusLabel("idle", false)).toBe("finished")
+  })
+
+  it("keeps an idle root agent waiting", () => {
+    // Between turns the root genuinely is waiting for its developer.
+    expect(displayStatusLabel("idle", true)).toBe("idle")
+  })
+
+  it("maps completed to finished on a subagent", () => {
+    expect(displayStatusLabel("completed", false)).toBe("finished")
+  })
+
+  it("keeps warnings labelled as themselves", () => {
+    expect(displayStatusLabel("failed", false)).toBe("failed")
+    expect(displayStatusLabel("interrupted", false)).toBe("interrupted")
+  })
+
+  it("leaves live statuses alone everywhere", () => {
+    expect(displayStatusLabel("running", true)).toBe("running")
+    expect(displayStatusLabel("running", false)).toBe("running")
+    expect(displayStatusLabel("starting", false)).toBe("starting")
+  })
+})
+
+describe("done node treatment", () => {
+  it("settles a subagent whose idle or completed work is over", () => {
+    expect(isDoneNode("idle", false)).toBe(true)
+    expect(isDoneNode("completed", false)).toBe(true)
+  })
+
+  it("never settles a root agent or live node", () => {
+    expect(isDoneNode("idle", true)).toBe(false)
+    expect(isDoneNode("running", false)).toBe(false)
+    expect(isDoneNode("starting", false)).toBe(false)
+  })
+
+  it("leaves failure states unsetted — they warn, not settle", () => {
+    expect(isDoneNode("failed", false)).toBe(false)
+    expect(isDoneNode("interrupted", false)).toBe(false)
+  })
 })
 
