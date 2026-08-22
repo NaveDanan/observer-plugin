@@ -1,7 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { createRequire } from "node:module"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { Store } from "@observer-ai/storage"
+import { MIGRATIONS, Store } from "@observer-ai/storage"
 import { agentId, sessionId } from "@observer-ai/protocol"
 import type { IngestEvent } from "@observer-ai/protocol"
+
+const require = createRequire(import.meta.url)
+const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite")
 
 function store(): Store {
   return new Store({ path: ":memory:", retentionDays: 30 })
@@ -26,6 +33,46 @@ describe("Store", () => {
     expect(db.cursor()).toBe(0)
     expect(db.listSessions()).toEqual([])
     db.close()
+  })
+
+  it("upgrades an existing version-one database without losing agents", () => {
+    const directory = mkdtempSync(join(tmpdir(), "observer-migration-"))
+    const path = join(directory, "observer.db")
+    try {
+      const legacy = new DatabaseSync(path)
+      legacy.exec(MIGRATIONS[0]!)
+      legacy.exec("PRAGMA user_version = 1")
+      legacy.prepare(
+        `INSERT INTO agents (id, session_id, agent_key, agent_type, status, started_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("opencode:root~session:child", "opencode:root", "session:child", "subagent", "running", 1, 1)
+      legacy.close()
+
+      const upgraded = new Store({ path })
+      expect(upgraded.getAgent("opencode:root~session:child")).toMatchObject({
+        agentKey: "session:child",
+        runtimeId: null,
+      })
+      upgraded.putAgentAssignment({
+        id: "assignment-upgraded",
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: "child",
+        parentRuntimeId: null,
+        callId: "call-upgraded",
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        description: null,
+        prompt: null,
+        status: "running",
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      expect(upgraded.getAgentAssignment("assignment-upgraded")?.runtimeId).toBe("child")
+      upgraded.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it("assigns increasing sequences and rejects duplicate ids", () => {
@@ -68,6 +115,7 @@ describe("Store", () => {
       id: agent,
       sessionId: session,
       agentKey: "main",
+      runtimeId: "runtime-1",
       agentType: "main",
       displayName: null,
       parentAgentId: null,
@@ -82,6 +130,9 @@ describe("Store", () => {
       updatedAt: now,
       totalTokens: 42,
       durationMs: null,
+      linesAdded: 7,
+      linesRemoved: 3,
+      churnConfidence: "authoritative",
     })
     db.putToolCall({
       id: `${agent}~t:1`,
@@ -97,6 +148,9 @@ describe("Store", () => {
       startedAt: now,
       endedAt: now + 5,
       durationMs: 5,
+      linesAdded: 2,
+      linesRemoved: 1,
+      churnConfidence: "inferred",
     })
     db.replaceTodos(agent, [
       {
@@ -114,9 +168,71 @@ describe("Store", () => {
 
     expect(db.getSession(session)?.goal).toBe("do things")
     expect(db.getAgentByKey(session, "main")?.totalTokens).toBe(42)
+    expect(db.getAgentByKey(session, "main")).toMatchObject({
+      runtimeId: "runtime-1",
+      linesAdded: 7,
+      linesRemoved: 3,
+      churnConfidence: "authoritative",
+    })
     expect(db.listToolCalls(agent)[0]?.input).toEqual({ command: "ls" })
+    expect(db.listToolCalls(agent)[0]).toMatchObject({ linesAdded: 2, linesRemoved: 1, churnConfidence: "inferred" })
     expect(db.listTodos(agent)).toHaveLength(1)
     db.close()
+  })
+
+  it("persists assignments, interruption state and direct mail across reopen", () => {
+    const directory = mkdtempSync(join(tmpdir(), "observer-coordination-"))
+    const path = join(directory, "observer.db")
+    try {
+      const first = new Store({ path })
+      first.putAgentAssignment({
+        id: "assignment-1",
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: "child",
+        parentRuntimeId: null,
+        callId: "call-1",
+        agentType: "malik-johnson",
+        hostAgentType: "general",
+        description: "Audit storage",
+        prompt: "Check migrations",
+        status: "running",
+        createdAt: 10,
+        updatedAt: 10,
+      })
+      first.putAgentMail({
+        id: "mail-1",
+        host: "opencode",
+        rootSessionKey: "root",
+        fromRuntimeId: "child",
+        toRuntimeId: "peer",
+        text: "Please verify this",
+        createdAt: 11,
+        deliveredAt: null,
+        readAt: null,
+      })
+      first.putAgentAssignment({
+        ...first.getAgentAssignment("assignment-1")!,
+        status: "interrupted",
+        updatedAt: 12,
+      })
+      first.close()
+
+      const reopened = new Store({ path })
+      expect(reopened.getAgentAssignmentByRuntime("opencode", "child")).toMatchObject({
+        id: "assignment-1",
+        status: "interrupted",
+        prompt: "Check migrations",
+      })
+      expect(reopened.listUnreadAgentMail("opencode", "root", "peer")).toEqual([
+        expect.objectContaining({ id: "mail-1", fromRuntimeId: "child", readAt: null }),
+      ])
+      reopened.markAgentMailRead(["mail-1"], "peer", 13)
+      expect(reopened.listUnreadAgentMail("opencode", "root", "peer")).toEqual([])
+      reopened.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it("replaces todos rather than accumulating them", () => {
@@ -158,10 +274,26 @@ describe("Store", () => {
       updatedAt: 1,
       lastEventSeq: 1,
     })
+    db.putAgentAssignment({
+      id: "assignment-delete",
+      host: "codex",
+      rootSessionKey: "s1",
+      runtimeId: "agent-1",
+      parentRuntimeId: null,
+      callId: "call-delete",
+      agentType: "reviewer",
+      hostAgentType: "reviewer",
+      description: null,
+      prompt: null,
+      status: "running",
+      createdAt: 1,
+      updatedAt: 1,
+    })
 
     db.deleteSession(session)
 
     expect(db.getSession(session)).toBeUndefined()
+    expect(db.getAgentAssignment("assignment-delete")).toBeUndefined()
     expect(db.countEvents()).toBe(0)
     db.close()
   })

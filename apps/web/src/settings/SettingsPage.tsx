@@ -10,30 +10,42 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { BotIcon, PaletteIcon, SearchIcon, Settings2Icon, XIcon } from "lucide-react"
+import { BotIcon, PaletteIcon, SearchIcon, Settings2Icon, UsersIcon, XIcon } from "lucide-react"
 import { AppearancePanel } from "./AppearancePanel"
+import { EmployeesPanel } from "./EmployeesPanel"
 import { GeneralPanel } from "./GeneralPanel"
 import { ProvidersPanel } from "./ProvidersPanel"
 import { SETTINGS_SEARCH_INDEX, searchSettings } from "./search"
 import { Button, Input, Kbd, SettingsSearchTargetProvider } from "../ui/primitives"
 import { cn } from "../lib/utils"
 
-export type SettingsTab = "general" | "providers" | "appearance"
+export type SettingsTab = "general" | "employees" | "providers" | "appearance"
 
+/**
+ * Employees sits second, directly under General.
+ *
+ * It earns its own tab rather than a section: a seat is now fourteen people
+ * times five hosts times a variable stack of adapter-supplied options, and it
+ * shared a scroll with five capture switches that answered yes or no. It sits
+ * above Providers because a provider is the plumbing and an employee is the
+ * thing the plumbing is for.
+ */
 const TABS: ReadonlyArray<{ id: SettingsTab; label: string; icon: typeof Settings2Icon }> = [
   { id: "general", label: "General", icon: Settings2Icon },
+  { id: "employees", label: "Employees", icon: UsersIcon },
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "providers", label: "Providers", icon: BotIcon },
 ]
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   general: "General",
+  employees: "Employees",
   providers: "Providers",
   appearance: "Appearance",
 }
 
 export function isSettingsTab(value: string): value is SettingsTab {
-  return value === "general" || value === "providers" || value === "appearance"
+  return value === "general" || value === "employees" || value === "providers" || value === "appearance"
 }
 
 export function SettingsPage({
@@ -218,6 +230,7 @@ export function SettingsPage({
           >
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-12 px-2 py-8 sm:px-6">
               {tab === "general" ? <GeneralPanel /> : null}
+              {tab === "employees" ? <EmployeesPanel /> : null}
               {tab === "appearance" ? <AppearancePanel /> : null}
               {tab === "providers" ? <ProvidersPanel /> : null}
             </div>

@@ -88,6 +88,10 @@ export const EventBody = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("agent.started"),
     agentType: z.string(),
+    /** Host-owned stable id used to address and resume this exact subagent. */
+    runtimeId: z.string().optional(),
+    /** True only when the host is continuing an existing interrupted run. */
+    resumed: z.boolean().optional(),
     parentAgentKey: z.string().optional(),
     model: z.string().optional(),
     modelConfidence: Provenance.optional(),

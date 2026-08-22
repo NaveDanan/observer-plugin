@@ -28,6 +28,10 @@ interface Harness {
   of(event: string): Delivery[]
   /** How many times the plugin asked the host for its agent list. */
   agentListCalls(): number
+  assignments: Map<string, Record<string, any>>
+  mail: Record<string, any>[]
+  createdSessions: Record<string, any>[]
+  promptedSessions: Record<string, any>[]
   flush(): Promise<void>
 }
 
@@ -62,6 +66,7 @@ async function harness(
     guidance?: boolean
     /** The `seats` section of ~/.observer/config.json. */
     seats?: { control?: boolean; employees?: Record<string, Record<string, unknown>> }
+    subagentDepth?: number
     /** Agent names the host reports. Defaults to a stock OpenCode. */
     agents?: string[]
     /** Make the agent listing fail, standing in for an unreachable host. */
@@ -85,6 +90,10 @@ async function harness(
   }
 
   const deliveries: Delivery[] = []
+  const assignments = new Map<string, Record<string, any>>()
+  const mail: Record<string, any>[] = []
+  const createdSessions: Record<string, any>[] = []
+  const promptedSessions: Record<string, any>[] = []
   globalThis.fetch = (async (url: any, init?: any) => {
     const href = String(url)
     if (href.endsWith("/v1/hooks")) {
@@ -98,19 +107,46 @@ async function harness(
     if (href.endsWith("/v1/roster")) {
       return Response.json({ profiles: [{ fullName: "Malik Johnson", title: "Staff Backend Engineer", fields: ["APIs"] }] })
     }
+    if (href.includes("/v1/coordination/assignments")) {
+      if (String(init?.method ?? "GET").toUpperCase() === "POST") {
+        const next = JSON.parse(String(init?.body ?? "{}"))
+        const existing =
+          (next.runtimeId && [...assignments.values()].find((entry) => entry.runtimeId === next.runtimeId)) ??
+          (next.callId && [...assignments.values()].find((entry) => entry.callId === next.callId)) ??
+          assignments.get(next.id)
+        const assignment = { createdAt: Date.now(), ...existing, ...next, id: existing?.id ?? next.id, updatedAt: Date.now() }
+        assignments.set(assignment.id, assignment)
+        return Response.json({ assignment })
+      }
+      const query = new URL(href).searchParams
+      if (query.get("runtimeId")) {
+        const assignment = [...assignments.values()].find((entry) => entry.runtimeId === query.get("runtimeId"))
+        return assignment ? Response.json({ assignment }) : Response.json({ error: "not found" }, { status: 404 })
+      }
+      if (query.get("callId")) {
+        const assignment = [...assignments.values()].find((entry) => entry.callId === query.get("callId"))
+        return assignment ? Response.json({ assignment }) : Response.json({ error: "not found" }, { status: 404 })
+      }
+      return Response.json({
+        assignments: [...assignments.values()].filter((entry) => entry.rootSessionKey === query.get("rootSessionKey")),
+      })
+    }
+    if (new URL(href).pathname.endsWith("/v1/coordination/mail")) {
+      if (String(init?.method ?? "GET").toUpperCase() === "POST") {
+        const message = JSON.parse(String(init?.body ?? "{}"))
+        mail.push(message)
+        return Response.json({ mail: message })
+      }
+      const query = new URL(href).searchParams
+      return Response.json({ messages: mail.filter((entry) => entry.toRuntimeId === query.get("runtimeId")) })
+    }
+    if (href.endsWith("/v1/coordination/mail/read")) return Response.json({ ok: true })
+    if (href.includes("/v1/coordination/mail/") && href.endsWith("/delivered")) return Response.json({ ok: true })
     return new Response("{}", { status: 404 })
   }) as typeof globalThis.fetch
 
   let agentListCalls = 0
   const client = {
-    session: {
-      get: async ({ path }: { path: { id: string } }) => {
-        if (unreachable.has(path.id)) throw new Error("host unreachable")
-        const record = sessions[path.id]
-        if (!record) throw new Error("no such session")
-        return { data: record }
-      },
-    },
     // `client.app.agents()` is the host's own agent registry — the same one the
     // task tool fails against with "Unknown agent type". A filesystem check
     // would pass for a file the host has not loaded, so this is the only
@@ -119,8 +155,49 @@ async function harness(
       agents: async () => {
         agentListCalls++
         if (options.agentsUnavailable) throw new Error("host unreachable")
-        return { data: (options.agents ?? STOCK_AGENTS).map((name: string) => ({ name, mode: "subagent" })) }
+        return {
+          data: (options.agents ?? STOCK_AGENTS).map((name: string) => ({
+            name,
+            mode: "subagent",
+            permission:
+              name === "explore"
+                ? [{ permission: "*", pattern: "*", action: "deny" }]
+                : [
+                    { permission: "*", pattern: "*", action: "allow" },
+                    { permission: "task", pattern: "*", action: "allow" },
+                    { permission: "agent_identity", pattern: "*", action: "allow" },
+                    { permission: "agent_send", pattern: "*", action: "allow" },
+                    { permission: "agent_inbox", pattern: "*", action: "allow" },
+                    { permission: "agent_ack", pattern: "*", action: "allow" },
+                  ],
+          })),
+        }
       },
+    },
+    config: { get: async () => ({ data: { subagent_depth: options.subagentDepth } }) },
+    session: {
+      ...({
+        get: async ({ path, sessionID }: any) => {
+          const id = sessionID ?? path?.id
+          if (unreachable.has(id)) throw new Error("host unreachable")
+          const record = sessions[id]
+          if (!record) throw new Error("no such session")
+          return { data: record }
+        },
+        create: async (input: any) => {
+          const body = input?.body ?? input
+          const id = `spawned-${createdSessions.length + 1}`
+          sessions[id] = { id, parentID: body.parentID, title: body.title }
+          createdSessions.push({ id, ...body })
+          return { data: sessions[id] }
+        },
+        messages: async () => ({ data: [] }),
+        status: async () => ({ data: {} }),
+        promptAsync: async (input: any) => {
+          promptedSessions.push(input)
+          return { data: true }
+        },
+      } as any),
     },
   }
 
@@ -130,6 +207,10 @@ async function harness(
     deliveries,
     of: (event: string) => deliveries.filter((delivery) => delivery.event === event),
     agentListCalls: () => agentListCalls,
+    assignments,
+    mail,
+    createdSessions,
+    promptedSessions,
     flush: async () => {
       await hooks.dispose()
     },
@@ -430,6 +511,18 @@ describe("observer opencode plugin: the finished task call states the subagent f
     })
   })
 
+  it("persists completion when the child session itself goes idle", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, child: { id: "child", parentID: "root" } } })
+    const call = taskCall("root", "call_1", "Audit the build", "prompt text")
+    await h.hooks["tool.execute.before"](call.input, call.output)
+    await h.hooks.event({ event: sessionCreated({ id: "child", parentID: "root", title: "Audit the build" }) })
+    await h.hooks.event({ event: { type: "session.idle", properties: { sessionID: "child" } } })
+    await h.flush()
+    expect([...h.assignments.values()].find((entry) => entry.runtimeId === "child")?.status).toBe("completed")
+    await h.hooks.event({ event: { type: "session.updated", properties: { info: { id: "child", parentID: "root", title: "Audit the build" } } } })
+    expect([...h.assignments.values()].find((entry) => entry.runtimeId === "child")?.status).toBe("completed")
+  })
+
   it("reports each delegation once even when the host re-sends the finished part", async () => {
     const h = await harness({ sessions: { root: { id: "root" } } })
     const call = taskCall("root", "call_1", "Audit the build", "prompt text")
@@ -531,6 +624,26 @@ describe("observer opencode plugin: the finished task call states the subagent f
 })
 
 describe("observer opencode plugin: nesting", () => {
+  it("does not rewrite OpenCode's agent permissions or depth", async () => {
+    const h = await harness()
+    const config: Record<string, any> = {}
+    await h.hooks.config(config)
+    expect(config.agent.general.permission.task).toBe("allow")
+    expect(config.agent.explore).toBeUndefined()
+    expect(config.subagent_depth).toBe(8)
+  })
+
+  it("does not override an explicit global or general task policy", async () => {
+    const h = await harness()
+    const global = { permission: { task: "deny" } } as Record<string, any>
+    await h.hooks.config(global)
+    expect(global.agent.general).toBeUndefined()
+
+    const general = { agent: { general: { permission: { task: "ask" } } } } as Record<string, any>
+    await h.hooks.config(general)
+    expect(general.agent.general.permission.task).toBe("ask")
+  })
+
   it("hangs a grandchild off its subagent parent, not off the root agent", async () => {
     const h = await harness({
       sessions: {
@@ -622,6 +735,217 @@ describe("observer opencode plugin: nesting", () => {
 
     const todos = deliveries.filter((delivery) => delivery.event === "todo.updated")
     expect(todos.at(-1)?.context).toMatchObject({ sessionKey: "root", agentKey: "session:child" })
+  })
+})
+
+describe("observer opencode plugin: stable identity and coordination", () => {
+  it("binds a unique assignment id to the host task_id", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, child: { id: "child", parentID: "root" } } })
+    const call = taskCall("root", "call_1", "Audit the build", "prompt text")
+    await h.hooks["tool.execute.before"](call.input, call.output)
+    const pending = [...h.assignments.values()][0]
+    expect(pending.id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(pending.runtimeId).toBeNull()
+
+    await h.hooks["tool.execute.after"](
+      { ...call.input, args: call.output.args },
+      { title: "Audit the build", output: "done", metadata: { sessionId: "child" } },
+    )
+    expect([...h.assignments.values()][0]?.runtimeId).toBe("child")
+  })
+
+  it("restores an interrupted assignment and preserves its task_id", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, child: { id: "child", parentID: "root" } } })
+    h.assignments.set("assignment-1", {
+      id: "assignment-1",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "child",
+      parentRuntimeId: null,
+      callId: "old-call",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      prompt: "original context",
+      status: "interrupted",
+      createdAt: 1,
+    })
+    const call = taskCall("root", "resume-call", "Continue audit", "new context")
+    call.output.args["task_id"] = "child"
+    await h.hooks["tool.execute.before"](call.input, call.output)
+
+    const assignment = h.assignments.get("assignment-1")
+    expect(assignment?.runtimeId).toBe("child")
+    expect(assignment?.status).toBe("running")
+    expect(assignment?.agentType).toBe("malik-johnson")
+    expect(call.output.args["task_id"]).toBe("child")
+  })
+
+  it("rejects a task_id owned by another root session", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, foreign: { id: "foreign" } } })
+    h.assignments.set("foreign-assignment", {
+      id: "foreign-assignment",
+      host: "opencode",
+      rootSessionKey: "foreign",
+      runtimeId: "foreign-child",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "interrupted",
+      createdAt: 1,
+    })
+    const call = taskCall("root", "call", "Continue", "context")
+    call.output.args["task_id"] = "foreign-child"
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow("another root session")
+  })
+
+  it("sends directly to a peer and exposes identity", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        a: { id: "a", parentID: "root" },
+        b: { id: "b", parentID: "root" },
+      },
+    })
+    for (const id of ["a", "b"]) {
+      h.assignments.set(`assignment-${id}`, {
+        id: `assignment-${id}`,
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: id,
+        parentRuntimeId: null,
+        callId: `call-${id}`,
+        agentType: "malik-johnson",
+        hostAgentType: "general",
+        status: "running",
+        createdAt: 1,
+      })
+    }
+
+    const identity = await h.hooks.tool.agent_identity.execute({}, { sessionID: "a", agent: "general" })
+    expect(JSON.parse(identity).id).toBe("a")
+    expect(JSON.parse(identity).peers[0].runtimeId).toBe("b")
+
+    const result = await h.hooks.tool.agent_send.execute(
+      { to: "b", message: "Please verify the migration" },
+      { sessionID: "a", agent: "general" },
+    )
+    expect(result).toContain("Delivered directly")
+    expect(h.mail[0]).toMatchObject({ fromRuntimeId: "a", toRuntimeId: "b", text: "Please verify the migration" })
+  })
+
+  it("spawns a nested child with its own persisted stable id", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      agents: [...STOCK_AGENTS],
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: null,
+      callId: "call-parent",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Nested audit", prompt: "Check the storage layer", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+    expect(JSON.parse(result)).toMatchObject({ id: "spawned-1", task_id: "spawned-1" })
+    expect(h.createdSessions[0]).toMatchObject({ parentID: "parent", agent: "general" })
+    expect([...h.assignments.values()].find((entry) => entry.runtimeId === "spawned-1")).toMatchObject({
+      parentRuntimeId: "parent",
+      rootSessionKey: "root",
+      status: "running",
+    })
+    expect(h.promptedSessions).toHaveLength(1)
+  })
+
+  it("honours OpenCode's configured subagent depth", async () => {
+    const h = await harness({
+      subagentDepth: 1,
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Too deep", prompt: "Do more work", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+    expect(result).toContain("depth limit reached (1)")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("enforces the caller's task denial inside agent_spawn", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      agentType: "malik-johnson",
+      hostAgentType: "explore",
+      status: "running",
+      createdAt: 1,
+    })
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Nested audit", prompt: "Check storage", subagent_type: "general" },
+      { sessionID: "parent", agent: "explore" },
+    )
+    expect(result).toContain("policy denies nested spawning")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("enforces an explicit agent_spawn denial", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } } })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    // The harness's explore definition is deny-by-default, including agent_spawn.
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Nested audit", prompt: "Check storage", subagent_type: "general" },
+      { sessionID: "parent", agent: "explore" },
+    )
+    expect(result).toContain("policy denies nested spawning")
+  })
+
+  it("keeps inbox mail until agent_ack processes its ids", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, a: { id: "a", parentID: "root" } } })
+    h.assignments.set("assignment-a", {
+      id: "assignment-a",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "a",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    h.mail.push({ id: "mail-1", fromRuntimeId: "peer", toRuntimeId: "a", text: "Review this" })
+    const inbox = await h.hooks.tool.agent_inbox.execute({}, { sessionID: "a", agent: "general" })
+    expect(inbox).toContain('"id": "mail-1"')
+    const ack = await h.hooks.tool.agent_ack.execute({ ids: ["mail-1"] }, { sessionID: "a", agent: "general" })
+    expect(ack).toContain("Acknowledged 1")
   })
 })
 

@@ -14,7 +14,7 @@ import { z } from "zod"
  * Ordered as the roster tickets list them, not alphabetically; nothing reads
  * the order.
  */
-export const HOST_KINDS = ["codex", "claude", "cursor", "grok", "opencode"] as const
+export const HOST_KINDS = ["codex", "claude", "copilot", "cursor", "grok", "opencode"] as const
 
 export type HostKind = (typeof HOST_KINDS)[number]
 
@@ -33,7 +33,13 @@ export function isHostKind(value: string): value is HostKind {
  * a second profile from silently reusing the first one's session and auth.
  */
 export interface ProviderInstanceConfig {
-  /** A `HostKind` when Observer recognises it. See the note on `HOST_KINDS`. */
+  /**
+   * A `HostKind` when Observer recognises it. See the note on `HOST_KINDS`.
+   *
+   * Empty when the file held something that was not a string. That is a value
+   * to reject, not to act on: an empty driver names no adapter, and callers
+   * already gate on it rather than trusting the type.
+   */
   driver: string
   displayName?: string
   accentColor?: string
@@ -56,7 +62,13 @@ export interface ProviderInstanceConfig {
 
 export const ProviderInstanceConfigSchema = z
   .object({
-    driver: z.string().min(1),
+    // Field-level, like every other field here. It used to be the one required
+    // field, so `{ driver: 42, displayName: "Local", binaryPath: "/x" }` fell
+    // through to the object-level catch and came back `{}` — a mistyped driver
+    // silently took the path the user had spent ten minutes finding. An empty
+    // driver is a value a caller can see and refuse: `/v1/providers/status`
+    // already filters on `driver.length > 0`.
+    driver: z.string().min(1).catch(""),
     displayName: z.string().min(1).optional().catch(undefined),
     accentColor: z.string().min(1).optional().catch(undefined),
     // Paths are not checked for existence here. Diagnosis is a pure function
@@ -68,6 +80,10 @@ export const ProviderInstanceConfigSchema = z
     enabled: z.boolean().catch(true),
   })
   .passthrough()
-  .catch(() => ({}) as { driver: string; enabled: boolean; [extra: string]: unknown })
+  // Only a non-object can reach here now that every field catches, and the
+  // answer is to hand it back untouched rather than to replace it with a shape
+  // the user never wrote. Same bargain as a seat target: preserved on save,
+  // and never trusted without a `typeof` guard.
+  .catch((ctx) => ctx.input as { driver: string; enabled: boolean; [extra: string]: unknown })
 
 export const ProvidersConfigSchema = z.record(z.string(), ProviderInstanceConfigSchema).catch({})

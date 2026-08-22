@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" style="--accent:#f9a8d4">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Grok provider research for Observer multi-provider employee seat configuration.">
+  <title>Grok provider field guide | Observer research</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <header class="topbar"><div class="shell"><a class="brand" href="combined.html">Observer / provider research</a><nav class="nav" aria-label="Provider reports"><a href="combined.html">Combined</a><a href="codex.html">Codex</a><a href="claude.html">Claude</a><a href="cursor.html">Cursor</a><a href="grok.html" aria-current="page">Grok</a><a href="opencode.html">OpenCode</a></nav></div></header>
+
+  <section class="hero"><div class="shell">
+    <p class="eyebrow">Provider field guide 04 / 05</p>
+    <h1>Grok Build</h1>
+    <p class="lede">Current t3code main can discover Grok models and change the root ACP session model. It does not expose reasoning controls or a child graph. Two unmerged branches show likely future directions, but they are evidence, not shipped behavior.</p>
+    <div class="meta"><span class="tag">ACP over stdio</span><span class="tag">main 2274444e</span><span class="status bad">child and effort control unsupported</span></div>
+  </div></section>
+
+  <main class="shell">
+    <section class="section" id="verdict">
+      <h2>Verdict</h2>
+      <div class="grid">
+        <article class="card"><div class="metric">1+</div><div class="label">models</div><p><code>grok-build</code> is the fallback. ACP session setup can replace it with a discovered model list.</p></article>
+        <article class="card"><div class="metric">0</div><div class="label">mainline options</div><p>Current main publishes no reasoning, context, speed, or thinking descriptors.</p></article>
+        <article class="card"><div class="metric">Root only</div><div class="label">current graph</div><p>Foreign ACP session updates are dropped. No current child-agent projection exists.</p></article>
+      </div>
+      <div class="callout"><strong>Recommended Observer status.</strong> Add Grok model discovery only when the user enables the provider. Keep reasoning and employee child control unavailable until a merged contract and real CLI transcript prove both.</div>
+    </section>
+
+    <section class="section" id="runtime">
+      <h2>Runtime and authentication</h2>
+      <pre><code>command: grok
+args:    agent stdio
+cwd:     selected workspace
+env:     instance environment + GROK_OAUTH2_REFERRER=t3code</code></pre>
+      <p>T3 selects ACP auth method <code>xai.api_key</code> when <code>XAI_API_KEY</code> is non-empty, otherwise <code>cached_token</code>. Current status reporting still calls authentication unknown on both successful and failed discovery paths. Observer must not infer verified login from the presence of an environment variable.</p>
+      <p>The provider is disabled by default in T3. It runs <code>grok --version</code>, then opens a short-lived ACP runtime, performs initialize/auth/session setup, and reads <code>sessionSetupResult.models</code>.</p>
+    </section>
+
+    <section class="section" id="models">
+      <h2>Current model semantics</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Concern</th><th>Current main</th><th>Observer implication</th></tr></thead>
+        <tbody>
+          <tr><td>Model ID</td><td>Bare ACP model ID such as <code>grok-build</code>. Empty input falls back to that ID.</td><td>Remove the global slash rule. Validate Grok IDs in a Grok adapter.</td></tr>
+          <tr><td>Discovery</td><td>ACP <code>availableModels</code> and <code>currentModelId</code>.</td><td>Store host-native IDs and names. Do not manufacture an xAI API identifier.</td></tr>
+          <tr><td>Apply</td><td><code>session/set_model</code> when requested and tracked IDs differ.</td><td>The empty response does not prove the effective model. Keep desired and observed state separate.</td></tr>
+          <tr><td>Reasoning</td><td>No descriptors; <code>ModelSelection.options</code> is ignored.</td><td>Do not show an effort picker for current main.</td></tr>
+          <tr><td>Model switching</td><td>Adapter says in-session, but product presentation requires a new thread and rejects a started-thread change.</td><td>Capability reporting must account for the whole route, not one adapter flag.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="section" id="branches">
+      <h2>Useful unmerged evidence</h2>
+      <div class="grid">
+        <article class="card wide"><h3>Reasoning branch</h3><p><code>origin/t3code/audit-grok-build-gaps</code> parses model <code>_meta</code>, advertises <code>reasoningEffort</code>, and sends it under <code>session/set_model._meta</code>. It also allows selected launch-time effort. None of this is in checked-out main.</p></article>
+        <article class="card wide"><h3>Subagent branch</h3><p><code>origin/t3code/grok-subagent-roster</code> parses private xAI spawn and finish events and projects child task metadata. It observes a child model but provides no child model or effort setter.</p></article>
+      </div>
+      <div class="callout warn"><strong>Do not code to branch evidence as a public API.</strong> These branches reveal plausible option IDs and event shapes. They still need merge confirmation, released CLI support, capability negotiation, and captured transcripts.</div>
+    </section>
+
+    <section class="section" id="children">
+      <h2>Subagent boundary</h2>
+      <ul class="facts">
+        <li>Current <code>GrokSessionContext</code> owns one root ACP session and one active turn.</li>
+        <li>The shared ACP runtime rejects updates for another session ID until a provider implements lineage routing.</li>
+        <li>Current extension handling covers ask-user-question and prompt-completion messages, not subagent spawn or finish.</li>
+        <li>xAI hook documentation describes lifecycle notifications and allow/deny tool decisions, not a verified child input mutation contract.</li>
+      </ul>
+      <p>A passive Grok Observer adapter is the next safe step. It should start with captured native hook fixtures, conservative model attribution, and explicit unknown parentage where signals are incomplete. Embedding a second ACP client in Observer would duplicate T3's runtime and still would not create a per-child setter.</p>
+    </section>
+
+    <section class="section" id="implementation">
+      <h2>Observer implementation notes</h2>
+      <ol class="steps">
+        <li>Add a disabled-by-default Grok target with binary/profile identity and a scoped ACP model probe.</li>
+        <li>Store a bare model ID. Do not prefix it with <code>grok/</code> or treat a CLI alias as an API model ID.</li>
+        <li>Expose no reasoning control for current main. If the reasoning work ships, read the advertised per-model values and use its host option ID.</li>
+        <li>Do not mark a <code>session/set_model</code> request as effective model evidence. Wait for an authoritative host event or report it as requested only.</li>
+        <li>Add native Grok hooks only from real fixtures. Keep child graph and child control capability false until stable IDs and lineage exist.</li>
+        <li>Test disabled state, missing CLI, cached-token and API-key auth attempts, empty inventory, request failure, optimistic model state, and multiple profiles.</li>
+      </ol>
+    </section>
+
+    <section class="section" id="sources">
+      <h2>Primary sources</h2>
+      <ul class="source-list">
+        <li><code>t3code/apps/server/src/provider/Drivers/GrokDriver.ts:42-161</code> - driver and maintenance policy.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/GrokProvider.ts:34-124,188-312</code> - status, inventory, and empty capabilities.</li>
+        <li><code>t3code/apps/server/src/provider/acp/GrokAcpSupport.ts:14-108</code> - spawn, auth method, ID normalization, and model selection.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/GrokAdapter.ts:530-1045,1451-1468</code> - root session, turns, and adapter capability.</li>
+        <li><code>t3code/apps/server/src/provider/acp/AcpSessionRuntime.ts:370-405</code> - foreign-session filtering.</li>
+        <li><a href="https://docs.x.ai/build/overview">xAI Grok Build overview</a>, <a href="https://docs.x.ai/build/features/hooks">hooks</a>, and <a href="https://agentclientprotocol.com/protocol/v1/session-config-options">ACP options</a>, accessed 2026-08-22.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer><div class="shell">Source notes: <code>/tmp/opencode/observer-provider-grok.md</code>. Non-main branch findings are kept separate from current product behavior.</div></footer>
+</body>
+</html>

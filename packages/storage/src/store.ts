@@ -2,8 +2,10 @@ import { DatabaseSync } from "node:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import type {
+  AgentAssignment,
   AgentCounts,
   AgentEntity,
+  AgentMail,
   EdgeEntity,
   EntityStore,
   HostId,
@@ -189,6 +191,8 @@ export class Store implements EntityStore {
       let removed = 0
       for (const row of sessions) {
         const id = str(row["id"])
+        const { host, sessionKey } = splitSessionId(id)
+        this.deleteCoordination(host as HostId, sessionKey)
         for (const table of ["messages", "tool_calls", "todos", "prompt_fragments", "edges", "agents"]) {
           this.db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(id)
         }
@@ -196,6 +200,7 @@ export class Store implements EntityStore {
         removed++
       }
       this.db.prepare("DELETE FROM events WHERE received_at < ?").run(cutoff)
+      this.db.prepare("DELETE FROM agent_mail WHERE created_at < ?").run(cutoff)
       return removed
     })
   }
@@ -204,6 +209,7 @@ export class Store implements EntityStore {
   deleteSession(sessionId: string): void {
     const { host, sessionKey } = splitSessionId(sessionId)
     this.transaction(() => {
+      this.deleteCoordination(host as HostId, sessionKey)
       for (const table of ["messages", "tool_calls", "todos", "prompt_fragments", "edges", "agents"]) {
         this.db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId)
       }
@@ -264,19 +270,22 @@ export class Store implements EntityStore {
   putAgent(row: AgentEntity): void {
     this.db
       .prepare(
-        `INSERT INTO agents (id, session_id, agent_key, agent_type, display_name, parent_agent_id, status, model, model_confidence, description, delegation_prompt, summary, started_at, ended_at, updated_at, total_tokens, duration_ms)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO agents (id, session_id, agent_key, runtime_id, agent_type, display_name, parent_agent_id, status, model, model_confidence, description, delegation_prompt, summary, started_at, ended_at, updated_at, total_tokens, duration_ms, lines_added, lines_removed, churn_confidence)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
-           agent_type=excluded.agent_type, display_name=excluded.display_name, parent_agent_id=excluded.parent_agent_id,
+           runtime_id=COALESCE(excluded.runtime_id, agents.runtime_id), agent_type=excluded.agent_type,
+           display_name=excluded.display_name, parent_agent_id=excluded.parent_agent_id,
            status=excluded.status, model=excluded.model, model_confidence=excluded.model_confidence,
            description=excluded.description, delegation_prompt=excluded.delegation_prompt, summary=excluded.summary,
            ended_at=excluded.ended_at, updated_at=excluded.updated_at, total_tokens=excluded.total_tokens,
-           duration_ms=excluded.duration_ms`,
+           duration_ms=excluded.duration_ms, lines_added=excluded.lines_added,
+           lines_removed=excluded.lines_removed, churn_confidence=excluded.churn_confidence`,
       )
       .run(
         row.id,
         row.sessionId,
         row.agentKey,
+        row.runtimeId ?? null,
         row.agentType,
         row.displayName,
         row.parentAgentId,
@@ -291,6 +300,9 @@ export class Store implements EntityStore {
         row.updatedAt,
         row.totalTokens,
         row.durationMs,
+        row.linesAdded ?? null,
+        row.linesRemoved ?? null,
+        row.churnConfidence ?? null,
       )
   }
 
@@ -348,12 +360,14 @@ export class Store implements EntityStore {
   putToolCall(row: ToolCallEntity): void {
     this.db
       .prepare(
-        `INSERT INTO tool_calls (id, session_id, agent_id, call_id, tool, title, input, output, error, status, started_at, ended_at, duration_ms)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO tool_calls (id, session_id, agent_id, call_id, tool, title, input, output, error, status, started_at, ended_at, duration_ms, lines_added, lines_removed, churn_confidence)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            tool=excluded.tool, title=excluded.title, input=COALESCE(excluded.input, tool_calls.input),
            output=excluded.output, error=excluded.error, status=excluded.status,
-           ended_at=excluded.ended_at, duration_ms=excluded.duration_ms`,
+           ended_at=excluded.ended_at, duration_ms=excluded.duration_ms,
+           lines_added=excluded.lines_added, lines_removed=excluded.lines_removed,
+           churn_confidence=excluded.churn_confidence`,
       )
       .run(
         row.id,
@@ -369,7 +383,140 @@ export class Store implements EntityStore {
         row.startedAt,
         row.endedAt,
         row.durationMs,
+        row.linesAdded ?? null,
+        row.linesRemoved ?? null,
+        row.churnConfidence ?? null,
       )
+  }
+
+  // ---------------------------------------------------- agent coordination
+
+  getAgentAssignment(id: string): AgentAssignment | undefined {
+    const row = this.db.prepare("SELECT * FROM agent_assignments WHERE id = ?").get(id) as Row | undefined
+    return row ? toAgentAssignment(row) : undefined
+  }
+
+  getAgentAssignmentByRuntime(host: HostId, runtimeId: string): AgentAssignment | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM agent_assignments WHERE host = ? AND runtime_id = ?")
+      .get(host, runtimeId) as Row | undefined
+    return row ? toAgentAssignment(row) : undefined
+  }
+
+  listAgentAssignments(host: HostId, rootSessionKey: string): AgentAssignment[] {
+    const rows = this.db
+      .prepare("SELECT * FROM agent_assignments WHERE host = ? AND root_session_key = ? ORDER BY created_at")
+      .all(host, rootSessionKey) as Row[]
+    return rows.map(toAgentAssignment)
+  }
+
+  getAgentAssignmentByCall(host: HostId, rootSessionKey: string, callId: string): AgentAssignment | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM agent_assignments WHERE host = ? AND root_session_key = ? AND call_id = ?")
+      .get(host, rootSessionKey, callId) as Row | undefined
+    return row ? toAgentAssignment(row) : undefined
+  }
+
+  putAgentAssignment(row: AgentAssignment): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_assignments (id, host, root_session_key, runtime_id, parent_runtime_id, call_id, agent_type, host_agent_type, description, prompt, status, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           root_session_key=excluded.root_session_key, runtime_id=COALESCE(excluded.runtime_id, agent_assignments.runtime_id),
+           parent_runtime_id=excluded.parent_runtime_id,
+           call_id=COALESCE(excluded.call_id, agent_assignments.call_id), agent_type=excluded.agent_type,
+           host_agent_type=excluded.host_agent_type, description=COALESCE(excluded.description, agent_assignments.description),
+           prompt=COALESCE(excluded.prompt, agent_assignments.prompt), status=excluded.status,
+           updated_at=excluded.updated_at`,
+      )
+      .run(
+        row.id,
+        row.host,
+        row.rootSessionKey,
+        row.runtimeId,
+        row.parentRuntimeId,
+        row.callId,
+        row.agentType,
+        row.hostAgentType,
+        row.description,
+        row.prompt,
+        row.status,
+        row.createdAt,
+        row.updatedAt,
+      )
+  }
+
+  putAgentMail(row: AgentMail): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT INTO agent_mail (id, host, root_session_key, from_runtime_id, to_runtime_id, text, created_at, delivered_at, read_at)
+         VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
+      )
+      .run(
+        row.id,
+        row.host,
+        row.rootSessionKey,
+        row.fromRuntimeId,
+        row.toRuntimeId,
+        row.text,
+        row.createdAt,
+        row.deliveredAt,
+        row.readAt,
+      )
+    return Number(result.changes) === 1
+  }
+
+  listUnreadAgentMail(host: HostId, rootSessionKey: string, toRuntimeId: string, limit = 100): AgentMail[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM agent_mail WHERE host = ? AND root_session_key = ? AND to_runtime_id = ? AND read_at IS NULL ORDER BY created_at LIMIT ?",
+      )
+      .all(host, rootSessionKey, toRuntimeId, limit) as Row[]
+    return rows.map(toAgentMail)
+  }
+
+  markAgentMailDelivered(id: string, toRuntimeId: string, at = Date.now()): void {
+    this.db
+      .prepare("UPDATE agent_mail SET delivered_at = COALESCE(delivered_at, ?) WHERE id = ? AND to_runtime_id = ?")
+      .run(at, id, toRuntimeId)
+  }
+
+  markAgentMailRead(ids: string[], toRuntimeId: string, at = Date.now()): void {
+    const stmt = this.db.prepare(
+      "UPDATE agent_mail SET read_at = COALESCE(read_at, ?) WHERE id = ? AND to_runtime_id = ?",
+    )
+    for (const id of ids) stmt.run(at, id, toRuntimeId)
+  }
+
+  countRecentAgentMail(host: HostId, rootSessionKey: string, fromRuntimeId: string, since: number): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM agent_mail WHERE host = ? AND root_session_key = ? AND from_runtime_id = ? AND created_at >= ?",
+      )
+      .get(host, rootSessionKey, fromRuntimeId, since) as Row
+    return num(row["n"])
+  }
+
+  countRecentAgentMailTo(host: HostId, rootSessionKey: string, toRuntimeId: string, since: number): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM agent_mail WHERE host = ? AND root_session_key = ? AND to_runtime_id = ? AND created_at >= ?",
+      )
+      .get(host, rootSessionKey, toRuntimeId, since) as Row
+    return num(row["n"])
+  }
+
+  countRecentAgentAssignments(host: HostId, rootSessionKey: string, since: number): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM agent_assignments WHERE host = ? AND root_session_key = ? AND created_at >= ?")
+      .get(host, rootSessionKey, since) as Row
+    return num(row["n"])
+  }
+
+  private deleteCoordination(host: HostId, rootSessionKey: string): void {
+    this.db.prepare("DELETE FROM agent_mail WHERE host = ? AND root_session_key = ?").run(host, rootSessionKey)
+    this.db.prepare("DELETE FROM agent_assignments WHERE host = ? AND root_session_key = ?").run(host, rootSessionKey)
   }
 
   listTodos(agentId: string): TodoEntity[] {
@@ -562,6 +709,7 @@ function toAgent(r: Row): AgentEntity {
     id: str(r["id"]),
     sessionId: str(r["session_id"]),
     agentKey: str(r["agent_key"]),
+    runtimeId: nstr(r["runtime_id"]),
     agentType: str(r["agent_type"]),
     displayName: nstr(r["display_name"]),
     parentAgentId: nstr(r["parent_agent_id"]),
@@ -576,6 +724,9 @@ function toAgent(r: Row): AgentEntity {
     updatedAt: num(r["updated_at"]),
     totalTokens: nnum(r["total_tokens"]),
     durationMs: nnum(r["duration_ms"]),
+    linesAdded: r["lines_added"] === null || r["lines_added"] === undefined ? undefined : num(r["lines_added"]),
+    linesRemoved: r["lines_removed"] === null || r["lines_removed"] === undefined ? undefined : num(r["lines_removed"]),
+    churnConfidence: nstr(r["churn_confidence"]) as AgentEntity["churnConfidence"],
   }
 }
 
@@ -622,6 +773,41 @@ function toToolCall(r: Row): ToolCallEntity {
     startedAt: num(r["started_at"]),
     endedAt: nnum(r["ended_at"]),
     durationMs: nnum(r["duration_ms"]),
+    linesAdded: r["lines_added"] === null || r["lines_added"] === undefined ? undefined : num(r["lines_added"]),
+    linesRemoved: r["lines_removed"] === null || r["lines_removed"] === undefined ? undefined : num(r["lines_removed"]),
+    churnConfidence: nstr(r["churn_confidence"]) as ToolCallEntity["churnConfidence"],
+  }
+}
+
+function toAgentAssignment(r: Row): AgentAssignment {
+  return {
+    id: str(r["id"]),
+    host: str(r["host"]) as HostId,
+    rootSessionKey: str(r["root_session_key"]),
+    runtimeId: nstr(r["runtime_id"]),
+    parentRuntimeId: nstr(r["parent_runtime_id"]),
+    callId: nstr(r["call_id"]),
+    agentType: str(r["agent_type"]),
+    hostAgentType: str(r["host_agent_type"]),
+    description: nstr(r["description"]),
+    prompt: nstr(r["prompt"]),
+    status: str(r["status"]) as AgentAssignment["status"],
+    createdAt: num(r["created_at"]),
+    updatedAt: num(r["updated_at"]),
+  }
+}
+
+function toAgentMail(r: Row): AgentMail {
+  return {
+    id: str(r["id"]),
+    host: str(r["host"]) as HostId,
+    rootSessionKey: str(r["root_session_key"]),
+    fromRuntimeId: str(r["from_runtime_id"]),
+    toRuntimeId: str(r["to_runtime_id"]),
+    text: str(r["text"]),
+    createdAt: num(r["created_at"]),
+    deliveredAt: nnum(r["delivered_at"]),
+    readAt: nnum(r["read_at"]),
   }
 }
 

@@ -102,11 +102,55 @@ export interface SeatSkill {
   description: string
 }
 
-/** One employee's desired model, reasoning effort and skills. */
-export interface SeatSpec {
+/**
+ * One knob on a host, under the host's own name for it.
+ *
+ * `string | boolean` and no third case, exactly as `SeatTargetOption` in
+ * `apps/daemon/src/seats.ts` has it: every option the five hosts expose today
+ * is either a named level (`"high"`, `"adaptive"`) or a switch. The index
+ * signature is not decoration — the daemon's schema keeps unknown keys on
+ * purpose, and a settings surface that round-trips a target must hand them
+ * back untouched.
+ */
+export interface SeatTargetOption {
+  id: string
+  value: string | boolean
+  [extra: string]: unknown
+}
+
+/**
+ * What an employee should run on one host.
+ *
+ * `host` is a `string` and not a union for the reason the daemon gives: a
+ * typo must survive the save and be reported as `unknown-host`, not deleted
+ * out from under the user. `model` is **opaque** — nothing in the browser
+ * parses it, because `provider/model` is OpenCode's addressing scheme and
+ * Codex's `gpt-5.6-sol` is exactly right as written.
+ */
+export interface SeatTarget {
+  host: string
   model?: string
+  options?: SeatTargetOption[]
+  [extra: string]: unknown
+}
+
+/** One employee's desired per-host configuration and skills. */
+export interface SeatSpec {
+  /** Legacy OpenCode model. Read through `readTargets`, never directly. */
+  model?: string
+  /** Legacy OpenCode reasoning effort. Read through `readTargets`. */
   variant?: string
   skills?: SeatSkill[]
+  /**
+   * Per-host configuration, keyed by provider instance id
+   * (`opencode:default`, `codex:work`).
+   *
+   * Absent — not empty — is what every config written before targets landed
+   * has, and it is the signal that the legacy `model`/`variant` pair still
+   * applies. An explicit `{}` means "configured for no host", which is a
+   * different statement.
+   */
+  targets?: Record<string, SeatTarget>
   [extra: string]: unknown
 }
 
@@ -122,6 +166,16 @@ export interface SeatIssue {
   severity: SeatIssueSeverity
   path: string
   employeeId?: string
+  /**
+   * The target key the finding is scoped to, e.g. `codex:default`.
+   *
+   * Present so a row can be found without re-parsing `path` — target keys
+   * contain `:` and may contain `.`, so splitting the path back apart is not
+   * safe, which is precisely why the daemon sends this field.
+   */
+  targetId?: string
+  /** The host that target names, verbatim, including an unrecognised one. */
+  host?: string
   message: string
 }
 
@@ -203,6 +257,139 @@ export interface ProviderHostStatus {
 
 export function getProviderStatus(): Promise<{ hosts: ProviderHostStatus[] }> {
   return request("/v1/providers/status")
+}
+
+/* ------------------------------------------------------------------- hosts */
+
+/**
+ * The seat-configuration view of a host, from `GET /v1/hosts` and
+ * `GET /v1/hosts/:host/models`.
+ *
+ * Distinct from `Bootstrap.hosts`, which is the protocol package's
+ * `HostCapabilities` and answers "what telemetry does this host send us". These
+ * answer "what can Observer configure on this host, and how honestly" — which
+ * is why the name here is `SeatHostCapabilities`, matching the daemon's own
+ * alias rather than shadowing the protocol type.
+ *
+ * Nothing in this section is derived, guessed or padded in the browser. The
+ * daemon owns every one of these fields, and until recently the browser kept a
+ * mirror of them because no endpoint served them. It does now, and the mirror
+ * is gone.
+ */
+
+export type DiscoveryMode = "live" | "cached" | "manual"
+
+/**
+ * How far Observer will go in acting on a setting for this host.
+ *
+ * `experimental` is a real third state and not a hedge: Codex's per-child model
+ * needs a synchronous `PreToolUse` rewrite that is prototyped and not hardened.
+ * The three must render differently.
+ */
+export type ControlSupport = "supported" | "experimental" | "unsupported"
+
+export interface SeatHostCapabilities {
+  discovery: DiscoveryMode
+  childModel: ControlSupport
+  childReasoning: ControlSupport
+  /** True where a change lands only after the host restarts. */
+  requiresReload: boolean
+}
+
+/**
+ * One configured install of a host.
+ *
+ * `id` is the instance key seat targets are filed under (`opencode:default`,
+ * `codex:work`). `binaryPath` and `homePath` are omitted when the host's own
+ * defaults apply, and they are the only two things that distinguish two
+ * profiles of the same host.
+ */
+export interface HostProfileInfo {
+  id: string
+  host: string
+  label: string
+  binaryPath?: string
+  homePath?: string
+}
+
+export interface HostSummary {
+  id: string
+  label: string
+  profiles: HostProfileInfo[]
+  /**
+   * **Nullable, and the null is load-bearing.**
+   *
+   * `null` means no adapter could answer — it threw, and the daemon contained
+   * it. That is not the same fact as `childModel: "unsupported"`, which means
+   * an adapter looked and the host cannot do it. Only the second is a finding.
+   * A UI that rendered null as "no control" would forge a capability check
+   * nobody performed, so `status.ts` renders it as an explicit unknown.
+   */
+  capabilities: SeatHostCapabilities | null
+  /** The daemon's own sentences about a degraded answer. Render verbatim. */
+  warnings: string[]
+}
+
+export function getHosts(): Promise<{ hosts: HostSummary[] }> {
+  return request("/v1/hosts")
+}
+
+export interface ModelOptionChoice {
+  id: string
+  label: string
+  isDefault?: boolean
+}
+
+/**
+ * One knob a host exposes for a model, described well enough for a UI to render
+ * it without knowing which host it came from.
+ *
+ * `id` is the host's own name for the knob (`variant`, `reasoningEffort`), and
+ * it is the same id `SeatTargetOption.id` stores, so a value round-trips
+ * through the config untranslated.
+ */
+export interface ModelOptionDescriptor {
+  id: string
+  label: string
+  type: "select" | "boolean"
+  choices?: ModelOptionChoice[]
+  currentValue?: string | boolean
+}
+
+export interface HostCatalogueModel {
+  id: string
+  label: string
+  contextWindow?: number
+  /** `[]` means "no knobs Observer can vouch for", not "an empty dropdown". */
+  options: ModelOptionDescriptor[]
+}
+
+/** Where the list came from. The server's vocabulary, adopted verbatim. */
+export type CatalogueFreshness = "live" | "cached" | "unknown"
+
+export interface HostCatalogue {
+  host: string
+  label: string
+  /** The profile actually answered for, so a picker that sent none learns which. */
+  profile: string
+  models: HostCatalogueModel[]
+  source: string
+  freshness: CatalogueFreshness
+  warnings: string[]
+}
+
+/**
+ * One host's catalogue. **This can spawn a subprocess and cost seconds**, which
+ * is why it is never called on tab open — only once a target is expanded.
+ *
+ * An unregistered host is a 404 and throws. A registered host whose binary is
+ * absent is a 200 with `models: []`, `freshness: "unknown"` and a warning: a
+ * normal state on a machine with only one of these tools installed, and not an
+ * error to render as one.
+ */
+export function getHostModels(host: string, profile?: string): Promise<HostCatalogue> {
+  const query = profile !== undefined && profile.length > 0 ? `?profile=${encodeURIComponent(profile)}` : ""
+  return request(`/v1/hosts/${encodeURIComponent(host)}/models${query}`)
 }
 
 export function streamUrl(cursor: number): string {

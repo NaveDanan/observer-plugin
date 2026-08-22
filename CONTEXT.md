@@ -80,6 +80,18 @@ status from the parent's finished `task` call, or the child session going `idle`
 not finished.
 _Avoid_: Done, ended
 
+**Subagent ID**:
+The host-owned stable identifier for one subagent context. In OpenCode it is the child session id
+returned by `task` and accepted later as `task_id`. Observer stores it as `runtimeId`, uses it as a
+direct-message address, and never replaces it when a failed or interrupted run resumes.
+_Avoid_: Assignment ID (Observer's pre-spawn correlation id), agent key (canvas identity)
+
+**Direct message**:
+A durable addressed message from one subagent ID to another in the same session tree. Observer
+records it in the recipient's inbox and asks OpenCode to resume the recipient immediately. If the
+host cannot do that, the recipient can pull it later with `agent_inbox`.
+_Avoid_: Parent relay, broadcast
+
 **Detail panel**:
 The right-hand panel that opens with a node click, and the only surface that answers questions
 about one agent. Four tabs: **Profile** (the seated employee and why they were seated), **Chat**

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en" style="--accent:#fb923c">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Claude Code provider research for Observer multi-provider employee seat configuration.">
+  <title>Claude provider field guide | Observer research</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <header class="topbar"><div class="shell"><a class="brand" href="combined.html">Observer / provider research</a><nav class="nav" aria-label="Provider reports"><a href="combined.html">Combined</a><a href="codex.html">Codex</a><a href="claude.html" aria-current="page">Claude</a><a href="cursor.html">Cursor</a><a href="grok.html">Grok</a><a href="opencode.html">OpenCode</a></nav></div></header>
+
+  <section class="hero"><div class="shell">
+    <p class="eyebrow">Provider field guide 02 / 05</p>
+    <h1>Claude Code</h1>
+    <p class="lede">Claude supports per-subagent model and effort in agent definitions. T3 proves rich root-session configuration and strong child attribution, but it does not generate employee definitions or steer child creation. Observer needs profile-aware discovery and a separate pre-tool control path.</p>
+    <div class="meta"><span class="tag">driver claudeAgent</span><span class="tag">SDK plus CLI</span><span class="status warn">definition-based control candidate</span></div>
+  </div></section>
+
+  <main class="shell">
+    <section class="section" id="verdict">
+      <h2>Verdict</h2>
+      <div class="grid">
+        <article class="card"><div class="metric">Static</div><div class="label">T3 catalog</div><p>T3 version-gates a built-in Claude catalog and appends custom model strings. It does not call SDK <code>supportedModels()</code>.</p></article>
+        <article class="card"><div class="metric">4+</div><div class="label">option families</div><p>Effort, context window, fast mode, and model-specific thinking are separate controls.</p></article>
+        <article class="card"><div class="metric">PreToolUse</div><div class="label">control timing</div><p><code>SubagentStart</code> is too late. An Agent tool rewrite or generated definition must happen before execution.</p></article>
+      </div>
+      <div class="callout"><strong>Recommended Observer status.</strong> Add Claude as a host/profile target and support catalog browsing first. Keep child model control disabled until generated definitions and Agent input rewriting are verified against real Claude Code versions.</div>
+    </section>
+
+    <section class="section" id="runtime">
+      <h2>Runtime and profiles</h2>
+      <p>T3's interactive Claude provider uses <code>@anthropic-ai/claude-agent-sdk</code>. It creates one long-lived <code>query()</code> per thread, feeds it an async prompt queue, consumes SDK messages, and uses query controls for model, permission mode, interruption, task stop, and close.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Area</th><th>T3 behavior</th><th>Observer consequence</th></tr></thead>
+        <tbody>
+          <tr><td>Executable</td><td>Configurable <code>binaryPath</code>; Windows SDK paths need special native/shim resolution.</td><td>A health probe succeeding does not prove the SDK can spawn the same path.</td></tr>
+          <tr><td>Profile</td><td><code>homePath</code> becomes <code>CLAUDE_CONFIG_DIR</code>. <code>HOME</code> stays unchanged so keychain lookup still works.</td><td>Install hooks and definitions into the explicitly selected profile root.</td></tr>
+          <tr><td>Auth</td><td>SDK initialization returns account email, subscription, token source, and API provider.</td><td>Store profile identity and non-secret status only. Never inspect or expose tokens.</td></tr>
+          <tr><td>Probe</td><td>Hooks and MCP are disabled for the capability probe; user, project, and local settings remain available for commands.</td><td>Discovery can execute credential-sensitive initialization. Treat it as an active probe.</td></tr>
+          <tr><td>Instances</td><td>Each driver instance owns environment, config directory, cache, snapshot, and adapter.</td><td>A host name alone is not enough when users have several Claude profiles.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="section" id="models">
+      <h2>Model options are not one effort string</h2>
+      <p>Claude's model ID is host-native. It may be an alias, a full Anthropic model ID, or a provider deployment ID. T3 can append <code>[1m]</code> for the context selection, but keeps context separate in its public model selection.</p>
+      <div class="grid">
+        <article class="card wide"><h3>Effort</h3><p>T3 uses option ID <code>effort</code>. It normalizes model/version compatibility, including <code>xhigh</code> fallbacks. <code>ultracode</code> maps to an effort plus settings. <code>ultrathink</code> is prompt text, not an API effort.</p></article>
+        <article class="card wide"><h3>Other model traits</h3><p><code>contextWindow</code>, <code>fastMode</code>, and Haiku's <code>thinking</code> are independent. A single Observer <code>variant</code> field cannot represent this set.</p></article>
+      </div>
+      <div class="callout warn"><strong>Later-turn gap.</strong> T3 calls <code>setModel()</code> during an existing query and updates local effort attribution, but the inspected source does not prove that later effort, fast, thinking, or ultracode selections reconfigure the live query. Do not turn local bookkeeping into an "applied" claim.</div>
+    </section>
+
+    <section class="section" id="children">
+      <h2>Subagents and control</h2>
+      <p>Claude's agent definition contract supports a model, effort, prompt, tools, skills, MCP servers, limits, background behavior, memory, and permission mode. Agent invocation can also carry a model override. T3 does not provide an <code>agents</code> map and does not create employee definitions.</p>
+      <div class="grid">
+        <article class="card wide"><h3>Observation is strong</h3><ul class="facts"><li>T3 links subagent messages through <code>parent_tool_use_id</code>.</li><li>It seeds task model and effort from the Agent call or root session.</li><li>It refines the child model from <code>assistant.message.model</code>.</li><li>Observer currently reconciles <code>resolvedModel</code> from the Agent/Task result.</li></ul></article>
+        <article class="card wide"><h3>Control remains unproven</h3><ul class="facts"><li><code>SubagentStart</code> can add context but cannot select a model before creation.</li><li>The current Observer emitter cannot return <code>updatedInput</code>.</li><li>A generated definition must preserve specialized prompts, tool limits, and permission policy.</li><li>Per-call effort is not a stable documented Agent input field.</li></ul></article>
+      </div>
+      <p>The safest control design mirrors OpenCode's caution, not its file format. Generate marker-owned Claude definitions per employee and profile. Redirect only a verified neutral/default Agent invocation in a dedicated <code>PreToolUse</code> controller. Leave named specialized agents untouched.</p>
+    </section>
+
+    <section class="section" id="implementation">
+      <h2>Observer implementation notes</h2>
+      <ol class="steps">
+        <li>Add Claude profile discovery with binary path, <code>CLAUDE_CONFIG_DIR</code>, version, and account status. Keep credentials outside Observer config.</li>
+        <li>Use a Claude catalog adapter. Prefer a live SDK model inventory if the installed version supports it; fall back to a versioned list and free text.</li>
+        <li>Persist an opaque model plus typed options. At minimum support <code>effort</code>, <code>contextWindow</code>, <code>fastMode</code>, and <code>thinking</code> when advertised.</li>
+        <li>Improve observation before control. Capture common hook <code>effort.level</code> only when present and attach provenance.</li>
+        <li>Prototype generated definitions and a synchronous Agent <code>PreToolUse</code> hook in the chosen profile. Copy all original Agent input and change only the selected neutral delegation field.</li>
+        <li>Fail open on missing definitions, unsupported model options, timeout, or profile mismatch. Record diagnostics and preserve the original task.</li>
+      </ol>
+    </section>
+
+    <section class="section" id="sources">
+      <h2>Primary sources</h2>
+      <ul class="source-list">
+        <li><code>t3code/apps/server/src/provider/Drivers/ClaudeDriver.ts:111-219</code> and <code>Drivers/ClaudeHome.ts:9-52</code> - instances and config-directory isolation.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/ClaudeProvider.ts:65-470,579-788,807-975</code> - catalog, options, and capability probe.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/ClaudeAdapter.ts:2861-2887,3184-3239,4110-4192,4356-4410</code> - child attribution and selection.</li>
+        <li><code>observer-plugin/packages/adapters/src/claude.ts:31-145,211-239</code> - current hooks and reconciliation.</li>
+        <li><a href="https://code.claude.com/docs/en/agent-sdk/typescript#agentdefinition">Anthropic AgentDefinition</a>, <a href="https://code.claude.com/docs/en/agent-sdk/subagents">subagents</a>, and <a href="https://code.claude.com/docs/en/hooks">hooks</a>, accessed 2026-08-22.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer><div class="shell">Source notes: <code>/tmp/opencode/observer-provider-claude.md</code>. Unsupported behavior stays marked as unsupported.</div></footer>
+</body>
+</html>

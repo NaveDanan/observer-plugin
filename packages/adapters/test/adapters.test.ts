@@ -242,10 +242,29 @@ describe("opencode adapter", () => {
     })
     expect(events[0]?.body).toMatchObject({
       kind: "agent.started",
+      runtimeId: "child",
       parentAgentKey: "main",
       description: "search the repo",
       prompt: "find things",
     })
+  })
+
+  it("marks an assignment continuation as a resume", () => {
+    const events = normalizeHook({
+      host: "opencode",
+      event: "observer.assignment",
+      deliveryId: "d",
+      payload: { status: "running" },
+      context: {
+        sessionKey: "root",
+        agentKey: "session:child",
+        parentAgentKey: "main",
+        runtimeId: "child",
+        agentType: "malik-johnson",
+        resumed: true,
+      },
+    })
+    expect(find(events, "agent.started")).toMatchObject({ runtimeId: "child", resumed: true })
   })
 
   it("streams assistant text deltas", () => {

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en" style="--accent:#c4b5fd">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Cursor provider research for Observer multi-provider employee seat configuration.">
+  <title>Cursor provider field guide | Observer research</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <header class="topbar"><div class="shell"><a class="brand" href="combined.html">Observer / provider research</a><nav class="nav" aria-label="Provider reports"><a href="combined.html">Combined</a><a href="codex.html">Codex</a><a href="claude.html">Claude</a><a href="cursor.html" aria-current="page">Cursor</a><a href="grok.html">Grok</a><a href="opencode.html">OpenCode</a></nav></div></header>
+
+  <section class="hero"><div class="shell">
+    <p class="eyebrow">Provider field guide 03 / 05</p>
+    <h1>Cursor</h1>
+    <p class="lede">Cursor gives T3 a clean, live model-and-options inventory through ACP. That is enough for a capable model picker. It does not establish an employee-level child control operation, so Observer should not advertise one.</p>
+    <div class="meta"><span class="tag">ACP protocol v1</span><span class="tag">live option discovery</span><span class="status bad">child control unsupported</span></div>
+  </div></section>
+
+  <main class="shell">
+    <section class="section" id="verdict">
+      <h2>Verdict</h2>
+      <div class="grid">
+        <article class="card"><div class="metric">Live</div><div class="label">inventory</div><p><code>cursor/list_available_models</code> returns models and each model's ACP config options.</p></article>
+        <article class="card"><div class="metric">5-step</div><div class="label">selection order</div><p>Base model, reasoning, context, fast mode, then thinking. T3 applies mode last.</p></article>
+        <article class="card"><div class="metric">Root only</div><div class="label">proven control</div><p>The inspected implementation configures one root ACP session. It does not steer a delegated child.</p></article>
+      </div>
+      <div class="callout"><strong>Recommended Observer status.</strong> Let users browse and store Cursor model choices by profile. Label employee child application as unsupported. Do not equate root-session ACP settings with a seated subagent.</div>
+    </section>
+
+    <section class="section" id="runtime">
+      <h2>Runtime and capability probe</h2>
+      <ol class="steps">
+        <li>T3 runs <code>cursor-agent about --format json</code>, with a plain <code>about</code> fallback, to read version and login state.</li>
+        <li>A gated preview path starts <code>cursor-agent [-e endpoint] acp</code> and sends ACP <code>initialize</code>.</li>
+        <li>The client advertises <code>parameterizedModelPicker: true</code>, authenticates with <code>cursor_login</code>, and opens a temporary session.</li>
+        <li>T3 calls the Cursor extension <code>cursor/list_available_models</code>, translates model-specific <code>configOptions</code>, then closes the scoped process.</li>
+      </ol>
+      <p>Cursor supports multiple T3 instances. Each may have its own executable, endpoint, environment, credentials, and inventory. Observer should identify the target profile or instance before showing models.</p>
+    </section>
+
+    <section class="section" id="options">
+      <h2>ACP option mapping</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Observer/T3 option</th><th>Raw ACP signal</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>model</code></td><td>Config option category <code>model</code></td><td>Select</td><td>Base model is set first. Bracketed legacy suffixes are stripped.</td></tr>
+          <tr><td><code>reasoning</code></td><td>Preferred effort/reasoning/thought-level select</td><td>Select</td><td>T3 maps known labels and writes the provider's raw value.</td></tr>
+          <tr><td><code>contextWindow</code></td><td><code>model_config</code> context option</td><td>Select</td><td>Values such as <code>272k</code> or <code>1m</code>.</td></tr>
+          <tr><td><code>fastMode</code></td><td>Fast boolean or true/false select</td><td>Boolean</td><td>T3 translates back to the raw representation.</td></tr>
+          <tr><td><code>thinking</code></td><td>Thinking boolean or true/false select</td><td>Boolean</td><td>Only appears when the selected model advertises it.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout warn"><strong>The raw menu can change after a model change.</strong> T3 sets the base model, reads the refreshed options, then writes only selections supported by that model. Observer needs the same dependency-aware behavior instead of one global reasoning menu.</div>
+    </section>
+
+    <section class="section" id="application">
+      <h2>Application order and validation</h2>
+      <pre><code>session/set_config_option  model     = gpt-5.4
+session/set_config_option  reasoning = extra-high
+session/set_config_option  context   = 1m
+session/set_config_option  fast      = true
+session/set_config_option  thinking  = false
+session/set_mode            mode      = implementation</code></pre>
+      <p>The ACP runtime validates option types and select values against the current advertised state. Equal values are no-ops. Invalid model or option values fail before a request is sent. Cursor supports in-session root model changes through this config route.</p>
+      <p>A stored Cursor model must remain a bare host-owned ID plus typed options. Encoding options into a model string loses type information and turns changing provider metadata into parsing policy.</p>
+    </section>
+
+    <section class="section" id="children">
+      <h2>Why child control is not ready</h2>
+      <ul class="facts">
+        <li>Cursor documents a <code>cursor/task</code> extension notification with child metadata, including optional model and agent ID.</li>
+        <li>T3's Cursor adapter does not register or project that task extension in the inspected source.</li>
+        <li>The generic ACP runtime drops notifications for a session ID other than its root session until explicit lineage routing exists.</li>
+        <li>No Cursor request in this implementation sets model or reasoning for one delegated child.</li>
+      </ul>
+      <div class="callout bad"><strong>Product boundary.</strong> A TUI can save a desired Cursor employee target, but it must show "not applied to delegated children" until Cursor exposes and Observer verifies a per-child control request. Silent root-session substitution would change the wrong actor.</div>
+    </section>
+
+    <section class="section" id="implementation">
+      <h2>Observer implementation notes</h2>
+      <ol class="steps">
+        <li>Add a Cursor profile/instance target and live ACP inventory probe. Do not copy T3's preview date/channel gate as permanent protocol truth.</li>
+        <li>Use typed option descriptors and selections. Preserve unknown ACP categories for future display, but apply only explicitly supported mappings.</li>
+        <li>Refresh model-dependent options after base model selection. Clamp or clear invalid staged values before saving.</li>
+        <li>Keep the current seat as desired configuration only. Report child control capability as unsupported.</li>
+        <li>Add a Cursor host adapter only after real hook or ACP child fixtures establish stable identity, parentage, effective model, and control timing.</li>
+        <li>Test bare IDs, grouped options, unknown categories, option changes after model switch, invalid values, login failure, process timeout, and multiple profiles.</li>
+      </ol>
+    </section>
+
+    <section class="section" id="sources">
+      <h2>Primary sources</h2>
+      <ul class="source-list">
+        <li><code>t3code/apps/server/src/provider/Drivers/CursorDriver.ts:53-133</code> - driver and instance construction.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/CursorProvider.ts:116-550,987-1113</code> - option translation and discovery.</li>
+        <li><code>t3code/apps/server/src/provider/acp/CursorAcpSupport.ts:33-115</code> - spawn and fixed application order.</li>
+        <li><code>t3code/apps/server/src/provider/acp/AcpSessionRuntime.ts:431-529,531-688,787-804</code> - ACP validation, session setup, and config writes.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/CursorAdapter.ts:744-751,916-1065</code> - root session and turn behavior.</li>
+        <li><a href="https://cursor.com/docs/cli/acp">Cursor ACP documentation</a> and <a href="https://agentclientprotocol.com/protocol/v1/session-config-options">ACP session config options</a>, accessed 2026-08-22.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer><div class="shell">Source notes: <code>/tmp/opencode/observer-provider-cursor.md</code>. Focused tests could not run because this t3code checkout lacks <code>vite-plus</code>; test source was inspected.</div></footer>
+</body>
+</html>

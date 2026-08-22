@@ -19,8 +19,18 @@ export interface SettingsSearchItem {
 }
 
 export const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchItem> = [
-  { id: "setting-employees", title: "Employees", tab: "general", keywords: "roster seat persona subagent" },
-  { id: "setting-seat-control", title: "Seat control", tab: "general", keywords: "model effort override agent" },
+  {
+    id: "setting-employees",
+    title: "Employees",
+    tab: "employees",
+    keywords: "roster seat persona subagent target host model opencode codex claude cursor grok",
+  },
+  {
+    id: "setting-seat-control",
+    title: "Seat control",
+    tab: "employees",
+    keywords: "model effort reasoning variant override agent consent",
+  },
   { id: "setting-guidance", title: "Roster guidance", tab: "general", keywords: "opencode plugin directive" },
   { id: "setting-capture-messages", title: "Messages", tab: "general", keywords: "capture record chat" },
   { id: "setting-capture-reasoning", title: "Reasoning", tab: "general", keywords: "capture chain of thought" },

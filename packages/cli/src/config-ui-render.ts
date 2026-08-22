@@ -1,5 +1,6 @@
 import { type SeatIssue, type SeatsConfig, diagnoseSeats } from "@observer-ai/daemon"
 import { formatContext } from "./models.js"
+import { diagnoseOpencodeSeats } from "./seat-agents.js"
 import {
   type ConfigUIState,
   EMPLOYEE_ROWS,
@@ -57,21 +58,36 @@ const GUTTER = 20
  */
 const RULE = "\u2500"
 
+/**
+ * Everything wrong with a seats config, host-agnostic findings first.
+ *
+ * `diagnoseSeats` no longer applies OpenCode's `provider/model` rule — it is
+ * host policy, and applied to every host it failed Codex's `gpt-5.6-sol` and
+ * Grok's `grok-build`. The TUI still has to say why a slashless model will not
+ * work, or typing one looks like it was accepted. Merging here keeps the
+ * sentence identical to the one the installer prints, which is the whole point
+ * of rendering findings verbatim.
+ */
+function seatIssues(seats: SeatsConfig): SeatIssue[] {
+  return [...diagnoseSeats(seats).issues, ...diagnoseOpencodeSeats(seats)]
+}
+
 export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPORT): string[] {
   const columns = Math.max(60, viewport.columns)
   const theme = viewport.theme ?? PLAIN_THEME
   const diagnosis = diagnoseSeats(state.seats)
+  const issues = seatIssues(state.seats)
   const lines = [...header(state, diagnosis.effective, columns, theme)]
 
-  const footer = [...notes(state, diagnosis.issues, columns, theme), "", ...hints(state, theme)]
+  const footer = [...notes(state, issues, columns, theme), "", ...hints(state, theme)]
   const room = Math.max(3, viewport.rows - lines.length - footer.length - 1)
 
   switch (state.view) {
     case "menu":
-      lines.push(...mainMenu(state, diagnosis.issues, columns, theme))
+      lines.push(...mainMenu(state, issues, columns, theme))
       break
     case "employees":
-      lines.push(...employeeList(state, diagnosis.issues, room, columns, theme))
+      lines.push(...employeeList(state, issues, room, columns, theme))
       break
     case "employee":
       lines.push(...employeeDetail(state, columns, theme))
@@ -489,6 +505,7 @@ function hints(state: ConfigUIState, theme: Theme): string[] {
  */
 export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[] {
   const diagnosis = diagnoseSeats(seats)
+  const issues = seatIssues(seats)
   const lines = [
     "Observer seats",
     "",
@@ -516,9 +533,9 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[
   const strays = Object.keys(seats.employees).filter((id) => !roster.some((row) => row.id === id))
   for (const id of strays) lines.push(`${pad(id, 18)}not on the roster`)
 
-  if (diagnosis.issues.length > 0) {
+  if (issues.length > 0) {
     lines.push("", "Notes")
-    for (const issue of diagnosis.issues) lines.push(`  ${issue.severity}: ${issue.message}`)
+    for (const issue of issues) lines.push(`  ${issue.severity}: ${issue.message}`)
   }
   lines.push("", "Run `observer config` in a terminal to change any of this.")
   return lines

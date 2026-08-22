@@ -112,6 +112,110 @@ describe("Pipeline", () => {
     const agent = store.listAgents("claude:s1")[0]!
     expect(store.listToolCalls(agent.id)[0]?.output).toBeNull()
   })
+
+  // Churn is derived from tool arguments, and capture policy rewrites those
+  // arguments before the reducer ever sees them. These go through the whole
+  // Pipeline for that reason: a reducer-only test cannot see the substitution.
+  function edit(pipeline: Pipeline, deliveryId: string, callId: string, input: unknown): void {
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PreToolUse",
+      deliveryId: `${deliveryId}-pre`,
+      payload: { session_id: "s1", tool_name: "Edit", tool_use_id: callId, tool_input: input },
+    })
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PostToolUse",
+      deliveryId: `${deliveryId}-post`,
+      payload: { session_id: "s1", tool_name: "Edit", tool_use_id: callId, tool_input: input, tool_response: "done" },
+    })
+  }
+
+  it("counts churn end to end for an ordinary edit", () => {
+    const { store, pipeline } = setup()
+    closers.push(() => store.close())
+
+    edit(pipeline, "d1", "t1", { file_path: "/a.ts", old_string: "one\ntwo", new_string: "1\n2\n3" })
+
+    const agent = store.listAgents("claude:s1")[0]!
+    expect(store.getAgent(agent.id)?.linesAdded).toBe(3)
+    expect(store.getAgent(agent.id)?.linesRemoved).toBe(2)
+    expect(store.getAgent(agent.id)?.churnConfidence).toBe("inferred")
+  })
+
+  it("does not count lines the redactor put there", () => {
+    const { store, pipeline } = setup()
+    closers.push(() => store.close())
+
+    // A secret inside the replacement text. `redactValue` substitutes
+    // "[redacted]" for it, so counting the stored string would be counting the
+    // redactor's output rather than the file's.
+    edit(pipeline, "d1", "t1", {
+      file_path: "/a.ts",
+      old_string: "one\ntwo",
+      new_string: "token = ghp_abcdefghijklmnopqrstuvwxyz0123\nnext",
+    })
+
+    const agent = store.listAgents("claude:s1")[0]!
+    const stored = store.listToolCalls(agent.id)[0]!
+    expect(JSON.stringify(stored.input)).toContain("[redacted]")
+    // The rewritten side is withheld; the untouched side is still counted.
+    expect(store.getAgent(agent.id)?.linesAdded).toBeUndefined()
+    expect(store.getAgent(agent.id)?.linesRemoved).toBe(2)
+  })
+
+  it("does not count a truncated argument as a line count", () => {
+    const config = makeConfig({ redaction: { ...DEFAULT_CONFIG.redaction, maxTextLength: 40 } })
+    const { store, pipeline } = setup(config)
+    closers.push(() => store.close())
+
+    const content = Array.from({ length: 50 }, (_, index) => `line ${index}`).join("\n")
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PreToolUse",
+      deliveryId: "d1-pre",
+      payload: { session_id: "s1", tool_name: "Write", tool_use_id: "t1", tool_input: { content } },
+    })
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PostToolUse",
+      deliveryId: "d1-post",
+      payload: { session_id: "s1", tool_name: "Write", tool_use_id: "t1", tool_response: "ok" },
+    })
+
+    const agent = store.listAgents("claude:s1")[0]!
+    expect(JSON.stringify(store.listToolCalls(agent.id)[0]?.input)).toContain("truncated")
+    // 40 characters of a 50-line file is not 50 lines, and it is not 3 either.
+    expect(store.getAgent(agent.id)?.linesAdded).toBeUndefined()
+  })
+
+  it("counts no churn at all when tool input capture is off", () => {
+    const config = makeConfig({ capture: { ...DEFAULT_CONFIG.capture, toolInput: false } })
+    const { store, pipeline } = setup(config)
+    closers.push(() => store.close())
+
+    edit(pipeline, "d1", "t1", { old_string: "one\ntwo", new_string: "1\n2\n3" })
+
+    const agent = store.listAgents("claude:s1")[0]!
+    expect(store.getAgent(agent.id)?.linesAdded).toBeUndefined()
+    expect(store.getAgent(agent.id)?.linesRemoved).toBeUndefined()
+  })
+
+  it("survives the same delivery arriving twice through the pipeline", () => {
+    const { store, pipeline } = setup()
+    closers.push(() => store.close())
+
+    const input = { old_string: "a\nb\nc", new_string: "x" }
+    edit(pipeline, "d1", "t1", input)
+    // Identical delivery ids: the event log rejects these as duplicates.
+    edit(pipeline, "d1", "t1", input)
+    // Fresh delivery ids carrying the same call id: these reach the reducer.
+    edit(pipeline, "d2", "t1", input)
+
+    const agent = store.listAgents("claude:s1")[0]!
+    expect(store.getAgent(agent.id)?.linesAdded).toBe(1)
+    expect(store.getAgent(agent.id)?.linesRemoved).toBe(3)
+  })
 })
 
 describe("Broadcaster", () => {
@@ -225,6 +329,147 @@ describe("HTTP API", () => {
       "copilot",
       "opencode",
     ])
+  })
+
+  it("persists stable assignments and delivers direct peer mail", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const broadcaster = new Broadcaster()
+    const app = await createServer({ store, pipeline, config, broadcaster, webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const assignment = (id: string, callId: string) => ({
+      id: `assignment-${id}`,
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: id,
+      parentRuntimeId: null,
+      callId,
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      description: `Agent ${id}`,
+      prompt: `Prompt ${id}`,
+      status: "running",
+    })
+    for (const value of [assignment("a", "call-a"), assignment("b", "call-b")]) {
+      const response = await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: value })
+      expect(response.statusCode).toBe(200)
+    }
+    const initialEvents = store.countEvents()
+    const replayedAssignment = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: assignment("a", "call-a"),
+    })
+    expect(replayedAssignment.json().assignment.id).toBe("assignment-a")
+    expect(store.listAgentAssignments("opencode", "root")).toHaveLength(2)
+    expect(store.countEvents()).toBe(initialEvents)
+    const completed = { ...assignment("a", "call-a"), status: "completed" }
+    const completedResponse = await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: completed })
+    expect(completedResponse.json().assignment.status).toBe("completed")
+    const lateReplay = await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("a", "call-a") })
+    expect(lateReplay.json().assignment.status).toBe("completed")
+    expect(store.getAgentAssignment("assignment-a")?.status).toBe("completed")
+    await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: { ...assignment("a", "call-a"), resumed: true },
+    })
+    expect(store.getAgentAssignment("assignment-a")?.status).toBe("running")
+
+    const sent = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/mail",
+      headers,
+      payload: {
+        id: "mail-1",
+        host: "opencode",
+        rootSessionKey: "root",
+        fromRuntimeId: "a",
+        toRuntimeId: "b",
+        text: "Review the migration",
+      },
+    })
+    expect(sent.statusCode).toBe(200)
+
+    const inbox = await app.inject({
+      method: "GET",
+      url: "/v1/coordination/mail?host=opencode&rootSessionKey=root&runtimeId=b",
+      headers,
+    })
+    expect(inbox.json().messages).toEqual([
+      expect.objectContaining({ id: "mail-1", fromRuntimeId: "a", toRuntimeId: "b" }),
+    ])
+    const ack = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/mail/read",
+      headers,
+      payload: { host: "opencode", rootSessionKey: "root", runtimeId: "b", ids: ["mail-1"] },
+    })
+    expect(ack.statusCode).toBe(200)
+    const emptyInbox = await app.inject({
+      method: "GET",
+      url: "/v1/coordination/mail?host=opencode&rootSessionKey=root&runtimeId=b",
+      headers,
+    })
+    expect(emptyInbox.json().messages).toEqual([])
+    expect(store.listEdges("opencode:root")).toEqual([
+      expect.objectContaining({ edgeType: "messaged", fromAgentId: "opencode:root~session:a", toAgentId: "opencode:root~session:b" }),
+    ])
+  })
+
+  it("applies capture and redaction policy to coordination content", async () => {
+    const config = makeConfig({
+      capture: { ...DEFAULT_CONFIG.capture, prompts: false },
+    })
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: {
+        id: "assignment-private",
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: "private",
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        prompt: "ghp_abcdefghijklmnopqrstuvwxyz0123",
+        status: "running",
+      },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(store.getAgentAssignment("assignment-private")?.prompt).toBeNull()
+
+    config.capture.prompts = true
+    const redacted = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: {
+        id: "assignment-private",
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: "private",
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        prompt: "ghp_abcdefghijklmnopqrstuvwxyz0123",
+        status: "running",
+      },
+    })
+    expect(redacted.statusCode).toBe(200)
+    expect(store.getAgentAssignment("assignment-private")?.prompt).toBe("[redacted]")
   })
 })
 

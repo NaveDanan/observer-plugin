@@ -17,6 +17,13 @@ Set `OBSERVER_HOME` to relocate all of it.
 
 Nothing is sent anywhere. The daemon has no outbound network calls.
 
+Direct subagent message text and assignment prompts use the existing `capture.messages`,
+`capture.prompts` and redaction rules before reaching `observer.db`. Routing metadata remains even
+when content capture is off. The OpenCode plugin may send a message to an existing local OpenCode
+child session through OpenCode's loopback SDK. It does not contact an external service. Any local
+process that can read Observer's bearer token can use the same coordination API, just as it can use
+the existing ingest and session APIs.
+
 ## Network exposure
 
 - Listens on `127.0.0.1` only.
@@ -74,10 +81,10 @@ observer stop && observer start
 
 ## Retention and deletion
 
-- `retentionDays` (default 30) prunes ended sessions and old events on start and
-  every five minutes. Set it to `0` to keep data indefinitely.
-- **Delete session data** in the UI removes a session, its agents, messages,
-  tool calls, todos, prompts and raw events.
+- `retentionDays` (default 30) prunes ended sessions, direct messages and old
+  events on start and every five minutes. Set it to `0` to keep data indefinitely.
+- **Delete session data** in the UI removes a session, its assignments, direct
+  messages, agents, chat messages, tool calls, todos, prompts and raw events.
 - `rm -rf ~/.observer` removes everything Observer has ever stored.
 - `observer uninstall all` removes the hooks from your hosts. It only deletes
   entries Observer created and leaves your own hooks untouched; a backup of each
@@ -102,4 +109,5 @@ are lost when the daemon stops.
 - Never stores host credentials or API keys of its own.
 - Never modifies a hook decision: the emitter writes nothing to stdout and always
   exits 0, so it cannot allow, deny or alter a tool call.
-- Never writes into your agent sessions.
+- Never writes into your root agent session. Direct subagent messaging adds a user message to the
+  addressed child session so that exact subagent context can respond.

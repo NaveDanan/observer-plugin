@@ -12,6 +12,7 @@ import { ChatMarkdown } from "./chat/ChatMarkdown"
 import { EMPTY_VOCABULARY, type InlineVocabulary } from "./chat/InlineVocabulary"
 import { buildTimeline } from "./chat/timeline"
 import { ToolRun } from "./chat/ToolRun"
+import { churnSummary, churnTitle } from "./churn"
 import { useDismissLayer } from "./dismissLayer"
 import { ProfileTab } from "./ProfileTab"
 
@@ -50,6 +51,28 @@ function isLive(agent: AgentEntity): boolean {
   return agent.status === "running" || agent.status === "starting"
 }
 
+/**
+ * The `+N -N` figure, or nothing at all.
+ *
+ * Returns `null` — not a zero — for an Agent the reducer never recorded an
+ * edit for. See `churnSummary`, which owns that rule for every surface.
+ *
+ * The signs stay in the text so the colours are a second carrier rather than
+ * the only one, and provenance rides along as the same `badge badge-soft` the
+ * `Model` fact uses, so an inferred total is never presented as measured.
+ */
+function ChurnFigure({ agent }: { agent: AgentEntity }): JSX.Element | null {
+  const churn = churnSummary(agent)
+  if (!churn) return null
+  return (
+    <span className="churn" title={churnTitle(churn)}>
+      {churn.added !== null && <span className="churn-added">{churn.added}</span>}
+      {churn.removed !== null && <span className="churn-removed">{churn.removed}</span>}
+      {churn.inferred && <span className="badge badge-soft">{churn.provenance}</span>}
+    </span>
+  )
+}
+
 export function DetailPanel(props: DetailPanelProps): JSX.Element {
   const { agent, match, messages, toolCalls, todos, promptFragments, capabilities, onOpenCard, onClose } = props
   const [tab, setTab] = useState<Tab>("chat")
@@ -84,6 +107,7 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
             </span>
             <span className="mono">{agent.model ?? "model unknown"}</span>
             {agent.totalTokens ? <span className="muted">{agent.totalTokens.toLocaleString()} tokens</span> : null}
+            <ChurnFigure agent={agent} />
           </p>
         </div>
         <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close details">
@@ -304,6 +328,17 @@ function PromptTab({
             <>
               <dt>Task</dt>
               <dd>{agent.description}</dd>
+            </>
+          )}
+          {/* Absent, not zero: an Agent that only read files has no churn row
+              at all rather than a `+0 -0` claiming a measurement we never
+              made. `ChurnFigure` returns null and this row disappears with it. */}
+          {churnSummary(agent) && (
+            <>
+              <dt>Code churn</dt>
+              <dd>
+                <ChurnFigure agent={agent} />
+              </dd>
             </>
           )}
         </dl>

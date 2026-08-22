@@ -3,6 +3,7 @@ import { Handle, Position } from "@xyflow/react"
 import type { NodeProps } from "@xyflow/react"
 import type { AgentEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
+import { churnSummary, churnTitle } from "./churn"
 
 export interface AgentNodeData extends Record<string, unknown> {
   agent: AgentEntity
@@ -138,6 +139,12 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
   const tone = employee?.tone
   const strengths = employee ? employee.fields.slice(0, 3) : []
 
+  // Computed plainly rather than through `useMemo`. It reads three scalars off
+  // an object the node already holds, so memoising it would cost a deps array
+  // and a cache slot per node to save two string concatenations — a loss on a
+  // canvas that repaints from a live event stream.
+  const churn = churnSummary(agent)
+
   return (
     <div
       className={`node employee-node status-${agent.status}${selected ? " is-selected" : ""}${live ? " is-live" : ""}${done ? " is-done" : ""}${isRoot ? " is-root" : ""}${failed ? " is-failed" : ""}`}
@@ -152,7 +159,7 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
         if (event.shiftKey && employee) onOpenCard()
         else onOpen()
       }}
-      aria-label={`${name}, ${role.long} ${statusText}. ${activityText}. Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
+      aria-label={`${name}, ${role.long} ${statusText}. ${activityText}.${churn ? ` ${churnTitle(churn)}.` : ""} Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
     >
       {!isRoot && <Handle type="target" position={Position.Top} />}
 
@@ -204,6 +211,17 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
         <span className="node-model" title={agent.model ?? undefined}>
           {agent.model ?? <span className="node-unknown">model unknown</span>}
         </span>
+        {churn && (
+          <span className={`node-churn${churn.inferred ? " is-estimated" : ""}`} title={churnTitle(churn)}>
+            {/* A leading tilde, not a badge: the node foot has no room for the
+                `badge-soft` the panel uses, and an inferred total still must
+                not read as a measured one. The glyph is in the text, so it
+                survives a copy-paste and a screen reader the way the signs do. */}
+            {churn.inferred && <span className="churn-estimate-mark">~</span>}
+            {churn.added !== null && <span className="churn-added">{churn.added}</span>}
+            {churn.removed !== null && <span className="churn-removed">{churn.removed}</span>}
+          </span>
+        )}
         <span className="node-activity" title={activityTitle}>
           {activityText}
         </span>

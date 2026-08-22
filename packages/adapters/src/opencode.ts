@@ -68,6 +68,8 @@ export const opencodeAdapter: Adapter = {
           push({
             kind: "agent.started",
             agentType: pickString(context, "agentType") ?? "subagent",
+            runtimeId: pickString(context, "runtimeId") ?? pickString(info, "id"),
+            resumed: context["resumed"] === true,
             displayName: pickString(info, "title"),
             description: pickString(info, "title"),
             parentAgentKey: pickString(context, "parentAgentKey") ?? MAIN_AGENT_KEY,
@@ -249,9 +251,21 @@ export const opencodeAdapter: Adapter = {
         // `session.idle`. Anything outside the contract stays unmapped so a
         // drifted payload shows up rather than being silently drawn.
         const status = pickString(p, "status")
-        if (status === "completed" || status === "failed") {
+        if (status === "completed" || status === "failed" || status === "interrupted") {
           push({ kind: "agent.status", status })
         }
+        break
+      }
+
+      case "observer.assignment": {
+        push({
+          kind: "agent.started",
+          agentType: pickString(context, "agentType") ?? "subagent",
+          runtimeId: pickString(context, "runtimeId"),
+          resumed: context["resumed"] === true,
+          parentAgentKey: pickString(context, "parentAgentKey") ?? MAIN_AGENT_KEY,
+          prompt: pickString(context, "prompt"),
+        })
         break
       }
 

@@ -1,40 +1,24 @@
 /**
- * The General tab: employees and seat control, what Observer captures, and how
- * long it keeps it.
+ * The General tab: what Observer captures, how long it keeps it, and what it
+ * tells the host about the roster.
  *
- * The Employees section is a replacement for `observer config`'s terminal
- * screens rather than a port of them. Two things carry over deliberately —
- * every finding is the daemon's own sentence, rendered verbatim, and seat
- * control's state is never out of sight of the models it governs — because
- * both exist to stop the UI claiming an employee "runs Opus" when the flag
- * that would make that true is off.
+ * Employees and seat control used to live at the top of this file. They moved
+ * to their own tab when a seat grew from "one model and one effort" into a
+ * per-host target with adapter-supplied options — see
+ * `settings/EmployeesPanel.tsx`. What is left here is the set of rows whose
+ * answer is yes or no, plus two numbers.
  *
  * Every write goes through `patch`, which rebuilds the object it is sending
- * from the freshest config it can reach. `PUT /v1/config` replaces `seats`,
- * `capture` and `redaction` wholesale, so a handler that closed over the
- * config it rendered with would silently revert whatever landed in between.
+ * from the freshest config it can reach. `PUT /v1/config` replaces `capture`
+ * and `redaction` wholesale, so a handler that closed over the config it
+ * rendered with would silently revert whatever landed in between.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { EyeIcon, SearchIcon, ShieldIcon, UsersIcon } from "lucide-react"
-import type { RosterProfile } from "@observer-ai/roster"
-import type { CaptureConfig, ConfigPatch, ObserverConfigView, SeatSpec } from "../api"
-import {
-  Badge,
-  Button,
-  Input,
-  NumberField,
-  Select,
-  SettingResetButton,
-  SettingsRow,
-  SettingsSection,
-  Switch,
-} from "../ui/primitives"
+import { useCallback, useEffect, useRef } from "react"
+import { EyeIcon, ShieldIcon } from "lucide-react"
+import type { CaptureConfig, ConfigPatch, ObserverConfigView } from "../api"
+import { NumberField, SettingResetButton, SettingsRow, SettingsSection, Switch } from "../ui/primitives"
 import { useObserverConfig } from "./useConfig"
-import { useCatalogue } from "./general/catalogue"
-import { EmployeeGrid, matchesQuery } from "./general/EmployeeGrid"
-import { SeatEditorDialog } from "./general/SeatEditorDialog"
-import { isEmptySeat, isSeated, issuesFor } from "./general/seat"
 
 /**
  * Mirrors `DEFAULT_CONFIG` in `apps/daemon/src/config.ts`, which is the
@@ -56,10 +40,7 @@ const DEFAULT_REDACTION_ENABLED = true
 const DEFAULT_GUIDANCE = true
 
 export function GeneralPanel(): JSX.Element {
-  const { config, loading, error, saving, save } = useObserverConfig()
-  const catalogue = useCatalogue()
-  const [query, setQuery] = useState("")
-  const [editing, setEditing] = useState<string | undefined>(undefined)
+  const { config, loading, error, save } = useObserverConfig()
 
   /**
    * The newest config any render has seen, readable from an event handler.
@@ -74,13 +55,7 @@ export function GeneralPanel(): JSX.Element {
     latest.current = config
   }, [config])
 
-  /**
-   * Sends a patch built from the latest config, never from this render's copy.
-   *
-   * The seats case is the one that bites: `employees` is a record the daemon
-   * replaces whole, so rebuilding it from a stale closure would drop a skill
-   * someone added to a different employee thirty seconds ago in another tab.
-   */
+  /** Sends a patch built from the latest config, never from this render's copy. */
   const patch = useCallback(
     (build: (current: ObserverConfigView) => ConfigPatch): void => {
       const current = latest.current
@@ -90,9 +65,6 @@ export function GeneralPanel(): JSX.Element {
     [save],
   )
 
-  const profiles = catalogue.profiles
-  const filtered = useMemo(() => profiles.filter((profile) => matchesQuery(profile, query)), [profiles, query])
-
   if (config === undefined) {
     return (
       <p role="status" className="px-4 py-12 text-center text-sm text-muted-foreground">
@@ -101,37 +73,8 @@ export function GeneralPanel(): JSX.Element {
     )
   }
 
-  const seats = config.seats
-  const issues = config.diagnosis.issues
-  const controlDisabled = issues.find((issue) => issue.code === "control-disabled")
-  const unknownEmployees = issues.filter((issue) => issue.code === "unknown-employee")
-  const seatedCount = profiles.filter((profile) => isSeated(seats.employees[profile.id])).length
-  const editingProfile = profiles.find((profile) => profile.id === editing)
-
   const setCapture = (key: keyof CaptureConfig, value: boolean): void =>
     patch((current) => ({ capture: { ...current.capture, [key]: value } }))
-
-  const openSeat = (profile: RosterProfile): void => setEditing(profile.id)
-
-  /** Replaces one employee's entry, keeping every other seat as last seen. */
-  const replaceSeat = (employeeId: string, spec: SeatSpec | undefined): void =>
-    patch((current) => {
-      const employees = { ...current.seats.employees }
-      if (spec === undefined || isEmptySeat(spec)) delete employees[employeeId]
-      else employees[employeeId] = spec
-      return { seats: { control: current.seats.control, employees } }
-    })
-
-  /** Re-keys a seat whose id matches nobody, without disturbing the others. */
-  const moveSeat = (from: string, to: string): void =>
-    patch((current) => {
-      const employees = { ...current.seats.employees }
-      const spec = employees[from]
-      if (spec === undefined) return { seats: current.seats }
-      delete employees[from]
-      employees[to] = spec
-      return { seats: { control: current.seats.control, employees } }
-    })
 
   return (
     <>
@@ -140,125 +83,6 @@ export function GeneralPanel(): JSX.Element {
           {error}
         </p>
       ) : null}
-
-      <SettingsSection
-        title="Employees"
-        icon={<UsersIcon className="size-4.5 text-muted-foreground" />}
-        headerAction={
-          <span className="text-xs text-muted-foreground">
-            {profiles.length === 0 ? "roster unavailable" : `${seatedCount} of ${profiles.length} seated`}
-          </span>
-        }
-      >
-        <SettingsRow
-          id="setting-seat-control"
-          title="Seat control"
-          description="Opt-in, and off by default. With it on, Observer generates hidden per-employee OpenCode agent definitions and rewrites the host's subagent_type, so a seat's model and effort are what your delegations actually run. With it off, model and effort are inert and Observer only observes. Skills are not gated on it: they are prompt text folded into the behaviour directive, so they apply either way."
-          resetAction={
-            seats.control ? (
-              <SettingResetButton
-                label="seat control"
-                onClick={() => patch((current) => ({ seats: { control: false, employees: current.seats.employees } }))}
-              />
-            ) : null
-          }
-          status={
-            controlDisabled !== undefined ? (
-              <Badge variant="secondary" className="items-start whitespace-normal text-left">
-                {controlDisabled.message}
-              </Badge>
-            ) : null
-          }
-          control={
-            <Switch
-              checked={seats.control}
-              aria-label="Seat control"
-              onCheckedChange={(checked) =>
-                patch((current) => ({ seats: { control: checked, employees: current.seats.employees } }))
-              }
-            />
-          }
-        />
-
-        <SettingsRow
-          id="setting-employees"
-          title="Seats"
-          description="A seat spec says what an employee should run: a model, a reasoning effort and skills. Every field is optional, and an omitted model means they inherit whatever model the session is already running. Open a card to edit one."
-          control={
-            <div className="flex w-full items-center gap-2 sm:w-56">
-              <SearchIcon className="size-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-              <Input
-                type="search"
-                inputSize="sm"
-                value={query}
-                placeholder="Search employees"
-                aria-label="Search employees"
-                onChange={(event) => setQuery(event.currentTarget.value)}
-              />
-            </div>
-          }
-        >
-          {catalogue.rosterError !== undefined ? (
-            <p role="alert" className="py-4 text-[13px] text-error-foreground">
-              The roster did not load, so there is nobody to seat: {catalogue.rosterError}
-            </p>
-          ) : catalogue.loading ? (
-            <p role="status" className="py-4 text-[13px] text-muted-foreground">
-              Loading the roster…
-            </p>
-          ) : (
-            <EmployeeGrid profiles={filtered} employees={seats.employees} issues={issues} onOpen={openSeat} />
-          )}
-        </SettingsRow>
-
-        {unknownEmployees.length > 0 ? (
-          <SettingsRow
-            id="setting-unknown-seats"
-            title="Seats with no employee"
-            description="These ids are in your config but match nobody on the roster, so nothing uses them. They are kept on disk so a typo can be corrected rather than quietly lost."
-          >
-            <ul className="space-y-2 py-2">
-              {unknownEmployees.map((issue) => {
-                const badId = issue.employeeId ?? ""
-                return (
-                  <li
-                    key={issue.path}
-                    className="flex flex-col gap-2 rounded-lg border border-border/70 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0 space-y-1">
-                      <p className="font-mono text-xs text-foreground">{badId}</p>
-                      <p className="text-[13px] leading-[1.45] text-error-foreground">{issue.message}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <div className="w-48">
-                        <Select
-                          value={undefined}
-                          placeholder="Move to…"
-                          ariaLabel={`Move the seat "${badId}" to an employee`}
-                          options={profiles.map((profile) => ({
-                            value: profile.id,
-                            label: profile.fullName,
-                            disabled: seats.employees[profile.id] !== undefined,
-                          }))}
-                          onValueChange={(target) => moveSeat(badId, target)}
-                        />
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="destructive-outline"
-                        onClick={() => replaceSeat(badId, undefined)}
-                        aria-label={`Delete the seat "${badId}"`}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          </SettingsRow>
-        ) : null}
-      </SettingsSection>
 
       <SettingsSection title="Capture" icon={<EyeIcon className="size-4.5 text-muted-foreground" />}>
         <CaptureRow
@@ -439,22 +263,6 @@ export function GeneralPanel(): JSX.Element {
         />
       </SettingsSection>
 
-      {editingProfile !== undefined ? (
-        <SeatEditorDialog
-          profile={editingProfile}
-          spec={seats.employees[editingProfile.id]}
-          control={seats.control}
-          issues={issuesFor(issues, editingProfile.id)}
-          models={catalogue.models}
-          modelsError={catalogue.modelsError}
-          probing={catalogue.probing}
-          saving={saving}
-          onRefreshModels={() => void catalogue.refreshModels()}
-          onChange={(next) => replaceSeat(editingProfile.id, next)}
-          onClear={() => replaceSeat(editingProfile.id, undefined)}
-          onClose={() => setEditing(undefined)}
-        />
-      ) : null}
     </>
   )
 }

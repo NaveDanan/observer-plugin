@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { migrateSeatSpecToTargets } from "@observer-ai/daemon"
 import { NEUTRAL_AGENT_TYPES, seatAgentDir, seatAgentName, syncSeatAgents, uninstall } from "../dist/index.js"
 
 let home: string
@@ -197,7 +198,7 @@ describe("syncSeatAgents", () => {
     expect(contents).toContain("Arjun Mehta")
   })
 
-  it("denies todowrite, so the generated agent is not more permissive than `general`", () => {
+  it("keeps general's work restriction and allows coordination tools", () => {
     /**
      * The allow-list only replaces `general`, and that is only defensible if
      * the replacement is lossless. It very nearly was: a bare generated agent
@@ -205,12 +206,14 @@ describe("syncSeatAgents", () => {
      * `todowrite` and the generated one did not, so seating an employee
      * silently *granted* a delegated subagent the right to rewrite the parent
      * session's todo list. Verified against a live `opencode serve`: with this
-     * line, `GET /agent` reports identical permission sets for the two.
+     * line, the generated seat does not gain todo access. Its extra permissions
+     * are limited to nested delegation and Observer coordination.
      */
     syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
     const contents = read("observer-arjun-mehta.md")
     expect(contents).toContain("permission:")
     expect(contents).toContain(`  todowrite: "deny"`)
+    expect(contents).not.toContain(`  task: "allow"`)
   })
 
   it("leaves the body empty so the agent keeps the prompt a built-in subagent gets", () => {
@@ -479,5 +482,214 @@ describe("syncSeatAgents: variants the model does not declare", () => {
 
     expect(agentFiles()).toEqual(["observer-malik-johnson.md"])
     expect(result.notes.join("\n")).toContain("1 seat agent definition in force")
+  })
+})
+
+/**
+ * The gap ticket 01 opened and ticket 02 closes.
+ *
+ * `seats.employees.<id>.targets` became the shape a save writes, but this
+ * module still read `spec.model` and `spec.variant`. A seat configured with
+ * `targets` therefore generated no agent file at all, the plugin's existence
+ * check missed, and seat control silently did nothing for that employee — with
+ * no error anywhere. Every test below is a claim about that: a seat written in
+ * target form must reach exactly the file the legacy form reached.
+ *
+ * Parity is asserted byte-for-byte rather than field-by-field. The file is the
+ * contract with OpenCode, and "contains the right model" would pass on a file
+ * whose frontmatter had quietly lost `permission: todowrite: deny`.
+ */
+describe("syncSeatAgents: seats written as targets", () => {
+  /** The same assignment as `ARJUN`, spelled the way ticket 01's schema stores it. */
+  const ARJUN_TARGET = {
+    targets: {
+      "opencode:default": {
+        host: "opencode",
+        model: "anthropic/claude-opus-4-5",
+        options: [{ id: "variant", value: "high" }],
+      },
+    },
+  }
+
+  /** The generated file for one seat spec, with the directory left clean. */
+  function generate(spec: Record<string, unknown>): { files: string[]; contents: string | undefined; notes: string } {
+    const result = syncSeatAgents(seats(true, { "arjun-mehta": spec }))
+    const files = agentFiles()
+    const contents = files.includes("observer-arjun-mehta.md") ? read("observer-arjun-mehta.md") : undefined
+    // Reconcile back to empty so the next call in a test starts from nothing.
+    syncSeatAgents(seats(false))
+    return { files, contents, notes: result.notes.join("\n") }
+  }
+
+  it("PRODUCES A BYTE-IDENTICAL FILE TO THE EQUIVALENT LEGACY SEAT", () => {
+    const legacy = generate(ARJUN)
+    const target = generate(ARJUN_TARGET)
+
+    expect(legacy.contents, "the legacy seat must still generate a file").toBeTruthy()
+    expect(target.files).toEqual(["observer-arjun-mehta.md"])
+    expect(target.contents).toBe(legacy.contents)
+  })
+
+  it("is byte-identical for a target with no options, like a legacy seat with no variant", () => {
+    const legacy = generate({ model: "openai/gpt-5" })
+    const target = generate({ targets: { "opencode:default": { host: "opencode", model: "openai/gpt-5" } } })
+
+    expect(target.contents).toBe(legacy.contents)
+    expect(target.contents).not.toContain("variant:")
+  })
+
+  it("reads a target filed under any key, not just the legacy one", () => {
+    // The key is user-chosen — `seatTargets` says so explicitly — so keying the
+    // lookup on `opencode:default` would drop a perfectly good seat.
+    const target = generate({
+      targets: { "opencode:work": { host: "opencode", model: "anthropic/claude-opus-4-5", options: [{ id: "variant", value: "high" }] } },
+    })
+    expect(target.files).toEqual(["observer-arjun-mehta.md"])
+    expect(target.contents).toBe(generate(ARJUN).contents)
+  })
+
+  it("honours the targets and ignores the shadowed legacy pair", () => {
+    /**
+     * The expensive silent bug `seatTargets` exists to prevent. A half-migrated
+     * seat carries both, `targets` is the newer statement, and honouring
+     * `model` instead would put the user on a model they had already replaced —
+     * visible only on a bill.
+     */
+    const target = generate({ model: "openai/gpt-5", variant: "low", ...ARJUN_TARGET })
+    expect(target.contents).toBe(generate(ARJUN).contents)
+    expect(target.contents).not.toContain("gpt-5")
+  })
+
+  it("writes nothing for a target that names another host", () => {
+    // This module writes OpenCode agent definitions and nothing else. A Codex
+    // model id has no slash and must not be run through OpenCode's rule.
+    const codex = generate({ targets: { "codex:default": { host: "codex", model: "gpt-5.6-sol" } } })
+    expect(codex.files).toEqual([])
+    expect(codex.notes).not.toContain("missing its provider")
+  })
+
+  it("writes the OpenCode target and leaves a sibling host's target alone", () => {
+    const both = generate({
+      targets: {
+        "codex:default": { host: "codex", model: "gpt-5.6-sol" },
+        "opencode:default": ARJUN_TARGET.targets["opencode:default"],
+      },
+    })
+    expect(both.contents).toBe(generate(ARJUN).contents)
+  })
+
+  it("writes no file for a target whose model is missing its provider", () => {
+    // The slash rule now lives in the OpenCode adapter and is applied to the
+    // target's path, not just the legacy field.
+    const target = generate({ targets: { "opencode:default": { host: "opencode", model: "claude-opus-4-5" } } })
+    expect(target.files).toEqual([])
+    expect(target.notes).toContain("missing its provider")
+  })
+
+  it("writes no file for a target whose options have no model to apply to", () => {
+    const target = generate({ targets: { "opencode:default": { host: "opencode", options: [{ id: "variant", value: "high" }] } } })
+    expect(target.files).toEqual([])
+    // Parity with the legacy `variant-without-model` sentence: a seat that
+    // produces no file has to say why, whichever shape it was written in.
+    expect(target.notes).toContain("has no effect without a model")
+  })
+
+  it("writes no file for a target whose variant its model does not declare", () => {
+    catalogue(CATALOGUE)
+    const target = generate({
+      targets: { "opencode:default": { host: "opencode", model: "anthropic/claude-opus-4-5", options: [{ id: "variant", value: "xhigh" }] } },
+    })
+    expect(target.files).toEqual([])
+    expect(target.notes).toContain(`"xhigh" is not one anthropic/claude-opus-4-5 offers (low, medium, high)`)
+  })
+
+  it("drops a variant whose value is a boolean rather than writing it out", () => {
+    // `variant` names an effort level. `variant: "true"` is not a lenient
+    // reading of a mistyped toggle, it is a value guaranteed to fail the
+    // delegation — so the option is dropped and the model still applies.
+    const target = generate({
+      targets: { "opencode:default": { host: "opencode", model: "openai/gpt-5", options: [{ id: "variant", value: true }] } },
+    })
+    expect(target.contents).toBe(generate({ model: "openai/gpt-5" }).contents)
+    expect(target.contents).not.toContain("variant:")
+  })
+
+  it("ignores an option the adapter does not know", () => {
+    const target = generate({
+      targets: {
+        "opencode:default": {
+          host: "opencode",
+          model: "openai/gpt-5",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "variant", value: "low" },
+          ],
+        },
+      },
+    })
+    expect(target.contents).toBe(generate({ model: "openai/gpt-5", variant: "low" }).contents)
+  })
+
+  it("writes no file for a target whose host Observer does not drive", () => {
+    const target = generate({ targets: { "openkode:default": { host: "openkode", model: "anthropic/claude-opus-4-5" } } })
+    expect(target.files).toEqual([])
+    expect(target.notes).toContain("is not a host Observer drives")
+  })
+
+  it("writes no file for a target on a seat that is not on the roster", () => {
+    const result = syncSeatAgents(seats(true, { "nobody-at-all": ARJUN_TARGET }))
+    expect(agentFiles()).toEqual([])
+    expect(result.notes.join("\n")).toContain("not an employee on the roster")
+  })
+
+  it("applies one OpenCode target per employee and says so when there are two", () => {
+    // A generated definition is named per employee, so two OpenCode profiles on
+    // one seat cannot both have a file. Silently picking a winner would leave a
+    // user watching their second profile do nothing with no way to find out why.
+    const target = generate({
+      targets: {
+        "opencode:default": ARJUN_TARGET.targets["opencode:default"],
+        "opencode:work": { host: "opencode", model: "openai/gpt-5" },
+      },
+    })
+    expect(target.files).toEqual(["observer-arjun-mehta.md"])
+    expect(target.contents).toContain(`model: "anthropic/claude-opus-4-5"`)
+    expect(target.notes).toContain(`only "opencode:default" was applied`)
+  })
+
+  it("removes a legacy seat's file once the seat migrates to a target that sets no model", () => {
+    // Reconciliation has to survive the migration: a file left behind from the
+    // legacy shape would keep passing the plugin's existence check.
+    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
+    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+
+    const result = syncSeatAgents(seats(true, { "arjun-mehta": { targets: { "opencode:default": { host: "opencode" } } } }))
+    expect(agentFiles()).toEqual([])
+    expect(result.removed).toEqual([join(seatAgentDir(), "observer-arjun-mehta.md")])
+  })
+
+  it("rewrites nothing when a legacy seat is migrated to the equivalent target", () => {
+    /**
+     * The strongest form of the parity claim. `migrateSeatSpecToTargets`
+     * rewrites a saved config in place; if the two shapes disagreed by so much
+     * as a byte, the very next sync would rewrite every generated file and
+     * every OpenCode watching that directory would see churn for a change the
+     * user never made.
+     */
+    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
+    const second = syncSeatAgents(seats(true, { "arjun-mehta": ARJUN_TARGET }))
+
+    expect(second.written).toEqual([])
+    expect(second.removed).toEqual([])
+    expect(second.notes.join("\n")).toContain("1 seat agent definition in force")
+  })
+
+  it("agrees with migrateSeatSpecToTargets, so a save cannot change what is on disk", () => {
+    // The parity above is only worth anything if the migration produces the
+    // shape this module reads. Pinning the two together is what stops a future
+    // change to either from silently un-seating every migrated config.
+    const migrated = migrateSeatSpecToTargets({ ...ARJUN }) as Record<string, unknown>
+    expect(migrated).toEqual(ARJUN_TARGET)
+    expect(generate(migrated).contents).toBe(generate(ARJUN).contents)
   })
 })

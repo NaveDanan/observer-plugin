@@ -14,6 +14,7 @@ import {
   buildCatalogue,
   buildTheme,
   colorSupport,
+  diagnoseOpencodeSeats,
   effortCycle,
   initialState,
   menuRows,
@@ -458,11 +459,20 @@ describe("assigning a model", () => {
     expect(state.seats.employees["arjun-mehta"]?.model).toBe("bedrock/some-model")
   })
 
-  it("stores a malformed model rather than swallowing it, and lets diagnoseSeats say why", () => {
+  it("stores a malformed model rather than swallowing it, and lets the OpenCode diagnosis say why", () => {
+    /**
+     * The oracle moved, the behaviour did not. `provider/model` is OpenCode
+     * policy rather than a fact about models — applied to every host it failed
+     * Codex's `gpt-5.6-sol` and Grok's `grok-build` — so `diagnoseSeats` no
+     * longer raises it and `diagnoseOpencodeSeats` does. Both assertions below
+     * are unchanged: the seat still stores what was typed, the finding is
+     * still an `error`, and the TUI still renders its sentence verbatim.
+     */
     let state = press(employees(), "return", "return", "m")
     state = type(state, "claude-opus")
     state = press(state, "return")
-    const issue = diagnoseSeats(state.seats).issues.find((entry) => entry.code === "malformed-model")
+    expect(state.seats.employees["arjun-mehta"]?.model).toBe("claude-opus")
+    const issue = diagnoseOpencodeSeats(state.seats).find((entry) => entry.code === "malformed-model")
     expect(issue?.severity).toBe("error")
     expect(collapse(render(state, { rows: 40, columns: 100 }).join("\n"))).toContain(collapse(issue!.message))
   })

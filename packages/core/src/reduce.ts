@@ -31,6 +31,8 @@ import { deriveGoal } from "./normalize.js"
  *
  * Properties this function guarantees:
  * - **Idempotent**: applying the same event twice produces the same state.
+ *   Accumulating totals (code churn) hold this by keying each contribution to
+ *   the tool call id that produced it — see "churn" at the foot of this file.
  * - **Order tolerant**: a child agent may arrive before its parent, a tool
  *   result before its call, or a session start after its first message.
  * - **Non-destructive**: late or unknown data never erases known-good data.
@@ -90,15 +92,17 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
       const now = currentAgent(store, agent)
       putAgent(store, changes, {
         ...now,
+        runtimeId: body.runtimeId ?? now.runtimeId,
         agentType: body.agentType || now.agentType,
         displayName: body.displayName ?? now.displayName,
         parentAgentId,
-        status: isTerminal(now.status) ? now.status : "running",
+        status: isResumable(now.status) && body.resumed ? "running" : isTerminal(now.status) ? now.status : "running",
         model: body.model ?? now.model,
         modelConfidence: body.model ? (body.modelConfidence ?? event.provenance) : now.modelConfidence,
         description: body.description ?? now.description,
         delegationPrompt: body.prompt ?? now.delegationPrompt,
         startedAt: Math.min(now.startedAt, event.at),
+        endedAt: isResumable(now.status) && body.resumed ? null : now.endedAt,
       })
       if (body.prompt) {
         putPromptFragment(store, changes, {
@@ -212,14 +216,28 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
         callId: body.callId,
         tool: body.tool,
         title: body.title ?? existing?.title ?? null,
-        input: body.input ?? existing?.input ?? null,
+        // Merged, not replaced. A host may describe the same call twice with
+        // different amounts of detail (a retried hook, the Copilot tailer
+        // re-reading a region), and `??` alone would let the sparser delivery
+        // overwrite arguments we had already captured in full.
+        input: mergeToolInput(existing?.input, body.input),
         output: existing?.output ?? null,
         error: existing?.error ?? null,
         status: existing?.status ?? "running",
         startedAt: existing?.startedAt ?? event.at,
         endedAt: existing?.endedAt ?? null,
         durationMs: existing?.durationMs ?? null,
+        // Carried forward verbatim: this is the term the call is already
+        // credited with, and `creditChurn` reconciles against it below.
+        linesAdded: existing?.linesAdded,
+        linesRemoved: existing?.linesRemoved,
+        churnConfidence: existing?.churnConfidence,
       })
+      // A result can arrive before its call (see "Order tolerance"). When it
+      // does, the finish had no arguments to read churn from; this late start
+      // supplies them, and the ledger above is what keeps that from becoming a
+      // second contribution.
+      creditChurn(store, changes, agent, store.getToolCall(id))
       break
     }
 
@@ -227,6 +245,14 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
       const id = buildToolCallId(agent.id, body.callId)
       const existing = store.getToolCall(id)
       const startedAt = existing?.startedAt ?? event.at
+      // A call the host already confirmed succeeded stays succeeded. A later
+      // `ok: false` for the same call id is a stale redelivery of an earlier
+      // view, not an undo — hooks retry and the tailer re-reads, and neither
+      // reports a rollback. Letting it through would strand the row as `error`
+      // while the churn it produced stayed in the agent's total, and would let
+      // a duplicate erase captured data, which "Order tolerance" forbids.
+      // The reverse, error then ok, is a genuine upgrade and is allowed.
+      const ok = existing?.status === "ok" || body.ok
       putToolCall(store, changes, {
         id,
         sessionId: session.id,
@@ -236,12 +262,16 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
         title: existing?.title ?? null,
         input: existing?.input ?? null,
         output: body.output ?? existing?.output ?? null,
-        error: body.error ?? null,
-        status: body.ok ? "ok" : "error",
+        error: ok ? null : (body.error ?? existing?.error ?? null),
+        status: ok ? "ok" : "error",
         startedAt,
         endedAt: event.at,
         durationMs: body.durationMs ?? Math.max(0, event.at - startedAt),
+        linesAdded: existing?.linesAdded,
+        linesRemoved: existing?.linesRemoved,
+        churnConfidence: existing?.churnConfidence,
       })
+      creditChurn(store, changes, agent, store.getToolCall(id))
       break
     }
 
@@ -331,6 +361,10 @@ function isTerminal(status: AgentEntity["status"]): boolean {
   return status === "completed" || status === "failed" || status === "interrupted"
 }
 
+function isResumable(status: AgentEntity["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "interrupted"
+}
+
 /** Re-reads a row so successive writes in one reduce build on each other. */
 function current(store: EntityStore, session: SessionEntity): SessionEntity {
   return store.getSession(session.id) ?? session
@@ -404,6 +438,7 @@ function ensureAgent(
     id,
     sessionId: session.id,
     agentKey,
+    runtimeId: null,
     agentType: agentKey === MAIN_AGENT_KEY ? "main" : "unknown",
     displayName: null,
     parentAgentId: null,
@@ -454,6 +489,20 @@ const PROVENANCE_RANK: Record<Provenance, number> = { inferred: 0, reconciled: 1
 function strongestProvenance(a: Provenance | undefined, b: Provenance): Provenance {
   if (!a) return b
   return PROVENANCE_RANK[a] >= PROVENANCE_RANK[b] ? a : b
+}
+
+/**
+ * The inverse rule, and it applies to sums rather than to facts.
+ *
+ * For an edge, two events describe the *same* thing, so the better-evidenced
+ * claim supersedes the worse one. A churn total is not one claim: it is the
+ * addition of many, and one guessed term makes the whole figure a guess. So a
+ * total that mixes an authoritative contribution with an inferred one is
+ * reported as `inferred`, which is the only level the UI can honestly badge it.
+ */
+function weakestProvenance(a: Provenance | undefined, b: Provenance): Provenance {
+  if (!a) return b
+  return PROVENANCE_RANK[a] <= PROVENANCE_RANK[b] ? a : b
 }
 
 function upsertMessage(
@@ -579,4 +628,419 @@ function dedupe(changes: Change[]): Change[] {
     }
   }
   return result
+}
+
+// -------------------------------------------------------------------- churn
+
+/**
+ * Code churn accounting.
+ *
+ * Three rules shape everything below, and they pull against each other:
+ *
+ * 1. **Never count twice.** The event log replays after a crash, hooks retry,
+ *    and the Copilot tailer re-reads regions of a file, so the reducer must
+ *    assume it will see every tool result more than once (docs/architecture.md,
+ *    "Idempotency"). A counter that merely adds is wrong by construction.
+ * 2. **Never invent a number.** An absent figure is not a zero, and the two
+ *    sides of a change are absent independently. A `write` states the file's
+ *    new contents and nothing about what it replaced, so it reports additions
+ *    only; `-0` there would be a fabrication. Count zero only where an empty
+ *    string was actually present.
+ * 3. **Better evidence wins, once.** Rule 1 cannot be a one-way latch, because
+ *    a call is described by two events that may arrive in either order and in
+ *    varying detail. So each call carries the *term* it is currently credited
+ *    with, and a redelivery is reconciled against that term rather than added
+ *    to it: equal or worse evidence changes nothing, better evidence replaces
+ *    the term and moves the agent's aggregate by the difference.
+ *
+ * Rule 3 is what makes rule 1 hold without freezing the first guess in place.
+ */
+interface Churn {
+  /** Absent means "this side was not stated", which is never the same as 0. */
+  linesAdded?: number
+  linesRemoved?: number
+  provenance: Provenance
+}
+
+/**
+ * Reconciles one completed edit's churn into its agent's totals.
+ *
+ * The ledger is the tool call row itself: its `linesAdded`/`linesRemoved` are
+ * the term this call currently contributes to the agent's sum. Every write to
+ * the row carries that term forward untouched, and this function is the only
+ * thing that changes it.
+ *
+ * A delivery is accepted per side, and only when it tells us something we do
+ * not already have: the side is absent, or this delivery is better evidenced
+ * than the term on record. Anything else returns without a write, which is the
+ * replay path. When a side is replaced, the agent aggregate moves by the
+ * difference, so the call is counted exactly once no matter how often or in
+ * what order its events arrive.
+ *
+ * Keyed on the call id rather than the event id, because deduplicating events
+ * would still let a `tool.started` and a `tool.finished` describing the same
+ * edit both contribute.
+ */
+function creditChurn(
+  store: EntityStore,
+  changes: Change[],
+  agent: AgentEntity,
+  call: ToolCallEntity | undefined,
+): void {
+  if (!call) return
+  // Only a call the host confirmed succeeded moved any lines. A still-running
+  // call may yet fail, and a failed one is a request, not an edit. A call that
+  // errors and is only later reported ok is still eligible, because nothing was
+  // credited the first time round. The reverse cannot happen: `tool.finished`
+  // refuses to move an `ok` call back to `error`.
+  if (call.status !== "ok") return
+
+  const next = extractChurn(call)
+  // Silence is not zero. An argument the redactor rewrote, a result that landed
+  // before its call, a tool Observer does not model: all leave the agent
+  // untouched *and* leave the call's term as it was, so a later, fuller
+  // delivery can still be credited.
+  if (!next) return
+
+  // An absent confidence is treated as the weakest level, so a row that came
+  // back from storage without one can still be upgraded. The worst that costs
+  // is one redundant, value-identical rewrite.
+  const heldRank = PROVENANCE_RANK[call.churnConfidence ?? "inferred"]
+  const better = PROVENANCE_RANK[next.provenance] > heldRank
+  const takeAdded = next.linesAdded !== undefined && (call.linesAdded === undefined || better)
+  const takeRemoved = next.linesRemoved !== undefined && (call.linesRemoved === undefined || better)
+  // Nothing new to say. This is where every duplicate delivery stops.
+  if (!takeAdded && !takeRemoved) return
+
+  const linesAdded = takeAdded ? next.linesAdded : call.linesAdded
+  const linesRemoved = takeRemoved ? next.linesRemoved : call.linesRemoved
+  // If any credited side was kept from an earlier, weaker delivery, the term as
+  // a whole is only as good as that side.
+  const kept = (!takeAdded && linesAdded !== undefined) || (!takeRemoved && linesRemoved !== undefined)
+  const confidence = kept ? weakestProvenance(call.churnConfidence ?? undefined, next.provenance) : next.provenance
+
+  putToolCall(store, changes, { ...call, linesAdded, linesRemoved, churnConfidence: confidence })
+
+  const now = currentAgent(store, agent)
+  putAgent(store, changes, {
+    ...now,
+    linesAdded: applyDelta(now.linesAdded, call.linesAdded, linesAdded),
+    linesRemoved: applyDelta(now.linesRemoved, call.linesRemoved, linesRemoved),
+    churnConfidence: weakestProvenance(now.churnConfidence ?? undefined, confidence),
+  })
+}
+
+/**
+ * Moves one side of an agent's total from a call's old term to its new one.
+ *
+ * Subtracting the old term before adding the new is what makes a *replacement*
+ * safe: without it, correcting an inferred figure with a host-stated one would
+ * add the edit a second time. The `?? 0` on the total is the only place a zero
+ * is created, and only at the moment a real figure first lands.
+ */
+function applyDelta(total: number | undefined, was: number | undefined, now: number | undefined): number | undefined {
+  // This side is still unknown, so the total stays absent rather than becoming
+  // a zero the host never stated.
+  if (now === undefined) return total
+  return (total ?? 0) - (was ?? 0) + now
+}
+
+/**
+ * The file-editing tools Observer understands, by normalised name.
+ *
+ * An allowlist rather than a heuristic, for the same reason `Adapter.ignores`
+ * is one: a tool nobody has taught Observer about must produce *no* churn, not
+ * a guess. `bash` running `sed -i` edits files and is deliberately absent —
+ * its arguments do not state what changed.
+ */
+const CHURN_TOOLS: Record<string, "write" | "edit" | "multiedit" | "patch"> = {
+  write: "write",
+  writefile: "write",
+  createfile: "write",
+  filewrite: "write",
+  edit: "edit",
+  editfile: "edit",
+  strreplace: "edit",
+  strreplaceeditor: "edit",
+  strreplacebasededittool: "edit",
+  multiedit: "multiedit",
+  applypatch: "patch",
+  patch: "patch",
+}
+
+/** Hosts spell the same tool `MultiEdit`, `multi_edit` and `multi-edit`. */
+function normaliseToolName(tool: string): string {
+  return tool.toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
+function extractChurn(call: ToolCallEntity): Churn | null {
+  const family = CHURN_TOOLS[normaliseToolName(call.tool)]
+  if (!family) return null
+
+  // A host stating its own numbers beats anything we work out from arguments,
+  // so it is asked first and is the one path that yields `authoritative`.
+  const stated = statedChurn(call.output)
+  if (stated) return stated
+
+  const input = asRecord(call.input)
+  if (!input) return null
+
+  switch (family) {
+    case "write": {
+      const content = pickText(input, "content", "contents", "text", "file_text", "fileText")
+      if (content === null) return null
+      // Additions only, deliberately. A write reveals the file's new contents
+      // and says *nothing* about how many lines stood there before, so the
+      // removed side stays absent. `-0` would be the fabricated half of a diff
+      // Observer never saw; the UI renders one present side quite happily.
+      return { linesAdded: countLines(content), provenance: "inferred" }
+    }
+    case "edit":
+      return editChurn(input)
+    case "multiedit":
+      return multiEditChurn(input)
+    case "patch": {
+      const patch = pickText(input, "patch", "diff", "input", "content")
+      if (patch === null) return null
+      return patchChurn(patch)
+    }
+  }
+}
+
+/**
+ * One string-replacement edit, counted per side.
+ *
+ * A missing `oldString` is not an empty `oldString`: it is an argument we never
+ * saw, and guessing it as zero would understate a real deletion. So each half
+ * is counted only when the host actually supplied that string — an empty one
+ * counts as zero lines, because emptiness was stated.
+ *
+ * `replaceAll` applies the same edit an unknown number of times. The tool
+ * guarantees at least one occurrence, so counting one makes the figure a floor;
+ * multiplying by a number we do not have would make it a fiction.
+ */
+function editChurn(input: Record<string, unknown> | null): Churn | null {
+  if (!input) return null
+  const before = pickText(input, "oldString", "old_string", "old_str", "oldText")
+  const after = pickText(input, "newString", "new_string", "new_str", "newText")
+  if (before === null && after === null) return null
+  const churn: Churn = { provenance: "inferred" }
+  if (after !== null) churn.linesAdded = countLines(after)
+  if (before !== null) churn.linesRemoved = countLines(before)
+  return churn
+}
+
+/**
+ * A batch of edits under one call id.
+ *
+ * A side is summed only when *every* entry stated it. A sum with a hole in it
+ * is not a smaller number, it is an unknown one, so one entry missing its
+ * `old_string` withdraws the removed side for the whole batch rather than
+ * quietly understating it.
+ */
+function multiEditChurn(input: Record<string, unknown>): Churn | null {
+  const edits = input["edits"]
+  if (!Array.isArray(edits) || edits.length === 0) return null
+  // `redactValue` caps arrays at 200 entries, so a batch of exactly that length
+  // may be a clipped view of a longer one. Refusing beats undercounting.
+  if (edits.length >= REDACTION_ARRAY_CAP) return null
+
+  let linesAdded = 0
+  let linesRemoved = 0
+  let addedComplete = true
+  let removedComplete = true
+  for (const entry of edits) {
+    const churn = editChurn(asRecord(entry))
+    if (!churn) return null // An illegible entry makes the whole batch unknown.
+    if (churn.linesAdded === undefined) addedComplete = false
+    else linesAdded += churn.linesAdded
+    if (churn.linesRemoved === undefined) removedComplete = false
+    else linesRemoved += churn.linesRemoved
+  }
+  if (!addedComplete && !removedComplete) return null
+  const churn: Churn = { provenance: "inferred" }
+  if (addedComplete) churn.linesAdded = linesAdded
+  if (removedComplete) churn.linesRemoved = linesRemoved
+  return churn
+}
+
+/**
+ * A unified diff or an apply_patch envelope, counted from its grammar.
+ *
+ * Matching a bare `@@` or `*** ` prefix is not enough: `"@@ not a hunk"`
+ * followed by `"+fabricated"` is prose that happens to be shaped like a patch,
+ * and counting it invents churn out of formatting. So a `+`/`-` line is only
+ * counted while a *validated* hunk is open — a real unified hunk header, or an
+ * apply_patch file directive inside a `*** Begin Patch` envelope.
+ *
+ * A patch that opens correctly but states no changed line contributes nothing
+ * either. Zero changed lines is not a measurement of zero churn; it means this
+ * string was not a description of a change.
+ */
+function patchChurn(patch: string): Churn | null {
+  let linesAdded = 0
+  let linesRemoved = 0
+  let open = false
+  let envelope = false
+  for (const line of patch.split("\n")) {
+    if (APPLY_PATCH_BEGIN.test(line)) {
+      envelope = true
+      open = false
+      continue
+    }
+    // File directives only open a hunk inside an envelope, so a stray
+    // `*** Update File: x` in prose stays inert.
+    if (APPLY_PATCH_FILE.test(line)) {
+      open = envelope
+      continue
+    }
+    if (APPLY_PATCH_END.test(line)) {
+      open = false
+      continue
+    }
+    if (UNIFIED_HUNK.test(line)) {
+      open = true
+      continue
+    }
+    // `@@` inside an apply_patch envelope is a context marker, not a hunk
+    // header, and does not carry line ranges. It keeps an open hunk open and
+    // cannot open one by itself.
+    if (line.startsWith("@@")) {
+      if (!open) return null
+      continue
+    }
+    if (!open) continue
+    // `+++`/`---` are file headers, not content lines.
+    if (line.startsWith("+++") || line.startsWith("---")) continue
+    if (line.startsWith("+")) linesAdded++
+    else if (line.startsWith("-")) linesRemoved++
+  }
+  if (linesAdded === 0 && linesRemoved === 0) return null
+  // Both sides are genuinely stated here: a diff enumerates every changed line,
+  // so a real zero on one side is a measurement rather than an absence.
+  return { linesAdded, linesRemoved, provenance: "inferred" }
+}
+
+/** `@@ -12,3 +12,4 @@ optional section heading` */
+const UNIFIED_HUNK = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/
+const APPLY_PATCH_BEGIN = /^\*\*\* Begin Patch\s*$/
+const APPLY_PATCH_END = /^\*\*\* End Patch\s*$/
+const APPLY_PATCH_FILE = /^\*\*\* (?:Add|Update|Delete) File: \S/
+
+/**
+ * Churn the host stated itself, rather than churn we worked out.
+ *
+ * This requires an adapter to have *identified* the numbers as churn, under an
+ * explicit normalized marker. Reading bare `additions`/`deletions` off any JSON
+ * tool output was the earlier mistake: plenty of unrelated results carry those
+ * keys, and promoting a package manager's summary to `authoritative` churn is
+ * worse than reporting no churn at all. `authoritative` means the host said so;
+ * nothing less earns the word.
+ *
+ * No adapter emits the marker today. This is the seam, so that when one does
+ * its numbers land without the reducer changing.
+ *
+ * Each side is optional but must be a non-negative *integer*. `1.9` is not a
+ * count of lines, and truncating it to `1` would report a number the host never
+ * stated under the strongest provenance Observer has.
+ */
+function statedChurn(output: string | null): Churn | null {
+  if (!output || !output.includes(CHURN_MARKER_KEY)) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(output)
+  } catch {
+    // Adapters truncate long outputs, so an unparseable string is ordinary.
+    return null
+  }
+  const marker = asRecord(asRecord(parsed)?.[CHURN_MARKER_KEY])
+  if (!marker) return null
+  const linesAdded = pickCount(marker, "linesAdded")
+  const linesRemoved = pickCount(marker, "linesRemoved")
+  if (linesAdded === undefined && linesRemoved === undefined) return null
+  const churn: Churn = { provenance: "authoritative" }
+  if (linesAdded !== undefined) churn.linesAdded = linesAdded
+  if (linesRemoved !== undefined) churn.linesRemoved = linesRemoved
+  return churn
+}
+
+/**
+ * The key an adapter must use to declare host-stated churn:
+ * `{"observerChurn": {"linesAdded": 12, "linesRemoved": 3}}`.
+ */
+export const CHURN_MARKER_KEY = "observerChurn"
+
+/** `""` is zero lines, and a trailing newline does not open a further one. */
+function countLines(text: string): number {
+  if (text.length === 0) return 0
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text
+  return body.split("\n").length
+}
+
+/**
+ * Keeps the fullest view of a call's arguments across redeliveries.
+ *
+ * Two `tool.started` events for one call id need not carry the same detail. The
+ * later one may be a retry that lost a field, or a tailer's partial re-read, and
+ * plain `??` would let it overwrite arguments already captured in full — which
+ * silently changes churn that was derived from them.
+ */
+function mergeToolInput(held: unknown, incoming: unknown): unknown {
+  if (incoming === undefined || incoming === null) return held ?? null
+  const a = asRecord(held)
+  const b = asRecord(incoming)
+  if (!a || !b) return incoming
+  const merged: Record<string, unknown> = { ...a }
+  for (const [key, value] of Object.entries(b)) {
+    if (value !== undefined && value !== null) merged[key] = value
+  }
+  return merged
+}
+
+/**
+ * Markers the ingest pipeline leaves on a string it rewrote.
+ *
+ * Capture policy does not blank a redacted argument, it *substitutes* one:
+ * `redactText` swaps a secret for `[redacted]` — collapsing a multi-line PEM
+ * key to a single line — and appends a truncation notice past
+ * `maxTextLength`; `redactValue` replaces a too-deep branch with
+ * `[depth limit]`. Counting lines in any of those measures the redactor, not
+ * the file, so a marked string is treated as never captured at all.
+ *
+ * These are the literals from `redact.ts`, pinned by a test that runs the real
+ * redactor and asserts the result yields no churn, because drift here would be
+ * silent and would show up only as quietly wrong numbers.
+ */
+const PIPELINE_MARKERS = ["[redacted]", "\u2026 [truncated ", "[depth limit]"]
+
+/** `redactValue` keeps only the first 200 entries of an array. */
+const REDACTION_ARRAY_CAP = 200
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+/**
+ * Reads a string argument, refusing anything the pipeline rewrote.
+ *
+ * Returning `null` for a marked string is what keeps redaction out of the
+ * counts: it makes that side *absent*, exactly as if the host had never sent
+ * it, rather than a number derived from a placeholder.
+ */
+function pickText(record: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value !== "string") continue
+    if (PIPELINE_MARKERS.some((marker) => value.includes(marker))) return null
+    return value
+  }
+  return null
+}
+
+/** Only a non-negative integer is a line count; a decimal is not a count at all. */
+function pickCount(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key]
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return undefined
+  return value
 }

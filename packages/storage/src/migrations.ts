@@ -138,4 +138,49 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX prompt_fragments_by_agent ON prompt_fragments(agent_id);
   `,
+  // 2: durable subagent identity, resume state and peer mail
+  `
+  ALTER TABLE agents ADD COLUMN runtime_id TEXT;
+
+  CREATE TABLE agent_assignments (
+    id                TEXT PRIMARY KEY,
+    host              TEXT NOT NULL,
+    root_session_key  TEXT NOT NULL,
+    runtime_id        TEXT,
+    parent_runtime_id TEXT,
+    call_id           TEXT,
+    agent_type        TEXT NOT NULL,
+    host_agent_type   TEXT NOT NULL,
+    description       TEXT,
+    prompt            TEXT,
+    status            TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+  );
+  CREATE INDEX assignments_by_root ON agent_assignments(host, root_session_key, created_at);
+  CREATE UNIQUE INDEX assignments_unique_call ON agent_assignments(host, root_session_key, call_id) WHERE call_id IS NOT NULL;
+  CREATE UNIQUE INDEX assignments_by_runtime ON agent_assignments(host, runtime_id) WHERE runtime_id IS NOT NULL;
+
+  CREATE TABLE agent_mail (
+    id                TEXT PRIMARY KEY,
+    host              TEXT NOT NULL,
+    root_session_key  TEXT NOT NULL,
+    from_runtime_id   TEXT NOT NULL,
+    to_runtime_id     TEXT NOT NULL,
+    text              TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    delivered_at      INTEGER,
+    read_at           INTEGER
+  );
+  CREATE INDEX agent_mail_inbox ON agent_mail(host, root_session_key, to_runtime_id, read_at, created_at);
+  `,
+  // 3: code churn contribution ledger
+  `
+  ALTER TABLE agents ADD COLUMN lines_added INTEGER;
+  ALTER TABLE agents ADD COLUMN lines_removed INTEGER;
+  ALTER TABLE agents ADD COLUMN churn_confidence TEXT;
+  ALTER TABLE tool_calls ADD COLUMN lines_added INTEGER;
+  ALTER TABLE tool_calls ADD COLUMN lines_removed INTEGER;
+  ALTER TABLE tool_calls ADD COLUMN churn_confidence TEXT;
+  `,
 ]

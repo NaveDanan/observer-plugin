@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en" style="--accent:#67e8f9">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Implementation research for multi-provider employee model and reasoning configuration in Observer.">
+  <title>Multi-provider employee seats | Observer implementation research</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <a class="brand" href="combined.html">Observer / provider research</a>
+      <nav class="nav" aria-label="Provider reports">
+        <a href="combined.html" aria-current="page">Combined</a><a href="codex.html">Codex</a><a href="claude.html">Claude</a><a href="cursor.html">Cursor</a><a href="grok.html">Grok</a><a href="opencode.html">OpenCode</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="shell">
+      <p class="eyebrow">Implementation research / Observer config TUI</p>
+      <h1>Employee models across five coding CLIs</h1>
+      <p class="lede">A design for assigning every roster employee a model and reasoning configuration per host profile. The TUI can list and save all five providers now. Applying that choice to a delegated child remains capability-gated, because discovery and control are different problems.</p>
+      <div class="meta"><span class="tag">5 provider studies</span><span class="tag">14 roster employees</span><span class="tag">t3code 2274444e</span><span class="status warn">implementation blueprint</span></div>
+    </div>
+  </section>
+
+  <main class="shell">
+    <section class="section" id="decision">
+      <h2>Decision</h2>
+      <div class="callout"><strong>Build a host-adapter registry.</strong> Keep roster matching, skills, desired-versus-observed state, and the pure TUI above it. Put model discovery, option vocabularies, profile identity, validation, installation, pre-spawn control, and restart rules in one adapter per CLI.</div>
+      <div class="grid">
+        <article class="card"><div class="metric">Opaque</div><div class="label">model IDs</div><p>The shared schema accepts a non-empty host-owned string. OpenCode alone enforces <code>provider/model</code>.</p></article>
+        <article class="card"><div class="metric">Typed</div><div class="label">model options</div><p>Selections are string or boolean values keyed by an adapter-owned option ID.</p></article>
+        <article class="card"><div class="metric">Explicit</div><div class="label">control state</div><p>The TUI says supported, experimental, unavailable, or inactive for each target.</p></article>
+      </div>
+      <p>In Observer's own vocabulary, these CLIs are <em>hosts</em>. T3 calls them providers. OpenCode also has upstream providers inside one host. The implementation must retain that distinction or an ID such as <code>anthropic/claude-opus-4-8</code> will be mistaken for an OpenCode profile.</p>
+    </section>
+
+    <section class="section" id="matrix">
+      <h2>Capability matrix</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Host</th><th>Model inventory</th><th>Reasoning/options</th><th>Per-child control</th><th>First Observer release</th></tr></thead>
+        <tbody>
+          <tr><td><a href="opencode.html">OpenCode</a></td><td>CLI/server inventory plus cache fallback. Model is <code>provider/model</code>.</td><td>Host <code>variant</code> map; exact, none, or unknown.</td><td><span class="status good">supported</span> Generated hidden agent and safe <code>general</code> rewrite.</td><td>Keep behavior, extract behind adapter, add profile awareness.</td></tr>
+          <tr><td><a href="codex.html">Codex</a></td><td>Live app-server <code>model/list</code> with per-model effort and tier.</td><td><code>reasoningEffort</code> and <code>serviceTier</code>, open strings.</td><td><span class="status warn">protocol supports it</span> Observer needs a tested synchronous pre-spawn path.</td><td>Catalog and desired config. Experimental control only after fixtures.</td></tr>
+          <tr><td><a href="claude.html">Claude Code</a></td><td>T3 static/versioned list; SDK can supply a live list in a future adapter.</td><td><code>effort</code>, context, fast mode, thinking; prompt-only ultrathink.</td><td><span class="status warn">definition candidate</span> Generated definitions plus Agent <code>PreToolUse</code> need proof.</td><td>Profile-aware catalog and observation. Control off.</td></tr>
+          <tr><td><a href="cursor.html">Cursor</a></td><td>Live ACP extension returns model-specific config options.</td><td>Reasoning, context, fast mode, thinking; base model applied first.</td><td><span class="status bad">unsupported</span> No per-child setter or projected child route in inspected code.</td><td>Catalog and desired config. Show child application unavailable.</td></tr>
+          <tr><td><a href="grok.html">Grok Build</a></td><td>ACP session setup returns model IDs; <code>grok-build</code> fallback.</td><td>None on main. An unmerged branch proposes <code>reasoningEffort</code>.</td><td><span class="status bad">unsupported</span> Current main has no child graph or setter.</td><td>Model catalog only when enabled. No effort picker or child control.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout warn"><strong>Listing a model does not mean Observer can apply it to a child.</strong> The adapter reports discovery and child-control capabilities separately. The TUI never promotes one into the other.</div>
+    </section>
+
+    <section class="section" id="roster">
+      <h2>The complete company roster</h2>
+      <p>The employee list must continue to come from <code>@observer-ai/roster</code>. <code>rosterRows()</code> already maps the full <code>ROSTER</code>; the multi-provider feature should add no second employee list.</p>
+      <div class="grid">
+        <article class="card"><h3>Arjun Mehta</h3><p>Senior Frontend Engineer<br><code>arjun-mehta</code></p></article>
+        <article class="card"><h3>Malik Johnson</h3><p>Staff Backend Engineer<br><code>malik-johnson</code></p></article>
+        <article class="card"><h3>Elias Mercer</h3><p>Senior DevOps and Site Reliability Engineer<br><code>elias-mercer</code></p></article>
+        <article class="card"><h3>Dr. Mei Lin</h3><p>Senior Data Scientist<br><code>dr-mei-lin</code></p></article>
+        <article class="card"><h3>Nia Okafor</h3><p>Senior Cybersecurity Engineer<br><code>nia-okafor</code></p></article>
+        <article class="card"><h3>Sofia Moreno</h3><p>Lead Product Designer<br><code>sofia-moreno</code></p></article>
+        <article class="card"><h3>Daniel Brooks</h3><p>Senior QA Automation Engineer<br><code>daniel-brooks</code></p></article>
+        <article class="card"><h3>Ravi Menon</h3><p>Principal Electronics and Hardware Engineer<br><code>ravi-menon</code></p></article>
+        <article class="card"><h3>Leila Haddad</h3><p>Chief Technology Officer<br><code>leila-haddad</code></p></article>
+        <article class="card"><h3>Marcus Reed</h3><p>Engineering Manager<br><code>marcus-reed</code></p></article>
+        <article class="card"><h3>Elena Vargas</h3><p>Product Director<br><code>elena-vargas</code></p></article>
+        <article class="card"><h3>Omar Rahman</h3><p>Principal Technical Program Manager<br><code>omar-rahman</code></p></article>
+        <article class="card"><h3>Dr. Maya Chen</h3><p>Vice President of Data and Analytics<br><code>dr-maya-chen</code></p></article>
+        <article class="card"><h3>Adrian Cole</h3><p>Chief Information Security Officer<br><code>adrian-cole</code></p></article>
+      </div>
+      <p>Add one contract test asserting that TUI employee IDs and order equal <code>ROSTER.map(profile =&gt; profile.id)</code>. That proves all 14 people appear and prevents a future roster addition from silently disappearing from configuration.</p>
+    </section>
+
+    <section class="section" id="schema">
+      <h2>Proposed seat schema</h2>
+      <p>An employee has shared skills and zero or more host targets. A target points at a host profile, stores an opaque model ID, and carries typed host options. The target's profile selects the binary, config directory, endpoint, or account context. Credentials remain in the host or secret store, never in the employee seat.</p>
+      <pre><code>{
+  "seats": {
+    "control": true,
+    "employees": {
+      "arjun-mehta": {
+        "skills": ["design-systems"],
+        "targets": {
+          "opencode:default": {
+            "host": "opencode",
+            "model": "anthropic/claude-opus-4-8",
+            "options": [{ "id": "variant", "value": "high" }]
+          },
+          "codex:default": {
+            "host": "codex",
+            "model": "gpt-5.6-sol",
+            "options": [{ "id": "reasoningEffort", "value": "high" }]
+          },
+          "claude:work": {
+            "host": "claude",
+            "model": "claude-opus-5",
+            "options": [
+              { "id": "effort", "value": "high" },
+              { "id": "contextWindow", "value": "1m" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}</code></pre>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Field</th><th>Shared meaning</th><th>Validation owner</th></tr></thead>
+        <tbody>
+          <tr><td><code>targets</code> key</td><td>Stable local host profile ID such as <code>codex:default</code>.</td><td>Shared schema checks key and target agree; profile registry checks it exists.</td></tr>
+          <tr><td><code>host</code></td><td><code>codex</code>, <code>claude</code>, <code>cursor</code>, <code>grok</code>, or <code>opencode</code>.</td><td>Shared closed union because these are compiled adapters.</td></tr>
+          <tr><td><code>model</code></td><td>Non-empty host-native identifier.</td><td>Adapter checks slash grammar, alias, inventory, or custom-value policy.</td></tr>
+          <tr><td><code>options</code></td><td>Array of <code>{id, value}</code>; value is a string or boolean.</td><td>Adapter validates descriptor, type, model-dependent value, and application timing.</td></tr>
+          <tr><td><code>skills</code></td><td>Employee behavior additions shared across all hosts.</td><td>Roster/daemon, unchanged and not gated on control.</td></tr>
+        </tbody>
+      </table></div>
+      <h3>Migration of shipped OpenCode seats</h3>
+      <p>Current <code>model</code> and <code>variant</code> fields are persisted and documented, so there is a concrete compatibility need. On load, treat them as a legacy <code>opencode:default</code> target. On the first TUI save, write the target shape and remove only those two promoted fields. Preserve all unrelated unknown fields exactly as the current schema does.</p>
+    </section>
+
+    <section class="section" id="adapter">
+      <h2>Host adapter contract</h2>
+      <p>The contract separates model catalog, validation, observation, and child control. A provider can implement one without pretending it implements the others.</p>
+      <pre><code>type HostKind = "codex" | "claude" | "cursor" | "grok" | "opencode"
+type OptionValue = string | boolean
+
+interface HostSeatAdapter {
+  kind: HostKind
+  label: string
+  profiles(): HostProfile[]
+  catalogue(profileId: string): ModelCatalogue
+  diagnose(profileId: string, target: SeatTarget): SeatFinding[]
+  capabilities(profileId: string): {
+    discovery: "live" | "cached" | "manual"
+    childModel: "supported" | "experimental" | "unsupported"
+    childReasoning: "supported" | "experimental" | "unsupported"
+    requiresReload: boolean
+  }
+  reconcile?(profileId: string, seats: SeatsConfig): ReconcileResult
+}
+
+interface ModelCatalogue {
+  models: Array&lt;{
+    id: string
+    label: string
+    contextWindow?: number
+    options: ModelOptionDescriptor[]
+  }&gt;
+  source: string
+  freshness: "live" | "cached" | "unknown"
+  warnings: string[]
+}</code></pre>
+      <div class="grid">
+        <article class="card wide"><h3>Shared code owns</h3><p>Roster IDs, employee skills, target persistence, string/boolean option values, dirty/save behavior, generic severity, configured versus observed distinction, and fail-open policy.</p></article>
+        <article class="card wide"><h3>Adapter owns</h3><p>Profile discovery, CLI/API calls, model ID grammar, option descriptors, capability checks, generated files, hook mutations, runtime registry checks, restart instructions, and host-specific diagnostics.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="tui">
+      <h2>Config TUI flow</h2>
+      <p>Keep the current split: pure transitions in <code>config-ui-state.ts</code>, pure text in <code>config-ui-render.ts</code>, and I/O in <code>config-ui.ts</code>. Add target and option views instead of embedding provider commands into the reducer.</p>
+      <pre><code>Main menu
+  Seat control
+  Employees (14)
+    Arjun Mehta
+      Host targets
+        OpenCode / default       claude-opus-4-8   high      applied
+        Codex / default          gpt-5.6-sol        high      experimental
+        Claude / work            claude-opus-5      high      configured
+        Cursor / default         composer-2         medium    not applied to children
+        Grok / default           grok-build         -         not applied to children
+      Skills
+      Reset employee
+        Target
+          Model
+          Reasoning and model options
+          Clear target</code></pre>
+      <div class="table-wrap"><table>
+        <thead><tr><th>View</th><th>Required behavior</th><th>Honesty rule</th></tr></thead>
+        <tbody>
+          <tr><td>Employees</td><td>Show all 14 roster rows and a compact summary of configured targets.</td><td>Never say an employee "runs" a desired model unless observed events prove it.</td></tr>
+          <tr><td>Host targets</td><td>List five adapters and every discovered profile; allow add/change/clear per employee.</td><td>Show control capability beside each target before selection.</td></tr>
+          <tr><td>Models</td><td>Filter, group when meaningful, preserve current custom value, show context and source freshness.</td><td>Use host-native labels. Do not force slash-qualified IDs.</td></tr>
+          <tr><td>Options</td><td>Render adapter descriptors dynamically. Refresh dependent options when model changes.</td><td>No global effort scale. Unknown means unknown, not no reasoning.</td></tr>
+          <tr><td>Save</td><td>Persist once, then call each adapter's reconciliation step independently.</td><td>A failed adapter does not roll back the config or block other hosts.</td></tr>
+          <tr><td>Report mode</td><td>Print each configured employee target and application status without raw mode.</td><td>Unsupported and inactive targets remain visible.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Keyboard behavior can retain the existing rules. Escape unwinds one view, arrows move, Enter drills in, <code>/</code> filters a model list, <code>s</code> saves, and only the main menu exits. The option editor needs ordinary left/right cycling for short select menus and Enter for booleans; large option menus can use their own picker.</p>
+    </section>
+
+    <section class="section" id="application">
+      <h2>Control policy by host</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Host</th><th>Adapter action when control is on</th><th>Safe fallback</th></tr></thead>
+        <tbody>
+          <tr><td>OpenCode</td><td>Reconcile marker-owned agent files; rewrite only <code>general</code> after a live registry check.</td><td>Keep original <code>subagent_type</code>; persona and skills can still apply.</td></tr>
+          <tr><td>Codex</td><td>After prototype approval, mutate only verified native spawn model/effort fields in synchronous <code>PreToolUse</code>.</td><td>Return no mutation and record a control diagnostic.</td></tr>
+          <tr><td>Claude</td><td>After prototype approval, reconcile profile-local agent definitions and redirect only a verified neutral Agent invocation.</td><td>Leave original Agent input and definition selection unchanged.</td></tr>
+          <tr><td>Cursor</td><td>No child action. Keep desired target for future capability and TUI parity.</td><td>Host chooses child behavior; status says unsupported.</td></tr>
+          <tr><td>Grok</td><td>No child action on current main. Do not use root <code>session/set_model</code> as a substitute.</td><td>Host chooses child behavior; status says unsupported.</td></tr>
+        </tbody>
+      </table></div>
+      <p>One global <code>seats.control</code> can remain the master consent switch. An adapter capability determines whether that consent can be acted on. Future per-target control flags are only needed if users ask to enable control for one host and disable it for another.</p>
+    </section>
+
+    <section class="section" id="observation">
+      <h2>Configured is not observed</h2>
+      <p>The seat is what the user wants. The agent entity is what the host reported. Multi-provider reasoning requires the same separation already used for model attribution.</p>
+      <pre><code>desired target
+  model: "gpt-5.6-sol"
+  options: [{ id: "reasoningEffort", value: "high" }]
+
+observed agent
+  model: "gpt-5.6-sol"
+  modelConfidence: "authoritative"
+  effort: "high"              // only if host emitted it
+  effortConfidence: "reconciled"
+  controlOutcome: "applied" | "declined" | "unknown"</code></pre>
+      <ul class="facts">
+        <li>Never copy desired effort into an observed agent record.</li>
+        <li>Registry presence, a successful file write, or a sent model request proves only that Observer attempted control.</li>
+        <li>Hosts that cannot report effective effort remain unknown, even when control likely succeeded.</li>
+        <li>A child model reported by the host can be authoritative while its parent edge is reconciled. Keep provenance per fact.</li>
+      </ul>
+    </section>
+
+    <section class="section" id="delivery">
+      <h2>Tracer-bullet delivery</h2>
+      <ol class="steps">
+        <li><strong>Define contracts.</strong> Add target records, typed options, host/profile IDs, adapter capability results, and migration tests for existing OpenCode seats.</li>
+        <li><strong>Extract OpenCode.</strong> Move today's catalog, diagnostics, agent reconciliation, and plugin control behind the first adapter without changing behavior.</li>
+        <li><strong>Generalize the TUI.</strong> Add host-target and dynamic-option views. Prove all 14 employees appear and non-TTY reports remain complete.</li>
+        <li><strong>Add discovery adapters.</strong> Implement Codex, Claude, Cursor, and Grok inventories with timeouts, cache/freshness metadata, custom model preservation, and profile isolation.</li>
+        <li><strong>Ship honest configuration.</strong> Users can configure all five hosts. OpenCode applies; the others display experimental or unsupported control state exactly as the matrix says.</li>
+        <li><strong>Prototype Codex control.</strong> Capture real spawn fixtures, implement synchronous fail-open mutation, and add integration tests before changing the capability to supported.</li>
+        <li><strong>Prototype Claude control.</strong> Verify profile-local generated definitions, neutral Agent detection, effort/version behavior, and failure fallback.</li>
+        <li><strong>Wait for contracts.</strong> Add Cursor or Grok child control only after the host exposes a stable per-child operation and Observer has real fixtures.</li>
+      </ol>
+    </section>
+
+    <section class="section" id="tests">
+      <h2>Verification plan</h2>
+      <div class="grid">
+        <article class="card wide"><h3>Shared contract tests</h3><ul class="facts"><li>Every roster employee appears once and in roster order.</li><li>Legacy OpenCode seats migrate without losing unknown fields.</li><li>Opaque bare model IDs survive parsing and saving.</li><li>String and boolean options round-trip.</li><li>Unsupported control is visible and never counted as effective.</li></ul></article>
+        <article class="card wide"><h3>Adapter contract suite</h3><ul class="facts"><li>Missing CLI, timeout, malformed output, stale cache, and auth uncertainty.</li><li>Model accepted, custom model retained, option exact/none/unknown.</li><li>Profile mismatch and multiple profiles of one host.</li><li>Control unsupported, declined, registry stale, and host rejection.</li><li>Every mutation failure preserves the original delegation.</li></ul></article>
+        <article class="card wide"><h3>TUI tests</h3><ul class="facts"><li>Employee to target to model to option navigation and escape unwinding.</li><li>Dependent option clearing on model change.</li><li>Viewport scrolling with 14 employees and large catalogs.</li><li>Plain output contains no ANSI and lists unsupported targets.</li><li>Save applies adapters independently and reports partial failures.</li></ul></article>
+        <article class="card wide"><h3>Host fixtures</h3><ul class="facts"><li>Codex app-server model pages and child spawn hook payloads.</li><li>Claude model/profile variants and Agent hook input/output.</li><li>Cursor grouped ACP options and post-model refresh.</li><li>Grok empty options, model request optimism, and future private child events.</li><li>OpenCode nested provider/model IDs and generated-agent registry drift.</li></ul></article>
+      </div>
+    </section>
+
+    <section class="section" id="risks">
+      <h2>Risks that need explicit decisions</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Risk</th><th>Why it matters</th><th>Default decision</th></tr></thead>
+        <tbody>
+          <tr><td>Profile identity</td><td>One host kind can have several accounts, config roots, binaries, or endpoints.</td><td>Make profile ID part of every target now.</td></tr>
+          <tr><td>Credential ownership</td><td>Catalog probes may initialize account SDKs or child processes.</td><td>Use host-managed credentials and non-secret status. Store no tokens in seats.</td></tr>
+          <tr><td>Large catalogs</td><td>OpenCode can expose thousands of models.</td><td>Probe lazily after target selection, filter immediately, cache by profile and source freshness.</td></tr>
+          <tr><td>Specialized agents</td><td>Changing a named agent can drop prompts, tools, permissions, or safety restrictions.</td><td>Control neutral/default delegation only until host-specific parity is proven.</td></tr>
+          <tr><td>False success</td><td>A request or generated file can exist while the child runs another model.</td><td>Report requested, attempted, and observed as separate states.</td></tr>
+          <tr><td>Provider drift</td><td>Option IDs and effort values change faster than Observer releases.</td><td>Prefer live descriptors, keep strings open, and surface unknown values.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="section" id="sources">
+      <h2>Research set</h2>
+      <div class="grid">
+        <article class="card"><h3><a href="codex.html">Codex report</a></h3><p>App-server inventory, turn effort, collaboration items, and pre-spawn control.</p></article>
+        <article class="card"><h3><a href="claude.html">Claude report</a></h3><p>SDK profiles, option semantics, child attribution, and generated-definition candidate.</p></article>
+        <article class="card"><h3><a href="cursor.html">Cursor report</a></h3><p>ACP inventory, dependent model options, application order, and child-control limit.</p></article>
+        <article class="card"><h3><a href="grok.html">Grok report</a></h3><p>Current main behavior, unmerged evidence, auth ambiguity, and child graph limit.</p></article>
+        <article class="card"><h3><a href="opencode.html">OpenCode report</a></h3><p>Current Observer control, model variants, generated definitions, and adapter extraction.</p></article>
+      </div>
+      <ul class="source-list">
+        <li><code>t3code/docs/internals/providers.md:8-40</code> and <code>apps/server/src/provider/builtInDrivers.ts:23-53</code> establish the five-driver inventory.</li>
+        <li><code>t3code/packages/contracts/src/orchestration.ts:52-118</code> and <code>packages/contracts/src/model.ts:7-128</code> provide the instance/model/options pattern.</li>
+        <li><code>observer-plugin/apps/daemon/src/seats.ts:5-266</code> defines current desired seats and diagnostics.</li>
+        <li><code>observer-plugin/packages/cli/src/config-ui-state.ts:5-209</code> and <code>config-ui-render.ts:60-85</code> define the pure TUI split.</li>
+        <li><code>observer-plugin/packages/roster/src/data.ts:9-505</code> is the fixed 14-person roster.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer><div class="shell">Research completed 2026-08-22 from local primary source and official provider documentation. This report proposes implementation; it does not claim unsupported child controls already work.</div></footer>
+</body>
+</html>

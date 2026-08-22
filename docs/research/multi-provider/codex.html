@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" style="--accent:#7dd3fc">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Codex provider research for Observer multi-provider employee seat configuration.">
+  <title>Codex provider field guide | Observer research</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <a class="brand" href="combined.html">Observer / provider research</a>
+      <nav class="nav" aria-label="Provider reports">
+        <a href="combined.html">Combined</a><a href="codex.html" aria-current="page">Codex</a><a href="claude.html">Claude</a><a href="cursor.html">Cursor</a><a href="grok.html">Grok</a><a href="opencode.html">OpenCode</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="shell">
+      <p class="eyebrow">Provider field guide 01 / 05</p>
+      <h1>Codex</h1>
+      <p class="lede">Codex has the strongest non-OpenCode case for employee-level model and reasoning control. Its app-server protocol models child requests with explicit model and effort fields. Observer still needs a synchronous pre-spawn hook before it can use them.</p>
+      <div class="meta"><span class="tag">t3code 2274444e</span><span class="tag">researched 2026-08-22</span><span class="status warn">control needs prototype</span></div>
+    </div>
+  </section>
+
+  <main class="shell">
+    <section class="section" id="verdict">
+      <h2>Verdict</h2>
+      <div class="grid">
+        <article class="card"><div class="metric">Live</div><div class="label">model inventory</div><p><code>model/list</code> returns model IDs, defaults, supported reasoning efforts, and service tiers.</p></article>
+        <article class="card"><div class="metric">Per turn</div><div class="label">effort application</div><p>T3 sends effort on <code>turn/start</code>. It does not send effort on <code>thread/start</code>.</p></article>
+        <article class="card"><div class="metric">Explicit</div><div class="label">child request fields</div><p>Codex child collaboration items carry optional requested <code>model</code> and <code>reasoningEffort</code>.</p></article>
+      </div>
+      <div class="callout"><strong>Recommended Observer status.</strong> Make Codex selectable in the TUI after a live inventory probe. Mark employee child control as experimental until a real <code>PreToolUse</code> fixture proves the spawn input and response mutation.</div>
+    </section>
+
+    <section class="section" id="runtime">
+      <h2>Runtime and discovery</h2>
+      <ol class="steps">
+        <li>T3 creates a scoped Codex driver instance. Its config includes <code>binaryPath</code>, <code>homePath</code>, optional <code>shadowHomePath</code>, launch args, environment, and custom models.</li>
+        <li>The probe launches <code>codex app-server</code>, exchanges <code>initialize</code> and <code>initialized</code>, then calls <code>account/read</code>.</li>
+        <li>When authentication permits, T3 paginates <code>model/list</code> and requests <code>skills/list</code> for the workspace.</li>
+        <li>The driver publishes an instance-scoped snapshot. Multiple Codex accounts remain separate through <code>ProviderInstanceId</code> and their home layout.</li>
+      </ol>
+      <p>A model is a Codex-owned slug. Account and home routing are a separate dimension. Observer's current hook payload has no T3 instance ID, so a native Observer seat cannot promise account selection without a profile mapping.</p>
+    </section>
+
+    <section class="section" id="models">
+      <h2>Model and reasoning semantics</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Concern</th><th>Codex representation</th><th>T3 behavior</th><th>Observer implication</th></tr></thead>
+        <tbody>
+          <tr><td>Model</td><td>Bare model slug</td><td>Selected model travels with the instance ID.</td><td>Do not require <code>provider/model</code>. Validate through the Codex adapter.</td></tr>
+          <tr><td>Reasoning</td><td>Open non-empty string</td><td>Inventory supplies a per-model ordered menu. T3 option ID is <code>reasoningEffort</code>.</td><td>Store the host value. Do not reduce it to Observer's current fixed variant list.</td></tr>
+          <tr><td>Service tier</td><td>Open string</td><td>T3 exposes <code>serviceTier</code> beside reasoning.</td><td>Keep this as another typed option; it is not reasoning.</td></tr>
+          <tr><td>Session start</td><td><code>thread/start</code> or <code>thread/resume</code></td><td>Model and tier are sent; effort is absent.</td><td>Configured effort is not active until the first turn starts.</td></tr>
+          <tr><td>Turn</td><td><code>turn/start</code></td><td>Model, effort, and service tier are overrides for current and later turns.</td><td>Observed effort needs its own event field and provenance.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout warn"><strong>Do not hard-code today's effort names.</strong> T3 recognizes familiar labels for display but preserves unknown strings from Codex. The live model record is the authority.</div>
+    </section>
+
+    <section class="section" id="children">
+      <h2>Child delegation</h2>
+      <p>Codex app-server schemas expose child thread lineage and requested child settings. A collaboration tool item contains the sender thread, receiver thread IDs, prompt, optional model, optional reasoning effort, agent states, and lifecycle status. Child thread metadata can also include parent thread ID, nickname, role, depth, and path.</p>
+      <div class="grid">
+        <article class="card wide"><h3>What is proven</h3><ul class="facts"><li>Codex supports explicit child model and effort values.</li><li>An omitted value inherits according to Codex agent configuration rules.</li><li>Observer already receives post-creation Codex child hooks and observed model metadata.</li></ul></article>
+        <article class="card wide"><h3>What is missing</h3><ul class="facts"><li>T3 does not mutate child spawns from an Observer seat.</li><li>Observer's emitter ignores daemon responses and writes no stdout.</li><li>No checked fixture proves the exact current <code>spawn_agent</code> input accepted by a Codex hook.</li></ul></article>
+      </div>
+      <p>The control point must run before creation. A separate Codex control executable should handle only <code>PreToolUse</code>, validate the native spawn tool and full input object, change only model and effort, and return Codex's supported <code>updatedInput</code> response. Every error must leave the original input intact.</p>
+    </section>
+
+    <section class="section" id="implementation">
+      <h2>Observer implementation notes</h2>
+      <ol class="steps">
+        <li>Add a Codex inventory adapter that probes app-server <code>model/list</code>, or consumes a trusted T3 snapshot. Cache by Codex profile, binary, home, and version.</li>
+        <li>Represent the selected model as an opaque Codex slug and reasoning as option <code>reasoningEffort</code>. Preserve service tier as a separate option.</li>
+        <li>Install the control hook into the selected Codex home or plugin scope, not only the default <code>~/.codex</code>.</li>
+        <li>Prototype a fail-open <code>PreToolUse</code> rewrite using captured real CLI fixtures. Do not use <code>SubagentStart</code>; the child already exists then.</li>
+        <li>Keep configured and observed values separate. Record requested child effort only when the host reports it, with provenance.</li>
+        <li>Expose control as experimental until tests cover neutral delegation, specialized-agent preservation, malformed input, timeout, unknown model, and host rejection.</li>
+      </ol>
+    </section>
+
+    <section class="section" id="sources">
+      <h2>Primary sources</h2>
+      <ul class="source-list">
+        <li><code>t3code/apps/server/src/provider/Drivers/CodexDriver.ts:60-213</code> - instance config and driver construction.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/CodexProvider.ts:53-206,297-421</code> - model/effort mapping and app-server probe.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/CodexAdapter.ts:1647-1698,1805-1836</code> - model selection and turn option extraction.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/CodexSessionRuntime.ts:301-361,1741-1861</code> - thread and turn application.</li>
+        <li><code>t3code/packages/effect-codex-app-server/src/_generated/schema.gen.ts:20550-20605,31041-31139,42565-42645</code> - child collaboration, lineage, and turn schema.</li>
+        <li><code>observer-plugin/packages/adapters/src/codex.ts:20-105</code> and <code>packages/hook-emitter/src/emit.ts:107-173</code> - current observational path.</li>
+        <li><a href="https://developers.openai.com/codex/agent-configuration/subagents/">Official Codex subagent configuration</a> and <a href="https://developers.openai.com/codex/hooks/">hooks contract</a>, accessed 2026-08-22.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer><div class="shell">Source notes: <code>/tmp/opencode/observer-provider-codex.md</code>. Facts were checked against the local repositories; recommendations are labeled as such.</div></footer>
+</body>
+</html>

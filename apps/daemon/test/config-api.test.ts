@@ -181,13 +181,22 @@ describe("configuration API", () => {
 })
 
 describe("provider config schema", () => {
-  it("drops unusable entries while keeping valid siblings", () => {
+  it("keeps unusable entries and their valid siblings rather than substituting a shape", () => {
     const providers = ProvidersConfigSchema.parse({
       broken: null,
       alsoBroken: { driver: 42 },
       good: { driver: "codex", enabled: "yes", note: "preserve" },
     })
 
-    expect(providers).toEqual({ broken: {}, alsoBroken: {}, good: { driver: "codex", enabled: true, note: "preserve" } })
+    // This assertion used to expect `{}` for both broken entries. That was the
+    // data loss: `{ driver: 42, binaryPath: "/x" }` came back empty, so a
+    // mistyped driver silently took every sibling with it. A driver that
+    // cannot be read now empties to "", which `/v1/providers/status` already
+    // filters on, and everything else on the entry survives the save.
+    expect(providers).toEqual({
+      broken: null,
+      alsoBroken: { driver: "", enabled: true },
+      good: { driver: "codex", enabled: true, note: "preserve" },
+    })
   })
 })

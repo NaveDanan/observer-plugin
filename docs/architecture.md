@@ -156,6 +156,41 @@ as a missing definition. The user keeps their agent; they lose the model for
 that one task, and `observer install`, `observer config` and `observer doctor`
 all say so.
 
+## Subagent identity and coordination
+
+OpenCode's child session id is the stable subagent id. It is also the host's `task_id` resume token,
+so Observer stores and exposes that value instead of minting a second resume scheme. Observer does
+mint an assignment UUID before the child exists; `tool.execute.after` binds that correlation id to
+the host session id from task metadata.
+
+Assignments and direct messages live in SQLite. Plugin restarts reload them through the daemon,
+which removes the former dependency on in-memory title matching. Title matching remains only as a
+fallback for a live task when host metadata or the daemon is unavailable.
+
+Assignment prompts and direct-message text pass through the same capture switches and redaction
+rules as observed prompts and chat. Session deletion and retention pruning remove the related
+coordination rows.
+
+The OpenCode plugin registers three coordination tools:
+
+- `agent_identity` returns the caller's stable id, resume token and peers.
+- `agent_send` writes an addressed mailbox entry and prompts the recipient's existing session.
+- `agent_inbox` reads queued messages if immediate host delivery failed.
+- `agent_ack` removes processed message IDs from later inbox reads.
+
+Immediate delivery remains in the mailbox until the recipient acknowledges the message id. This
+avoids losing a message when OpenCode accepts a queued turn but the turn is later interrupted.
+
+Messages may only address assignments under the same host root session. Sending also emits a
+`messaged` edge, but it never changes the spawn parent. Sender and recipient budgets each cap direct
+messages at 30 per minute. `agent_spawn` respects OpenCode's configured depth with a hard ceiling
+of 8 and enforces an active fan-out of 16. OpenCode otherwise strips `task` from child sessions, so
+the plugin adds `task: allow` only to `general` and generated Observer seats when no global,
+wildcard or per-agent task policy exists. Coordination tools check the resolved session rules when
+they run, and nested children inherit parent restrictions. OpenCode's default depth is 1, which
+forbids a subagent from creating a child; Observer changes that default to 8 but leaves any explicit
+user value intact.
+
 The allow-list is a named constant, `NEUTRAL_AGENT_TYPES`, and — like the
 naming rule — it exists in both `packages/cli/src/seat-agents.ts` and
 `integrations/opencode/observer-plugin.js`, pinned together by a test. Adding
@@ -209,14 +244,15 @@ trimmed body and uses it only when truthy, falling back to the provider default
 with no prompt either. An empty body is how a generated agent stays a plain
 worker rather than acquiring a second, stale personality.
 
-The same reasoning forces the one `permission` line the file carries.
+The same reasoning forces the `todowrite` permission the file carries.
 `general` denies `todowrite`; a bare generated agent does not, so without it
 seating an employee would quietly *grant* a delegated subagent the right to
 rewrite the parent session's todo list. That is the same class of silent change
-`NEUTRAL_AGENT_TYPES` exists to prevent, just smaller. With the line, a live
-`GET /agent` reports identical permission sets for `general` and a generated
-seat — which is what makes the swap a fair one. Keep it in step with whatever
-`general` denies; the diff against a running host is how to check.
+`NEUTRAL_AGENT_TYPES` exists to prevent, just smaller. Generated seats also
+allow `task` and Observer's coordination tools so they can nest and communicate;
+those additions do not grant file, shell or network access. Keep `todowrite` in
+step with whatever `general` denies; a diff against a running host is how to
+check.
 
 ### Reconciliation, not delta
 

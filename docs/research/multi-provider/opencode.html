@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en" style="--accent:#86efac">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="OpenCode provider research for Observer multi-provider employee seat configuration.">
+  <title>OpenCode provider field guide | Observer research</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <header class="topbar"><div class="shell"><a class="brand" href="combined.html">Observer / provider research</a><nav class="nav" aria-label="Provider reports"><a href="combined.html">Combined</a><a href="codex.html">Codex</a><a href="claude.html">Claude</a><a href="cursor.html">Cursor</a><a href="grok.html">Grok</a><a href="opencode.html" aria-current="page">OpenCode</a></nav></div></header>
+
+  <section class="hero"><div class="shell">
+    <p class="eyebrow">Provider field guide 05 / 05</p>
+    <h1>OpenCode</h1>
+    <p class="lede">OpenCode is the only provider Observer controls today. The mechanism is safe because it is narrow: a generated hidden agent replaces only <code>general</code>, only after the running host confirms the agent exists. This implementation should become the first provider adapter, not the generic contract.</p>
+    <div class="meta"><span class="tag">current production path</span><span class="tag">provider/model IDs</span><span class="status good">child control supported</span></div>
+  </div></section>
+
+  <main class="shell">
+    <section class="section" id="verdict">
+      <h2>Verdict</h2>
+      <div class="grid">
+        <article class="card"><div class="metric">~7K</div><div class="label">catalog scale</div><p>OpenCode can expose thousands of models across many upstream providers and custom config.</p></article>
+        <article class="card"><div class="metric">3-state</div><div class="label">reasoning knowledge</div><p>Observer distinguishes exact efforts, known absence, and unknown host synthesis.</p></article>
+        <article class="card"><div class="metric">general</div><div class="label">safe replacement</div><p>Specialized and user-authored agents keep their own prompt, permissions, tools, and model.</p></article>
+      </div>
+      <div class="callout"><strong>Recommended refactor.</strong> Preserve behavior. Move OpenCode cache parsing, host probes, variant rules, generated definitions, registry checks, and restart notes behind an OpenCode adapter interface.</div>
+    </section>
+
+    <section class="section" id="identity">
+      <h2>Two provider dimensions</h2>
+      <p>A T3 OpenCode instance is a configured runtime. Inside it, OpenCode connects to upstream provider IDs such as <code>openai</code>, <code>anthropic</code>, or <code>openrouter</code>. A model slug such as <code>openrouter/qwen/qwen3-coder</code> belongs to the OpenCode instance; it does not identify the T3 account or config root.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Dimension</th><th>Example</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>Host profile / instance</td><td><code>opencode:work</code></td><td>Binary, server URL, password, environment, config root, and credentials.</td></tr>
+          <tr><td>OpenCode model</td><td><code>anthropic/claude-opus-4-8</code></td><td>Upstream provider and model resolved by OpenCode.</td></tr>
+          <tr><td>Agent definition</td><td><code>observer-arjun-mehta</code></td><td>Host object that supplies subagent mode, permissions, model, and variant.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Observer currently assumes one global OpenCode config root. Multi-instance support requires explicit config roots or instance-qualified generated names. Otherwise two profiles can demand different models for the same generated employee name.</p>
+    </section>
+
+    <section class="section" id="catalog">
+      <h2>Catalog and reasoning</h2>
+      <ol class="steps">
+        <li>Observer first reads OpenCode's models.dev cache and narrows it using credential file key names. Values and tokens are never read.</li>
+        <li>Configured seat models are pinned so a stale credential filter cannot hide an existing choice.</li>
+        <li>An optional <code>opencode models --verbose</code> probe supplies the host's actual available IDs and resolved <code>variants</code> map.</li>
+        <li>The host map overrides inference. A variant map is the same data OpenCode validates at delegation time.</li>
+      </ol>
+      <div class="grid">
+        <article class="card"><h3>Exact efforts</h3><p>The host or catalog publishes a non-empty ordered effort menu. Offer exactly those values.</p></article>
+        <article class="card"><h3>No effort</h3><p>The model has no reasoning mechanism or the host resolves an empty variant map. Offer no control.</p></article>
+        <article class="card"><h3>Unknown</h3><p>Model metadata cannot determine OpenCode's synthesized variants. Offer suggestions but label them as unverified.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="control">
+      <h2>Current child-control mechanism</h2>
+      <pre><code>seats.employees.arjun-mehta
+  -> observer install opencode
+  -> agent/observer-arjun-mehta.md
+  -> plugin tool.execute.before
+  -> subagent_type: general -> observer-arjun-mehta
+  -> OpenCode task tool resolves the loaded agent definition</code></pre>
+      <ul class="facts">
+        <li>The generated definition has <code>mode: subagent</code>, <code>hidden: true</code>, the selected model and variant, an empty body, and <code>todowrite: deny</code> to match <code>general</code>.</li>
+        <li>The plugin appends the employee directive to the task prompt. The generated file contains no duplicate or stale persona.</li>
+        <li>The plugin asks <code>client.app.agents()</code> before rewriting. A file on disk is not enough because OpenCode loads definitions at startup.</li>
+        <li>Missing host, missing registry entry, unsupported original agent, disabled control, and other uncertainty all preserve the original task.</li>
+      </ul>
+      <div class="callout warn"><strong>Registry presence is not effective-model proof.</strong> Observer should continue to read the child model from OpenCode message metadata. It still cannot observe the child's effective variant, so configured effort must not be displayed as observed fact.</div>
+    </section>
+
+    <section class="section" id="boundary">
+      <h2>What belongs in the OpenCode adapter</h2>
+      <div class="grid">
+        <article class="card wide"><h3>Discovery</h3><p>Cache paths, auth-key filtering, <code>opencode models</code>, server inventory, provider/model parsing, nested slash handling, context/release metadata, and variant inference.</p></article>
+        <article class="card wide"><h3>Control</h3><p>Agent file format, config root, marker ownership, generated names, neutral-agent policy, permission parity, host registry lookup, rewrite, restart requirement, and cleanup.</p></article>
+        <article class="card wide"><h3>Validation</h3><p>The slash rule, variant-with-model requirement, exact variant rejection, unknown variant tolerance, and configured-model diagnostics.</p></article>
+        <article class="card wide"><h3>Observation</h3><p><code>parentID</code>, child session joining, message model IDs, task completion fallback, event ignore list, and host-specific provenance.</p></article>
+      </div>
+      <p>The shared layer should own roster IDs, employee skills, desired versus observed separation, generic option values, diagnostics severity, and fail-open policy. It should not know how an OpenCode agent file works.</p>
+    </section>
+
+    <section class="section" id="implementation">
+      <h2>Observer migration notes</h2>
+      <ol class="steps">
+        <li>Freeze current OpenCode behavior with adapter-level catalog, generated-file, plugin, and TUI tests.</li>
+        <li>Introduce the provider adapter contract, then move the existing code behind it without changing persisted behavior.</li>
+        <li>Add a target/profile dimension to employee seats. Migrate the existing top-level <code>model</code>/<code>variant</code> fields as a legacy OpenCode target because this config has shipped.</li>
+        <li>Honor <code>OPENCODE_CONFIG_DIR</code> and make multiple OpenCode profiles explicit before claiming multi-instance support.</li>
+        <li>Keep model IDs opaque in shared code. Apply the slash grammar only in the OpenCode adapter.</li>
+        <li>Add observed effort only when OpenCode exposes it. Until then, show configured effort as requested and observed effort as unknown.</li>
+      </ol>
+    </section>
+
+    <section class="section" id="sources">
+      <h2>Primary sources</h2>
+      <ul class="source-list">
+        <li><code>t3code/apps/server/src/provider/Drivers/OpenCodeDriver.ts:107-193</code> and <code>opencodeRuntime.ts:199-335,433-809</code> - instances, runtime, and inventory.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/OpenCodeProvider.ts:148-251</code> - models, variants, and agents.</li>
+        <li><code>t3code/apps/server/src/provider/Layers/OpenCodeAdapter.ts:1430-1509</code> - root turn selection.</li>
+        <li><code>observer-plugin/packages/cli/src/models.ts:7-37,131-196,347-435,482-575</code> - current catalog and reasoning rules.</li>
+        <li><code>observer-plugin/packages/cli/src/seat-agents.ts:45-167,240-349</code> - generated definitions and validation.</li>
+        <li><code>observer-plugin/integrations/opencode/observer-plugin.js:241-314,499-546,767-813</code> - registry checks, lineage, and rewrite.</li>
+        <li><a href="https://opencode.ai/docs/config/">OpenCode config</a>, <a href="https://opencode.ai/docs/models/">models</a>, and <a href="https://opencode.ai/docs/agents/">agents</a>, accessed 2026-08-22.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer><div class="shell">Source notes: <code>/tmp/opencode/observer-provider-opencode.md</code>. The proposed adapter extraction keeps the current safety behavior.</div></footer>
+</body>
+</html>

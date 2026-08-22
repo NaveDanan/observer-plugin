@@ -145,12 +145,15 @@ OpenCode's task tool takes no model parameter. The only lever is
 definition per configured employee into `~/.config/opencode/agent/observer-*.md`,
 and the plugin points a seated delegation at it. That is the whole mechanism.
 
-The generated definition is built to be indistinguishable from the built-in
-`general` subagent except for the model: empty prompt, `mode: subagent`, and
-the same permissions — including the `todowrite: deny` that `general` carries
-and a bare agent file does not. That parity is checked against a live
-`opencode serve`, because it is the only thing that makes replacing `general`
-a fair swap rather than a quiet change of what a subagent may do.
+The generated definition keeps the built-in `general` prompt and work
+permissions: empty prompt, `mode: subagent`, and `todowrite: deny`. The plugin
+registers Observer's nested-spawn, identity and direct-message tools. To prevent
+OpenCode from stripping nested task access, it adds `task: allow` only to
+`general` and generated Observer seats when no global, wildcard or per-agent
+task policy exists. Each tool also checks the host's resolved session policy,
+and nested children inherit the parent's restrictions. Observer changes
+OpenCode's otherwise non-nesting depth default to 8 while preserving an
+explicit user value.
 
 ### What you should expect to change
 

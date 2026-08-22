@@ -112,6 +112,22 @@ export class Pipeline {
     return result
   }
 
+  captureCoordinationPrompt(text: string | null | undefined): string | null {
+    if (!text || !this.config.capture.prompts) return null
+    return redactText(text, {
+      enabled: this.config.redaction.enabled,
+      maxTextLength: this.config.redaction.maxTextLength,
+    })
+  }
+
+  captureCoordinationMessage(text: string): string | null {
+    if (!this.config.capture.messages) return null
+    return redactText(text, {
+      enabled: this.config.redaction.enabled,
+      maxTextLength: this.config.redaction.maxTextLength,
+    })
+  }
+
   private toIngestEvent(event: AdapterEvent, request: HookRequest, id: string): IngestEvent {
     return {
       id,

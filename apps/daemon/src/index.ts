@@ -97,15 +97,21 @@ export { Broadcaster } from "./broadcaster.js"
 export { Diagnostics, FAULT_REASONS } from "./diagnostics.js"
 export type { DiagnosticsSnapshot, DropReason, DropSample } from "./diagnostics.js"
 export { createServer } from "./server.js"
+export type { ServerOptions } from "./server.js"
 export { loadConfig, saveConfig, DEFAULT_CONFIG, ConfigSchema, ConfigPatchSchema } from "./config.js"
 export type { ObserverConfig, CaptureConfig } from "./config.js"
 export {
   applySeatSkills,
+  diagnoseOpencodeModel,
   diagnoseSeats,
+  migrateSeatSpecToTargets,
   seatFor,
+  seatTargets,
   DEFAULT_SEATS,
+  LEGACY_TARGET_ID,
   SEAT_VARIANTS,
   SeatSpecSchema,
+  SeatTargetSchema,
   SeatsConfigSchema,
 } from "./seats.js"
 export type {
@@ -114,11 +120,52 @@ export type {
   SeatIssueCode,
   SeatIssueSeverity,
   SeatSpec,
+  SeatTarget,
+  SeatTargetOption,
   SeatVariant,
   SeatsConfig,
 } from "./seats.js"
 export { isHostKind, HOST_KINDS, ProviderInstanceConfigSchema, ProvidersConfigSchema } from "./providers.js"
 export type { HostKind, ProviderInstanceConfig } from "./providers.js"
+export {
+  claudeAdapter,
+  codexAdapter,
+  copilotAdapter,
+  createClaudeAdapter,
+  createCodexAdapter,
+  createCopilotAdapter,
+  createOpencodeAdapter,
+  opencodeAdapter,
+  readOpencodeTarget,
+  seatAdapter,
+  seatAdapters,
+  CLAUDE_DEFAULT_PROFILE_ID,
+  CODEX_DEFAULT_PROFILE,
+  COPILOT_DEFAULT_PROFILE,
+  OPENCODE_DEFAULT_PROFILE,
+  OPENCODE_VARIANT_OPTION,
+} from "./adapters/index.js"
+export type {
+  CatalogueModel,
+  ClaudeAdapterOptions,
+  ClaudeVersionRunner,
+  CodexAdapterOptions,
+  CodexSpawn,
+  CodexSpawnResult,
+  ControlSupport,
+  CopilotAdapterOptions,
+  CopilotSpawn,
+  CopilotSpawnResult,
+  DiscoveryMode,
+  HostCapabilities,
+  HostProfile,
+  HostSeatAdapter,
+  ModelCatalogue,
+  ModelOptionChoice,
+  ModelOptionDescriptor,
+  OpencodeAdapterOptions,
+  OpencodeSeatTarget,
+} from "./adapters/index.js"
 export { CopilotTailer } from "./copilot-tailer.js"
 export { drainSpool } from "./spool.js"
 export * from "./models.js"
