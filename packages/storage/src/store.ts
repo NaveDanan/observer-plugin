@@ -78,6 +78,14 @@ export class Store implements EntityStore {
   private migrate(): void {
     const row = this.db.prepare("PRAGMA user_version").get() as Row | undefined
     let version = num(row?.["user_version"])
+    // Development builds briefly shipped identity and churn together as v2.
+    // If all v3 columns already exist, advance the marker instead of replaying
+    // ALTER TABLE statements against that pre-release schema.
+    if (version === 2 && hasColumns(this.db, "agents", ["lines_added", "lines_removed", "churn_confidence"]) &&
+        hasColumns(this.db, "tool_calls", ["lines_added", "lines_removed", "churn_confidence"])) {
+      this.db.exec("PRAGMA user_version = 3")
+      version = 3
+    }
     for (let i = version; i < MIGRATIONS.length; i++) {
       const sql = MIGRATIONS[i]
       if (!sql) continue
@@ -680,6 +688,12 @@ export class Store implements EntityStore {
     }
     return result
   }
+}
+
+function hasColumns(db: DatabaseSync, table: string, expected: string[]): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Row[]
+  const names = new Set(rows.map((row) => str(row["name"])))
+  return expected.every((name) => names.has(name))
 }
 
 // ------------------------------------------------------------------ mappers

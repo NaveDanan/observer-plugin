@@ -75,6 +75,33 @@ describe("Store", () => {
     }
   })
 
+  it("accepts the pre-release version-two schema that already included churn columns", () => {
+    const directory = mkdtempSync(join(tmpdir(), "observer-v2-compat-"))
+    const path = join(directory, "observer.db")
+    try {
+      const legacy = new DatabaseSync(path)
+      legacy.exec(MIGRATIONS[0]!)
+      legacy.exec(MIGRATIONS[1]!)
+      for (const table of ["agents", "tool_calls"]) {
+        legacy.exec(`ALTER TABLE ${table} ADD COLUMN lines_added INTEGER`)
+        legacy.exec(`ALTER TABLE ${table} ADD COLUMN lines_removed INTEGER`)
+        legacy.exec(`ALTER TABLE ${table} ADD COLUMN churn_confidence TEXT`)
+      }
+      legacy.exec("PRAGMA user_version = 2")
+      legacy.close()
+
+      const upgraded = new Store({ path })
+      expect(upgraded.listAgentAssignments("opencode", "root")).toEqual([])
+      upgraded.close()
+
+      const check = new DatabaseSync(path)
+      expect((check.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3)
+      check.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it("assigns increasing sequences and rejects duplicate ids", () => {
     const db = store()
     const first = db.appendEvent(ingest({ id: "a", at: 1 }))
