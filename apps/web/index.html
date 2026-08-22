@@ -11,13 +11,12 @@
       Fonts are self-hosted from /fonts and must stay that way: docs/privacy.md
       guarantees Observer makes no outbound network calls, and a webfont CDN
       link would leak the developer's IP and every page load to a third party.
-      Rationale and licences: apps/web/src/styles.css, apps/web/public/fonts.
+      Rationale and licences: apps/web/src/index.css, apps/web/public/fonts.
 
       Same-origin font fetches are still CORS-mode, so crossorigin is required
       on the preload or the browser fetches the file twice.
     -->
     <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/silkscreen-400-latin.woff2" as="font" type="font/woff2" crossorigin />
 
     <!-- Paints the canvas dark before the stylesheet lands, so there is no
          white flash on a tool that is looked at in a dark editor. -->

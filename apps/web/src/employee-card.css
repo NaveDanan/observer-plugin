@@ -1,0 +1,216 @@
+/* ==========================================================================
+   NJ-LABS employee card — an explicit carve-out from ADR 0002
+
+   Everything below breaks the two rules at the top of this file: it has
+   rounded corners and it names its own colours. That is deliberate and it is
+   scoped. The card is a reproduction of a printed artifact — the 1023x1537
+   template raster is the artwork, and these rules only place text and a
+   portrait into holes already cut in it. The interface rules govern
+   interface; they do not get to redesign a photograph of a thing.
+
+   The boundary is this selector list. Nothing here styles an element outside
+   `.nj-overlay`, and no token here is reachable from `:root`, so the card's
+   purple can never leak into the interface ramp.
+   See docs/adr/0003-employee-card-carve-out.md.
+   ========================================================================== */
+
+.nj-overlay {
+  /* The artifact's palette. A second token block, on purpose: these are
+     facts about the printed card, not entries in the interface ramp. */
+  --nj-scrim: rgba(4, 3, 12, 0.88);
+  --nj-ink: #ffffff;
+  --nj-photo-fallback: #1a1740;
+  --nj-photo-edge: rgba(122, 92, 255, 0.55);
+  --nj-pill-shadow: rgba(0, 0, 0, 0.6);
+  --nj-name-shadow-near: rgba(0, 0, 0, 0.75);
+  --nj-name-shadow-far: rgba(0, 0, 0, 0.45);
+  --nj-drop: rgba(0, 0, 0, 0.55);
+
+  position: fixed;
+  inset: 0;
+  /* Above both bottom sheets (19 and 20) at every breakpoint. */
+  z-index: 40;
+  display: flex;
+  /* `margin: auto` on the card, not `align-items: center`: a centred flex item
+     that outgrows its scroll container has its top clipped and unreachable,
+     which is exactly what a 1023:1537 card does on a short viewport. */
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 24px;
+  overflow: auto;
+  background: var(--nj-scrim);
+  animation: nj-card-in 120ms steps(3, end);
+}
+
+.nj-card {
+  /*
+   * The one length the card is built from. Everything typographic below is a
+   * multiple of it, so the card scales as a single unit and the geometry
+   * variables — emitted from CARD_LAYOUT in employeeCard.ts — never restate a
+   * number this file also knows.
+   *
+   * Height-driven below ~1.5:1 viewports, width-driven on a narrow one, and
+   * floored at 280px so a short window stops shrinking the card and scrolls
+   * the overlay instead. A 4pt ID card is not a more responsive ID card.
+   */
+  --nj-card-w: clamp(280px, min(92vw, calc(88vh * var(--nj-aspect))), 640px);
+
+  position: relative;
+  flex: none;
+  margin: auto;
+  width: var(--nj-card-w);
+  aspect-ratio: var(--nj-aspect);
+  border-radius: calc(var(--nj-card-w) * var(--nj-card-radius));
+  overflow: hidden;
+  background: var(--nj-photo-fallback);
+  box-shadow: 0 24px 70px var(--nj-drop);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--nj-ink);
+  /* The global reset pixelates every image for the canvas. The card is a
+     photographic raster; pixelating it would shred the artwork. */
+  image-rendering: auto;
+}
+
+.nj-card img { image-rendering: auto; }
+
+.nj-card-template {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+.nj-photo-frame {
+  position: absolute;
+  left: var(--nj-photo-left);
+  top: var(--nj-photo-top);
+  width: var(--nj-photo-width);
+  height: var(--nj-photo-height);
+  overflow: hidden;
+  border-radius: calc(var(--nj-card-w) * var(--nj-photo-radius));
+  box-shadow: 0 0 0 2px var(--nj-photo-edge) inset;
+}
+
+.nj-photo-img {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  /* Both from photoImageBox(): 0.80 of cover, bottom-pinned. */
+  width: var(--nj-photo-img-width);
+  height: var(--nj-photo-img-height);
+  object-fit: cover;
+  display: block;
+}
+
+.nj-name {
+  position: absolute;
+  left: var(--nj-name-left);
+  top: var(--nj-name-top);
+  width: var(--nj-name-width);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-weight: 900;
+  line-height: var(--nj-name-line-height);
+  letter-spacing: var(--nj-name-letter-spacing);
+  text-shadow: 0 1px 0 var(--nj-name-shadow-near), 0 4px 14px var(--nj-name-shadow-far);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Past fitNameFontSize's floor there is no size that fits, so the last line
+   of defence is a clip rather than a name running across the pills. */
+.nj-name > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nj-pill {
+  position: absolute;
+  left: var(--nj-pill-left);
+  width: var(--nj-pill-width);
+  height: var(--nj-pill-height);
+  /* A line box, not a flex centre: `text-overflow` needs a block container.
+     The purple pill and its caption are painted into the template — these
+     divs contribute text only. */
+  display: block;
+  text-align: center;
+  line-height: calc(var(--nj-card-w) * var(--nj-pill-line));
+  padding: 0 calc(var(--nj-card-w) * var(--nj-pill-padding));
+  font-weight: 800;
+  letter-spacing: var(--nj-pill-letter-spacing);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px var(--nj-pill-shadow);
+  pointer-events: none;
+}
+
+.nj-pill-role { top: var(--nj-pill-role-top); }
+.nj-pill-department { top: var(--nj-pill-department-top); }
+.nj-pill-employeeId { top: var(--nj-pill-employeeId-top); }
+.nj-pill-accessLevel { top: var(--nj-pill-accessLevel-top); }
+
+/* The close control is interface, not artifact, so it is the only thing on
+   this overlay that speaks the interface ramp: a popover-surface icon button
+   with the house radius, exactly like every other dismiss affordance. */
+.nj-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--popover) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+  border-radius: var(--control-radius);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.nj-close:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* Every value the artwork sets in type is repeated here as real text, so the
+   card is readable without seeing it. */
+.nj-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes nj-card-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (max-width: 900px) {
+  .nj-overlay { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nj-overlay { animation: none !important; }
+}

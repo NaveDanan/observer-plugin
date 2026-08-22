@@ -1,8 +1,10 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
+import { SettingsIcon } from "lucide-react"
 import { Canvas } from "./Canvas"
 import { DetailPanel } from "./DetailPanel"
 import { EmployeeCardModal } from "./EmployeeCardModal"
 import { WorkerCard } from "./WorkerCard"
+import { SettingsPage, isSettingsTab, type SettingsTab } from "./settings/SettingsPage"
 import type { DeliveryDiagnostics } from "./api"
 import {
   closeEmployeeCard,
@@ -34,6 +36,7 @@ export function App(): JSX.Element {
   useStoreVersion()
   const state = getState()
   const now = Date.now()
+  const settingsTab = useSettingsRoute()
 
   useEffect(() => {
     void initialise()
@@ -121,6 +124,14 @@ export function App(): JSX.Element {
             </span>
           )}
           <span className={`status-pill status-${state.connection}`}>{state.connection}</span>
+          <button
+            className="icon-button"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => openSettings("general")}
+          >
+            <SettingsIcon size={14} aria-hidden="true" />
+          </button>
         </div>
       </header>
 
@@ -305,8 +316,46 @@ export function App(): JSX.Element {
           returnFocus={nodeElement(state.cardAgentId)}
         />
       )}
+
+      {settingsTab && (
+        <SettingsPage tab={settingsTab} onTabChange={openSettings} onClose={closeSettings} />
+      )}
     </div>
   )
+}
+
+/**
+ * Settings live in the URL fragment (`#settings/providers`), not in component
+ * state.
+ *
+ * The canvas is a long-lived surface — a session can run for an hour behind
+ * this page — so settings had to be somewhere a reload could restore and a
+ * link could point at, without dragging a router into an app that otherwise
+ * has exactly one screen.
+ */
+function useSettingsRoute(): SettingsTab | undefined {
+  const [hash, setHash] = useState(() => (typeof window === "undefined" ? "" : window.location.hash))
+
+  useEffect(() => {
+    const onHashChange = (): void => setHash(window.location.hash)
+    window.addEventListener("hashchange", onHashChange)
+    return () => window.removeEventListener("hashchange", onHashChange)
+  }, [])
+
+  const [prefix, tab] = hash.replace(/^#\/?/, "").split("/")
+  if (prefix !== "settings") return undefined
+  return tab !== undefined && isSettingsTab(tab) ? tab : "general"
+}
+
+function openSettings(tab: SettingsTab): void {
+  window.location.hash = `#settings/${tab}`
+}
+
+function closeSettings(): void {
+  // `pushState` rather than clearing `location.hash`, which would leave a bare
+  // "#" behind and scroll the canvas to the top.
+  window.history.pushState(null, "", window.location.pathname + window.location.search)
+  window.dispatchEvent(new HashChangeEvent("hashchange"))
 }
 
 /**

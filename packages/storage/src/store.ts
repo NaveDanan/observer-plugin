@@ -61,7 +61,7 @@ export interface StoreOptions {
  */
 export class Store implements EntityStore {
   private readonly db: DatabaseSync
-  private readonly retentionDays: number
+  private retentionDays: number
 
   constructor(options: StoreOptions) {
     if (options.path !== ":memory:") mkdirSync(dirname(options.path), { recursive: true, mode: 0o700 })
@@ -94,6 +94,11 @@ export class Store implements EntityStore {
 
   close(): void {
     this.db.close()
+  }
+
+  /** Changes the retention window used by the next pruning pass. */
+  setRetentionDays(retentionDays: number): void {
+    this.retentionDays = retentionDays
   }
 
   transaction<T>(fn: () => T): T {

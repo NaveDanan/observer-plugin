@@ -1,0 +1,716 @@
+@import "tailwindcss";
+@import "./employee-card.css";
+@import "./app-surfaces.css";
+
+@custom-variant dark (&:is(.dark, .dark *));
+@custom-variant light (&:not(.dark, .dark *));
+
+/* ==========================================================================
+   Observer — interface tokens
+
+   The palette, radii, glass surfaces and theme plumbing below are the T3 Code
+   design system, carried over verbatim from its `apps/web/src/index.css` so a
+   theme file authored for one app renders identically in the other. Observer
+   adds nothing to the ramp; it only consumes it.
+
+   Three layers, in this order:
+     1. Stock tokens      — zinc/neutral defaults for light and dark.
+     2. `data-theme-id`   — a theme file's roles, written onto `html` by
+                            `theme/useTheme.ts` as `--app-theme-*` variables.
+     3. Component styles  — `app-surfaces.css` for the canvas app,
+                            `employee-card.css` for the NJ-LABS card artifact.
+   ========================================================================== */
+/* ------------------------------------------------------------------ fonts */
+/* Self-hosted. docs/privacy.md guarantees no outbound network calls, so the
+   Google Fonts CDN link is not an option — the binaries are vendored under
+   apps/web/public/fonts with their OFL licence text. Served from the daemon
+   root, same convention as the roster photos at /roster/*.png. */
+
+/* JetBrains Mono is a variable font: one file covers 400/600/700. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Inter carries the NJ-LABS employee card and nothing else. It is deliberately
+   not preloaded in index.html: no interface surface uses it, so the browser
+   should only fetch it when a card actually opens. Weight 900 is a real master
+   on the variable axis — the reference implementation asked for Inter without
+   shipping it, so every machine without it drew a synthesised fake bold at the
+   card's largest type. See docs/adr/0003-employee-card-carve-out.md. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+
+/* ------------------------------------------------------ control geometry */
+/* Compact UI geometry and glass parameters. Kept semantic so the settings
+   surfaces, dialogs and toolbar controls cannot quietly drift apart.
+   `--glass-opacity` is written at runtime by the Appearance tab. */
+:root {
+  --app-scrollbar-width: 6px;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
+  --control-radius: 0.5rem;
+  --sidebar-content-inset: 0.5rem;
+  --sidebar-control-gap: 0.5rem;
+  --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+  --sidebar-row-content-inset: 0.625rem;
+  --floating-content-inset: 0.75rem;
+  --glass-blur: 12px;
+  --glass-opacity: 80%;
+  --glass-saturation: 1.14;
+
+  @variant dark {
+    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    --glass-blur: 16px;
+    --glass-saturation: 1.08;
+  }
+}
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@theme inline {
+  --color-zinc-25: oklch(99.2% 0 0);
+  --animate-skeleton: skeleton 2s infinite linear;
+  /* Duty-cycled indicator animations: long holds with stepped ramps, so the
+     compositor updates discrete frames instead of every vsync. */
+  --animate-status-pulse: status-pulse 2s infinite;
+  --animate-ghost-pulse: ghost-pulse 2.4s infinite;
+  --animate-status-ping: status-ping 2s infinite;
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-error-foreground: var(--error-foreground);
+  --color-error: var(--error);
+  --color-error-surface: var(--error-surface);
+  --color-update-foreground: var(--update-foreground);
+  --color-update: var(--update);
+  --color-update-surface: var(--update-surface);
+  --color-success-foreground: var(--success-foreground);
+  --color-success: var(--success);
+  --color-info-foreground: var(--info-foreground);
+  --color-info: var(--info);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-placeholder: var(--placeholder);
+  --color-secondary-label: var(--secondary-label);
+  --color-icon-muted: var(--icon-muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-surface-raised: var(--surface-raised);
+  --color-message: var(--message-surface);
+  --color-message-foreground: var(--message-foreground);
+  --color-message-action: var(--message-action);
+  --color-message-action-foreground: var(--message-action-foreground);
+  --color-message-action-hover: var(--message-action-hover);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-control-surface: var(--sidebar-control-surface);
+  --color-sidebar-row-hover: var(--sidebar-row-hover);
+  --color-sidebar-row-active: var(--sidebar-row-active);
+  --color-sidebar-row-selected: var(--sidebar-row-selected);
+  --color-sidebar-border: var(--sidebar-border);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  @keyframes skeleton {
+    /* Transform-only so the highlight sweep stays on the compositor, then a
+       long hold with the band parked off-screen instead of a constant shimmer. */
+    0% {
+      transform: translateX(-100%);
+    }
+    60%,
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes ghost-pulse {
+    /* The loading ghosts' breath. Stepped like the status indicators, so however many bars a
+       ghost holds, the compositor draws a handful of discrete frames per cycle rather than one
+       per vsync — which on a 120Hz display is the difference between ~14 and ~288 updates. */
+    0%,
+    42% {
+      opacity: 1;
+      animation-timing-function: steps(4);
+    }
+    50%,
+    92% {
+      opacity: 0.55;
+      animation-timing-function: steps(4);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-pulse {
+    0%,
+    40% {
+      opacity: 1;
+      animation-timing-function: steps(6);
+    }
+    50%,
+    90% {
+      opacity: 0.5;
+      animation-timing-function: steps(6);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-ping {
+    /* Burst first (immediate feedback for click ripples), then hold
+       invisible for the rest of the cycle. Mirrors animate-ping's
+       75%-scale start. */
+    0% {
+      opacity: 0.9;
+      scale: 0.75;
+      animation-timing-function: steps(8);
+    }
+    40%,
+    100% {
+      opacity: 0;
+      scale: 2;
+    }
+  }
+}
+
+@utility surface-glass {
+  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--background) !important;
+  }
+}
+
+@utility alert-glass {
+  --alert-glass-tint: transparent;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
+      color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
+    ),
+    color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+  &[data-variant="error"] {
+    --alert-glass-tint: var(--destructive);
+  }
+
+  &[data-variant="info"] {
+    --alert-glass-tint: var(--info);
+  }
+
+  &[data-variant="success"] {
+    --alert-glass-tint: var(--success);
+  }
+
+  &[data-variant="warning"] {
+    --alert-glass-tint: var(--warning);
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--background) !important;
+  }
+}
+
+@utility dialog-glass {
+  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+
+  @variant dark {
+    border-color: color-mix(in srgb, var(--color-white) 8%, transparent);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 4%),
+      0 24px 72px -20px rgb(0 0 0 / 90%);
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--popover) !important;
+  }
+}
+
+@utility dialog-backdrop {
+  background: color-mix(in srgb, var(--background) 60%, transparent);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+
+  @variant dark {
+    background: color-mix(in srgb, var(--background) 64%, transparent);
+  }
+}
+
+@utility dropdown-glass {
+  background: color-mix(
+    in srgb,
+    var(--popover) 18%,
+    color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+  );
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--popover) !important;
+  }
+}
+
+
+/* ---- transitions suppression + semantic token layer (t3code index.css) ---- */
+/* Suppress all transitions during theme changes */
+.no-transitions,
+.no-transitions *,
+.no-transitions *::before,
+.no-transitions *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.625rem;
+  --background: var(--color-zinc-25);
+  --app-chrome-background: var(--background);
+  --toolbar-background: var(--app-chrome-background);
+  --toolbar-foreground: var(--foreground);
+  --toolbar-border: var(--border);
+  --toolbar-control: var(--popover);
+  --toolbar-control-foreground: var(--foreground);
+  --toolbar-control-hover: var(--accent);
+  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
+  --foreground: var(--color-zinc-800);
+  --card: var(--color-white);
+  --card-foreground: var(--color-zinc-800);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-zinc-800);
+  --primary: oklch(0.488 0.217 264);
+  --primary-foreground: var(--color-white);
+  --secondary: var(--color-zinc-50);
+  --secondary-foreground: var(--color-zinc-800);
+  --muted: var(--color-zinc-50);
+  --muted-foreground: var(--color-zinc-500);
+  --placeholder: var(--muted-foreground);
+  --secondary-label: var(--muted-foreground);
+  --icon-muted: var(--muted-foreground);
+  --message-surface: var(--accent);
+  --message-foreground: var(--foreground);
+  --message-action: var(--primary);
+  --message-action-foreground: var(--primary-foreground);
+  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
+  --accent: var(--color-zinc-100);
+  --accent-foreground: var(--color-zinc-900);
+  --error: var(--color-red-500);
+  --error-foreground: var(--color-red-700);
+  --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
+  --destructive: var(--error);
+  --border: var(--color-zinc-200);
+  --input: var(--color-zinc-300);
+  --ring: var(--primary);
+  --destructive-foreground: var(--error-foreground);
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-700);
+  --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
+  --update: var(--primary);
+  --update-foreground: var(--primary);
+  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
+  /* Keep every sidebar primitive on the same light surface hierarchy, including
+     portaled mobile sheets and settings navigation outside the app sidebar. */
+  --sidebar: var(--color-zinc-50);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--color-zinc-100);
+  --sidebar-row-hover: var(--color-zinc-25);
+  --sidebar-row-active: var(--color-white);
+  --sidebar-row-selected: var(--color-white);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-foreground: var(--foreground);
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: rgb(38 56 78);
+  --terminal-selection-background: rgb(37 63 99 / 20%);
+
+  @variant dark {
+    color-scheme: dark;
+    /* Keep the workspace in the same neutral-black family as sidebar v2.
+       Surfaces lift from this base instead of starting from a milky gray. */
+    --background: var(--color-neutral-950);
+    --surface-raised: var(--secondary);
+    --foreground: var(--color-neutral-100);
+    --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    --card-foreground: var(--color-neutral-100);
+    --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
+    --popover-foreground: var(--color-neutral-100);
+    --primary: oklch(0.571 0.21 264);
+    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary-foreground: var(--color-neutral-100);
+    --muted: --alpha(var(--color-white) / 4%);
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --accent: --alpha(var(--color-white) / 4%);
+    --accent-foreground: var(--color-neutral-100);
+    --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --error-foreground: var(--color-red-400);
+    --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
+    --border: --alpha(var(--color-white) / 6%);
+    --input: --alpha(var(--color-white) / 8%);
+    --info-foreground: var(--color-blue-400);
+    --success-foreground: var(--color-emerald-400);
+    --warning-foreground: var(--color-amber-400);
+    --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
+    --update-foreground: var(--color-blue-400);
+    --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
+    --sidebar: var(--card);
+    --sidebar-control-surface: var(--muted);
+    --sidebar-row-hover: var(--accent);
+    --sidebar-row-active: var(--accent);
+    --sidebar-row-selected: var(--muted);
+    --sidebar-stage-fade: var(--card);
+    --terminal-cursor: rgb(180 203 255);
+    --terminal-selection-background: rgb(180 203 255 / 25%);
+  }
+}
+
+/* The non-empty marker adds enough specificity to outrank the generated root
+   dark variant without reintroducing raw `.dark` selectors. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  --background: var(--app-theme-canvas);
+  --app-chrome-background: var(--app-theme-chrome);
+  --toolbar-background: var(--app-theme-toolbar);
+  --toolbar-foreground: var(--app-theme-toolbar-foreground);
+  --toolbar-border: var(--app-theme-toolbar-border);
+  --toolbar-control: var(--app-theme-toolbar-control);
+  --toolbar-control-foreground: var(--app-theme-toolbar-control-foreground);
+  --toolbar-control-hover: var(--app-theme-toolbar-control-hover);
+  --surface-raised: var(--app-theme-surface-raised);
+  --foreground: var(--app-theme-text);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-text);
+  --popover: var(--app-theme-surface-overlay);
+  --popover-foreground: var(--app-theme-text);
+  /* Solid controls (CTAs, switches, sliders, the send button) all share the
+     theme's action color so every "act now" affordance reads consistently;
+     the accent keeps driving surfaces, selection, and focus. Palettes without
+     a distinct action color make these identical. */
+  --primary: var(--app-theme-message-action);
+  --primary-foreground: var(--app-theme-message-action-foreground);
+  --secondary: var(--app-theme-secondary);
+  --secondary-foreground: var(--app-theme-secondary-foreground);
+  --muted: var(--app-theme-muted);
+  --muted-foreground: var(--app-theme-muted-foreground);
+  --placeholder: var(--app-theme-placeholder);
+  --secondary-label: var(--app-theme-secondary-label);
+  --icon-muted: var(--app-theme-icon-muted);
+  --accent: var(--app-theme-accent-surface);
+  --accent-foreground: var(--app-theme-accent-surface-foreground);
+  --message-surface: var(--app-theme-message-surface);
+  --message-foreground: var(--app-theme-message-foreground);
+  --message-action: var(--app-theme-message-action);
+  --message-action-foreground: var(--app-theme-message-action-foreground);
+  --message-action-hover: var(--app-theme-message-action-hover);
+  --error: var(--app-theme-error);
+  --error-foreground: var(--app-theme-error-foreground);
+  --error-surface: var(--app-theme-error-surface);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --warning: var(--app-theme-warning);
+  --warning-foreground: var(--app-theme-warning-foreground);
+  --warning-surface: var(--app-theme-warning-surface);
+  --update: var(--app-theme-update);
+  --update-foreground: var(--app-theme-update-foreground);
+  --update-surface: var(--app-theme-update-surface);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-input);
+  --ring: var(--app-theme-focus);
+  --sidebar: var(--app-theme-sidebar);
+  --sidebar-foreground: var(--app-theme-sidebar-foreground);
+  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
+  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
+  --sidebar-row-active: var(--app-theme-sidebar-row-active);
+  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
+  --sidebar-border: var(--app-theme-sidebar-border);
+  --sidebar-stage-fade: var(--app-theme-sidebar);
+  --code-background: var(--app-theme-code-background);
+  --code-foreground: var(--app-theme-code-foreground);
+  --terminal-background: var(--app-theme-terminal-background);
+  --terminal-foreground: var(--app-theme-terminal-foreground);
+  --terminal-cursor: var(--app-theme-terminal-cursor);
+  --terminal-selection-background: var(--app-theme-terminal-selection-background);
+}
+
+@layer components {
+  @keyframes settings-search-target-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
+    }
+  }
+
+  [data-settings-page-scroll] div.settings-search-target-pulse,
+  [data-settings-page-scroll] section.settings-search-target-pulse > div:first-child {
+    animation: settings-search-target-pulse 650ms ease-in-out 2;
+    border-radius: 0.75rem;
+  }
+
+  /* The pulse is the destination indicator; without it (reduced motion), the
+     focus outline takes over, so exactly one indicator shows at a time. */
+  [data-settings-page-scroll] .settings-search-target-pulse:focus {
+    outline: none;
+  }
+
+  .settings-slider {
+    --settings-slider-progress: 0%;
+    --settings-slider-fill-offset: 0.5rem;
+    --settings-slider-fill-position: calc(
+      var(--settings-slider-progress) + var(--settings-slider-fill-offset)
+    );
+    appearance: none;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .settings-slider::-webkit-slider-runnable-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--primary) 0 var(--settings-slider-fill-position),
+      color-mix(in srgb, var(--muted-foreground) 22%, transparent)
+        var(--settings-slider-fill-position) 100%
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .settings-slider::-moz-range-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .settings-slider::-moz-range-progress {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--primary);
+  }
+
+  .settings-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.3125rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .settings-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .settings-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .settings-slider:hover::-moz-range-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .settings-slider:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+
+  .settings-slider:active::-moz-range-thumb {
+    transform: scale(0.94);
+  }
+
+  .settings-slider:focus-visible {
+    outline: none;
+  }
+
+  .settings-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  .settings-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  @media (forced-colors: active) {
+    .settings-slider {
+      appearance: auto;
+      accent-color: Highlight;
+    }
+
+    .settings-slider::-webkit-slider-runnable-track,
+    .settings-slider::-webkit-slider-thumb {
+      all: revert;
+    }
+
+    .settings-slider::-moz-range-track,
+    .settings-slider::-moz-range-progress,
+    .settings-slider::-moz-range-thumb {
+      all: revert;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  background-color: var(--background);
+  color: var(--foreground);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.mono,
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+/* One focus treatment for every interactive element. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------ scrollbars */
+::-webkit-scrollbar {
+  width: var(--app-scrollbar-width);
+  height: var(--app-scrollbar-width);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
+}
+* {
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+/* -------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}

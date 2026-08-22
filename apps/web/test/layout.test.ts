@@ -399,12 +399,12 @@ describe("layoutGraph", () => {
  * stylesheet, and the stylesheet is edited without this file. These pin the
  * two together so the drift is a failing test rather than overlapping nodes.
  */
-describe("layout constants against styles.css", () => {
-  const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8")
+describe("layout constants against app-surfaces.css", () => {
+  const css = readFileSync(new URL("../src/app-surfaces.css", import.meta.url), "utf8")
 
   function rule(selector: string): string {
     const match = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(css)
-    if (!match) throw new Error(`no ${selector} rule in styles.css`)
+    if (!match) throw new Error(`no ${selector} rule in app-surfaces.css`)
     return match[1] as string
   }
 

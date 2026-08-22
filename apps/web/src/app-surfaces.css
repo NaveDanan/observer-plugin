@@ -1,0 +1,1717 @@
+/* ==========================================================================
+   Observer — canvas app surfaces
+
+   Every selector the canvas app's markup uses: the topbar, the session
+   sidebar, the React Flow stage, the agent nodes, the Worker card and the
+   activity panel. This is the successor to the old cyber-pixel `styles.css`;
+   the layout survived the port, the skin did not.
+
+   Two rules hold this file together, and they are the inverse of the two the
+   old file held:
+     1. No colour literal outside the `:root` block at the top, and no colour
+        at all that is not a semantic token from `index.css`. Nothing here
+        knows what "blue" is.
+     2. No `border-radius: 0`. Panels, cards and rows take `--radius-xl`,
+        controls take `--control-radius`, anything pill-shaped takes 9999px.
+
+   The token layer, the fonts, the base element styles, the scrollbars, the
+   focus ring and the global reduced-motion clamp all live in `index.css`,
+   which imports this file. Nothing below re-declares them.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- locals */
+:root {
+  /* Elevation. Light has a light source and can cast a drop shadow; dark does
+     not, so a surface lifts with a top inner highlight instead. This is the
+     one place a value genuinely differs by scheme — the T3 Code outline
+     button makes exactly the same trade — so it is the one `@variant dark`
+     in the file, and every raised surface below reads it from here. */
+  --app-lift: 0 1px 2px rgb(0 0 0 / 5%);
+  --app-lift-floating: 0 8px 24px -12px rgb(0 0 0 / 25%);
+
+  /* T3 Code's `border-border/70`: a hairline that reads as a seam rather than
+     as a drawn line. Full `--border` is reserved for hover and for a docked
+     panel's edge, where the seam has to hold against the canvas. */
+  --app-hairline: color-mix(in srgb, var(--border) 70%, transparent);
+
+  --app-canvas-grid: color-mix(in srgb, var(--muted-foreground) 32%, transparent);
+
+  @variant dark {
+    --app-lift: inset 0 1px 0 rgb(255 255 255 / 4%);
+    --app-lift-floating: 0 12px 32px -16px rgb(0 0 0 / 70%);
+  }
+}
+
+/* ------------------------------------------------------ React Flow theme */
+/* React Flow ships its own palette and its own geometry. Its variables all
+   resolve as `var(--xy-thing, var(--xy-thing-default))`, so setting the
+   un-suffixed name here outranks both its light and its dark defaults without
+   chasing `.react-flow.dark` selector by selector. */
+:root {
+  --xy-node-border-radius: var(--radius-xl);
+  --xy-node-border: 0;
+  --xy-node-background-color: transparent;
+  --xy-node-boxshadow-hover: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-node-color: var(--foreground);
+  --xy-background-color: transparent;
+  --xy-background-pattern-color: var(--app-canvas-grid);
+  --xy-background-pattern-lines-color: var(--app-canvas-grid);
+  --xy-background-pattern-dots-color: var(--app-canvas-grid);
+  --xy-background-pattern-cross-color: var(--app-canvas-grid);
+  --xy-edge-stroke: var(--primary);
+  --xy-edge-stroke-selected: var(--ring);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--primary);
+  --xy-connectionline-stroke-width: 1.5;
+  --xy-edge-label-background-color: var(--card);
+  --xy-edge-label-color: var(--muted-foreground);
+  --xy-handle-background-color: transparent;
+  --xy-handle-border-color: transparent;
+  --xy-selection-background-color: color-mix(in srgb, var(--ring) 10%, transparent);
+  --xy-selection-border: 1px dashed var(--ring);
+  --xy-resize-background-color: var(--ring);
+  --xy-controls-button-background-color: var(--popover);
+  --xy-controls-button-background-color-hover: var(--accent);
+  --xy-controls-button-color: var(--muted-foreground);
+  --xy-controls-button-color-hover: var(--accent-foreground);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--app-lift-floating);
+  --xy-attribution-background-color: transparent;
+  --xy-minimap-background-color: var(--card);
+  --xy-minimap-node-background-color: var(--muted-foreground);
+  --xy-minimap-node-stroke-color: transparent;
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--background) 70%, transparent);
+  --xy-minimap-mask-stroke-color: var(--ring);
+}
+
+/* -------------------------------------------------- element normalisation */
+/* The old stylesheet zeroed every margin on `*`; `index.css` sets only
+   `box-sizing`, so the headings, lists and paragraphs this app renders would
+   come back with their user-agent margins. Wrapped in `:where()` so the reset
+   carries zero specificity and every rule below beats it without qualifying
+   its selector. */
+:where(.app, .fatal) :where(h1, h2, h3, h4, p, ul, ol, dl, dd, pre) {
+  margin: 0;
+}
+:where(.app) :where(ul, ol) {
+  padding-left: 0;
+}
+
+.muted {
+  color: var(--muted-foreground);
+}
+.small {
+  font-size: 11px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ----------------------------------------------------------------- topbar */
+/* The topbar, the sidebar, the Worker card and the activity panel are one
+   chrome frame around the stage, so they share the sidebar surface. Only the
+   canvas itself sits on `--background`. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+  border-bottom: 1px solid var(--sidebar-border);
+  flex-wrap: wrap;
+  flex: none;
+  position: relative;
+  z-index: 5;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.brand strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.logo {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  background: var(--primary);
+  border-radius: var(--radius-sm);
+}
+.brand-sub {
+  font-size: 12px;
+  color: var(--sidebar-muted-foreground);
+}
+
+.topbar-goal {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  overflow: hidden;
+  font-size: 13px;
+}
+.topbar-goal-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.topbar-goal-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+.bound {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  flex: none;
+}
+.bound strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------------ pills */
+.status-pill,
+.tip-pill {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+/* A hint, not a state: it stays on the muted ramp so it does not compete with
+   the connection pill sitting next to it. */
+.tip-pill {
+  border-color: var(--app-hairline);
+  background: transparent;
+}
+
+.status-live,
+.status-connected {
+  color: var(--success-foreground);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.status-connecting {
+  color: var(--warning-foreground);
+  background: var(--warning-surface);
+}
+.status-offline {
+  color: var(--error-foreground);
+  background: var(--error-surface);
+}
+
+/* ------------------------------------------------------------ canvas filter */
+/* All / Active / Finished. A segmented control: the group is the track, the
+   selected button is the only raised surface in it. */
+.filter-group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  background: var(--muted);
+  border: 1px solid var(--app-hairline);
+  border-radius: 9999px;
+}
+.filter-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  /* App.tsx renders the mode keys verbatim; capitalising here beats editing
+     three strings in a file this one does not own. */
+  text-transform: capitalize;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+.filter-btn:hover {
+  color: var(--foreground);
+}
+.filter-btn.is-on {
+  color: var(--foreground);
+  background: var(--card);
+  box-shadow: var(--app-lift);
+}
+.filter-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+/* ----------------------------------------------------- delivery problems */
+.alert {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 16px;
+  background: var(--warning-surface);
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  color: var(--foreground);
+  font-size: 13px;
+  flex: none;
+}
+.alert code {
+  padding: 1px 6px;
+  background: var(--code-background);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-sm);
+  color: var(--warning-foreground);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------- body */
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* -------------------------------------------------------- session sidebar */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+  border-right: 1px solid var(--sidebar-border);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 12px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sidebar-muted-foreground);
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--sidebar-content-inset) 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.session-item {
+  padding: var(--sidebar-row-content-inset);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xl);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.session-item:hover {
+  background: var(--sidebar-row-hover);
+}
+.session-item.is-active {
+  background: var(--sidebar-row-selected);
+  border-color: var(--sidebar-border);
+  box-shadow: var(--app-lift);
+}
+.session-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sidebar-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Host, date and counts are all facts about the session, so the whole row
+   reads in mono and the columns line up between rows. */
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--sidebar-muted-foreground);
+}
+.host-tag {
+  padding: 1px 7px;
+  background: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+}
+.diff-badge {
+  display: flex;
+  gap: 4px;
+  margin-left: 2px;
+}
+.diff-add {
+  color: var(--success-foreground);
+}
+
+/* ---------------------------------------------------------- mini roster -- */
+/* The Employees seated on the active session, nested inside its row. */
+.agent-mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.agent-mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.agent-mini:hover {
+  background: var(--sidebar-row-hover);
+}
+.agent-mini.is-selected {
+  background: var(--sidebar-row-selected);
+  border-color: var(--sidebar-border);
+}
+/* Rounded rectangle, not a circle: the roster portraits are top-cropped
+   headshots, and a circle mask cuts the crown off every one of them. */
+.agent-mini-photo {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.agent-mini-initials {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.agent-mini-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--sidebar-muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-mini.is-selected .agent-mini-name {
+  color: var(--sidebar-foreground);
+}
+.agent-mini .dot {
+  width: 6px;
+  height: 6px;
+}
+
+.sidebar-footer {
+  border-top: 1px solid var(--sidebar-border);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+.connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------------ stage */
+.stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--background);
+  position: relative;
+}
+.canvas-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Floats over the canvas, so it takes glass rather than a flat plate. */
+.preview-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  pointer-events: none;
+  padding: 4px 11px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 1px solid var(--app-hairline);
+  border-radius: 9999px;
+  box-shadow: var(--app-lift);
+}
+
+/* ----------------------------------------------------------------- canvas */
+/* No painted grid here: `Canvas.tsx` always mounts React Flow's own
+   `<Background>`, which pans with the viewport, and the fallback grid the old
+   file drew only ever existed to moire against it. */
+.canvas,
+.canvas-container {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background);
+  cursor: grab;
+}
+.canvas-container.panning {
+  cursor: grabbing;
+}
+.canvas-container.panning * {
+  cursor: grabbing;
+}
+.canvas.empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  padding: 24px;
+  text-align: center;
+  cursor: default;
+}
+
+/* ---------------------------------------------------- React Flow chrome -- */
+.react-flow__node {
+  cursor: pointer;
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__background-pattern.lines,
+.react-flow__background-pattern.dots {
+  color: var(--app-canvas-grid);
+}
+.react-flow__edge-text {
+  fill: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.react-flow__edge-textbg {
+  fill: var(--card);
+}
+
+/* Handles stay live for interaction but invisible. They used to sit 7px clear
+   of the card, on top of the decorative cyan pins; the pins are gone, so an
+   edge now meets the card's own border. */
+.react-flow__handle {
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  width: 14px;
+  height: 10px;
+  min-width: 0;
+  min-height: 0;
+  opacity: 0;
+  z-index: 3;
+}
+.react-flow__handle-top {
+  top: -1px;
+}
+.react-flow__handle-bottom {
+  bottom: -1px;
+}
+.react-flow__handle.connectionindicator:hover {
+  opacity: 0;
+}
+
+/* ------------------------------------------------------------------ edges */
+.react-flow__edge-path {
+  stroke: var(--primary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 4 6;
+  animation: observer-edge-flow 1.2s linear infinite;
+}
+@keyframes observer-edge-flow {
+  from {
+    stroke-dashoffset: 20;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* An inferred parent link is a guess; a reconciled one was corrected after the
+   fact. Both say so by breaking the confident rhythm. Every pattern's period
+   divides the 20px the animation walks, or the flow stutters at the loop. */
+.edge-inferred .react-flow__edge-path {
+  stroke-dasharray: 2 8;
+  opacity: 0.55;
+}
+.edge-reconciled .react-flow__edge-path {
+  stroke-dasharray: 12 8;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--ring);
+  stroke-width: 2;
+}
+
+/* ------------------------------------------------------------------ nodes */
+/* 300px to match the mock, and `layout.ts` reserves the same number — the
+   pairing is pinned by a test in `test/layout.test.ts`, which reads the
+   `.employee-node` rule below out of this file. */
+.node {
+  width: 300px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--app-lift);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.node:hover {
+  border-color: var(--border);
+  box-shadow: var(--app-lift-floating);
+}
+
+/* Status modifiers come first so the selection ring below wins on an equal
+   specificity tie. They were once declared after `.is-selected` and silently
+   ate the selection state. */
+.node.is-root {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--primary) 5%, transparent),
+    color-mix(in srgb, var(--primary) 5%, transparent)
+  );
+  border-color: color-mix(in srgb, var(--primary) 28%, transparent);
+}
+.node.is-live {
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+}
+.node.is-failed {
+  background-image: linear-gradient(var(--error-surface), var(--error-surface));
+  border-color: color-mix(in srgb, var(--error) 35%, transparent);
+}
+
+/* A finished subagent settles down: the photo dims through a filter — one
+   asset, not two — and the status dot holds steady. `opacity()` rather than
+   `brightness()`, which only reads as "dimmer" against a dark page and
+   darkens the portrait into the card on a light one. */
+.node.is-done .employee-photo img,
+.node.is-done .employee-initials {
+  filter: saturate(0.4) opacity(0.7);
+}
+.node.is-done .dot {
+  animation: none;
+}
+
+/* Selection wins over every status modifier, and is mirrored onto React
+   Flow's own `.selected` so a canvas-driven selection matches a click. */
+.node.is-selected,
+.react-flow__node.selected .node {
+  border-color: color-mix(in srgb, var(--ring) 55%, transparent);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--ring) 7%, transparent),
+    color-mix(in srgb, var(--ring) 7%, transparent)
+  );
+  box-shadow:
+    inset 0 0 0 1px var(--ring),
+    var(--app-lift);
+}
+.node:focus-visible {
+  outline-offset: 3px;
+}
+.node.dragging,
+.react-flow__node.dragging .node {
+  cursor: grabbing;
+  border-color: var(--border);
+  box-shadow: var(--app-lift-floating);
+}
+
+/* ------------------------------------------------------------ node innards */
+.employee-node {
+  width: 300px;
+  min-height: 150px;
+}
+.employee-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.employee-photo {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  overflow: hidden;
+  background: var(--muted);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-lg);
+  display: grid;
+  place-items: center;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.employee-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+.employee-photo.large {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-xl);
+}
+/* Status rides the frame, not an inset ring: the portrait fills the content
+   box, so an inset shadow would be painted underneath it. */
+.employee-photo.status-running,
+.employee-photo.status-starting {
+  border-color: color-mix(in srgb, var(--success) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent);
+}
+.employee-photo.status-failed {
+  border-color: color-mix(in srgb, var(--error) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 30%, transparent);
+}
+.employee-photo.status-completed {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+.employee-photo.status-idle,
+.employee-photo.status-interrupted {
+  border-color: var(--app-hairline);
+}
+
+/* Inside the frame, not straddling it: the photo clips its overflow, so a dot
+   hung off the corner would lose the half that hangs. */
+.photo-dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--card);
+  border-radius: 9999px;
+  z-index: 1;
+}
+.employee-initials {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+}
+
+.employee-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+  align-items: flex-start;
+  flex: 1;
+}
+.node-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.node-role {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-tone {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+  padding: 7px 9px;
+  background: var(--muted);
+  border-radius: var(--radius-lg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.node-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.node-foot {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  align-items: center;
+  justify-content: space-between;
+}
+.node-model {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+/* "model unknown" is prose about the Agent, not an identifier, so it leaves
+   the mono column and lets the italic carry the de-emphasis. */
+.node-unknown {
+  font-family: var(--font-sans);
+  font-style: italic;
+  color: var(--muted-foreground);
+}
+.node-activity {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  padding: 3px 8px;
+  background: var(--muted);
+  border-radius: 9999px;
+}
+.node.is-failed .node-activity {
+  color: var(--error-foreground);
+  background: var(--error-surface);
+  font-weight: 500;
+}
+.node.is-live .node-activity {
+  color: var(--success-foreground);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+/* ---------------------------------------------------------- dots & badges */
+.dot,
+.marker {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 9999px;
+  background: var(--muted-foreground);
+}
+.dot.status-running,
+.dot.status-starting,
+.marker.status-running,
+.marker.status-in_progress {
+  background: var(--success);
+  animation: observer-pulse 2s ease-in-out infinite;
+}
+.dot.status-failed,
+.marker.status-failed,
+.marker.status-error {
+  background: var(--error);
+}
+.dot.status-completed,
+.marker.status-completed,
+.marker.status-ok {
+  background: var(--primary);
+}
+.marker.status-blocked {
+  background: var(--warning);
+}
+@keyframes observer-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.badge.status-running,
+.badge.status-starting,
+.badge-running {
+  color: var(--success-foreground);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.badge.status-failed,
+.badge.status-error {
+  color: var(--error-foreground);
+  background: var(--error-surface);
+}
+.badge.status-completed,
+.badge.status-active {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.badge.availability-partial {
+  color: var(--warning-foreground);
+  background: var(--warning-surface);
+}
+.badge.availability-unavailable {
+  color: var(--error-foreground);
+  background: var(--error-surface);
+}
+.badge-soft {
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-color: var(--app-hairline);
+}
+.badge-root {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+}
+/* A finished subagent's badge. Green means *live* in this ramp, so the settled
+   state borrows completed-work primary instead. Written at two classes of
+   specificity because a done node can also carry `.status-completed`, whose
+   colour it must not lose to. */
+.badge.badge-done {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+/* The one live-state signal that reads at a glance across a full canvas. It
+   takes its colour from whichever badge it sits in. */
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: observer-pulse 2s ease-in-out infinite;
+}
+
+.chip {
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 2px 8px;
+  background: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- buttons */
+/* `.pixel-btn` is a historical name — the markup still says it, but this is
+   T3 Code's outline button now. */
+.pixel-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+  color: var(--foreground);
+  background: var(--popover);
+  border: 1px solid var(--input);
+  border-radius: var(--control-radius);
+  box-shadow: var(--app-lift);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.pixel-btn:hover {
+  background: color-mix(in srgb, var(--accent) 55%, var(--popover));
+}
+.pixel-btn:active {
+  background: var(--accent);
+}
+/* Disabled controls are the one place a sub-AA contrast is correct: WCAG 1.4.3
+   exempts them, and "you cannot press this" is what it communicates. */
+.pixel-btn:disabled {
+  opacity: 0.64;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.pixel-btn:disabled:hover {
+  background: var(--popover);
+}
+
+/* Historical name. This is T3 Code's ghost-muted icon button. */
+.icon-button {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  align-self: flex-start;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+.icon-button:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+/* Historical name. This is T3 Code's destructive-outline button. */
+.danger {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+  color: var(--destructive-foreground);
+  background: var(--popover);
+  border: 1px solid var(--input);
+  border-radius: var(--control-radius);
+  box-shadow: var(--app-lift);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.danger:hover {
+  border-color: color-mix(in srgb, var(--destructive) 32%, transparent);
+  background: color-mix(in srgb, var(--destructive) 6%, var(--popover));
+}
+
+/* ---------------------------------------------------------------- zoom HUD */
+/* Contract with the canvas: this floats bottom-right of the stage and holds
+   `.pixel-btn`s plus a `.zoom-level-text` readout. It floats, so it takes
+   glass; its buttons drop their own frame and let the HUD carry it. */
+.zoom-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--app-lift-floating);
+}
+.zoom-controls .pixel-btn {
+  color: var(--muted-foreground);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.zoom-controls .pixel-btn:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+.zoom-controls .pixel-btn:disabled:hover {
+  background: transparent;
+}
+.zoom-level-text {
+  min-width: 46px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+/* Shown only while the Worker card is collapsed. */
+.open-sidebar-btn {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 6;
+}
+
+/* ------------------------------------------------------------ worker card */
+/* The left panel: who is seated here and why. Work lives on the right. */
+.worker-card {
+  width: 320px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 14px;
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+  border-right: 1px solid var(--sidebar-border);
+  opacity: 1;
+  transition:
+    margin-left 200ms ease,
+    opacity 160ms ease;
+}
+.worker-card.is-collapsed,
+.worker-card.collapsed {
+  margin-left: -320px;
+  opacity: 0;
+  pointer-events: none;
+}
+.worker-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border-bottom: 1px solid var(--sidebar-border);
+  position: sticky;
+  top: 0;
+  background: var(--sidebar);
+  z-index: 1;
+}
+.worker-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--sidebar-foreground);
+}
+.worker-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.worker-actions .pixel-btn {
+  height: 26px;
+  font-size: 11px;
+  padding: 0 8px;
+}
+.worker-id {
+  flex: 1;
+  min-width: 0;
+}
+/* The job title is the one identity fact worth accenting; everything else in
+   the header is muted around it. */
+.worker-title {
+  margin: 3px 0 5px;
+  font-size: 12px;
+  color: var(--primary);
+}
+.worker-section {
+  padding: 12px 14px 0;
+}
+.worker-section h3 {
+  margin: 0 0 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sidebar-muted-foreground);
+}
+.worker-tone {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.reasons,
+.call-when {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+.reasons li::marker,
+.call-when li::marker {
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+.skills {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skills li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  background: var(--card);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-xl);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.skills strong {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------- activity panel */
+/* The right-hand panel: chat, tools, todos. Deliberately separate from the
+   Worker card — identity and work are different questions. */
+.panel {
+  width: 380px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+  border-left: 1px solid var(--sidebar-border);
+}
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--sidebar-border);
+  flex: none;
+}
+.panel-id {
+  min-width: 0;
+}
+.panel-head h2 {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--sidebar-foreground);
+}
+.panel-sub {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 5px 0 0;
+  font-size: 12px;
+  flex-wrap: wrap;
+  color: var(--sidebar-muted-foreground);
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--sidebar-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex: none;
+}
+.tab {
+  padding: 8px 10px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  /* The indicator is an inset shadow, not a bottom border: `.tabs` scrolls
+     horizontally, and a scroll container clips at its padding box, so a border
+     hung on the tab's outer edge would be cut off. */
+  box-shadow: inset 0 -2px 0 transparent;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+.tab:hover {
+  color: var(--foreground);
+}
+.tab.is-active {
+  color: var(--foreground);
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+.count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  padding: 1px 6px;
+  border-radius: 9999px;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+.block h3 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  margin: 0 0 7px;
+  color: var(--muted-foreground);
+}
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  font-size: 12px;
+}
+.facts dt {
+  color: var(--muted-foreground);
+}
+.facts dd {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+.pre {
+  padding: 10px 12px;
+  background: var(--code-background);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-lg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground);
+  max-height: 320px;
+  overflow: auto;
+}
+.pre.error {
+  color: var(--error-foreground);
+}
+.notice {
+  padding: 9px 11px;
+  background: var(--muted);
+  border-radius: var(--radius-lg);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.empty {
+  margin: auto;
+  text-align: center;
+  padding: 24px 16px;
+  max-width: 320px;
+  color: var(--muted-foreground);
+}
+.empty-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+/* ------------------------------------------------------------------- chat */
+.chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+}
+.chat-note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+.thread {
+  list-style: none;
+  margin: auto 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+  min-width: 0;
+}
+.msg.is-grouped {
+  margin-top: -8px;
+}
+.msg.is-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.msg.is-assistant,
+.msg.is-reasoning {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+.msg-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 2px 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.msg-meta time {
+  font-family: var(--font-mono);
+}
+.msg-role {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.msg-body {
+  padding: 9px 12px;
+  background: var(--card);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-xl);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  font-size: 13px;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--foreground);
+}
+.is-user .msg-body {
+  background: var(--message-surface);
+  border-color: transparent;
+}
+.is-reasoning .msg-body {
+  background: var(--muted);
+  border-color: transparent;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.is-reasoning .msg-role {
+  color: var(--muted-foreground);
+}
+.msg-text {
+  white-space: pre-wrap;
+}
+.msg-code {
+  display: block;
+  position: relative;
+  margin: 8px 0 2px;
+  padding: 10px;
+  background: var(--code-background);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+  color: var(--foreground);
+}
+.msg-code:first-child {
+  margin-top: 0;
+}
+.msg-code-lang {
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+/* A text caret, not a block: the 7px square was the pixel face's cursor. */
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  margin-left: 3px;
+  border-radius: 9999px;
+  background: currentColor;
+  vertical-align: text-bottom;
+  animation: observer-pulse 1.2s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------- todos & tools */
+.todos,
+.tools {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  list-style: none;
+}
+.todo,
+.tool {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--app-hairline);
+}
+.todo:last-child,
+.tool:last-child {
+  border-bottom: none;
+}
+/* A finished todo is still readable text; the strike-through is the signal,
+   so the colour does not also have to drop below the AA floor. */
+.todo.status-completed .todo-text {
+  text-decoration: line-through;
+  color: var(--muted-foreground);
+}
+.todo-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--foreground);
+}
+.tool {
+  display: block;
+}
+.tool-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 0;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 13px;
+  transition: color 140ms ease;
+}
+.tool-head:hover {
+  color: var(--primary);
+}
+.tool-body {
+  padding: 6px 0 10px;
+}
+.tool-body h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+/* ------------------------------------------------------------------ fatal */
+.fatal {
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  height: 100%;
+  text-align: center;
+  padding: 24px;
+  background: var(--background);
+  color: var(--foreground);
+}
+.fatal h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--error-foreground);
+}
+.fatal code {
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  background: var(--code-background);
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------- narrow */
+/* A docked Worker card plus a docked activity panel plus the session list eats
+   most of a 1440px screen. Below 1400px the activity panel stops claiming
+   layout width and floats over the stage instead, so the canvas keeps its
+   room. Neither panel is removed — that trade needs a real toggle in the
+   store, which is not this file's to make. */
+@media (max-width: 1400px) {
+  .panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: 380px;
+    z-index: 8;
+    box-shadow: var(--app-lift-floating);
+  }
+}
+
+@media (max-width: 900px) {
+  .body {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--sidebar-border);
+    max-height: 30vh;
+  }
+  /* Both panels become bottom sheets, so they round their top corners and
+     drop the side border they no longer have a neighbour for. */
+  .worker-card,
+  .panel {
+    position: fixed;
+    inset: auto 0 0 0;
+    height: 72vh;
+    width: auto;
+    border: none;
+    border-top: 1px solid var(--sidebar-border);
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    box-shadow: var(--app-lift-floating);
+  }
+  .worker-card {
+    z-index: 19;
+  }
+  .worker-card.is-collapsed,
+  .worker-card.collapsed {
+    margin-left: 0;
+    transform: translateY(100%);
+  }
+  .panel {
+    z-index: 20;
+  }
+  .node,
+  .employee-node {
+    width: 240px;
+  }
+}
+
+/* -------------------------------------------------------- reduced motion */
+/* `index.css` already flattens every duration to 0.01ms. These four run on
+   `infinite`, so naming them is the only way to stop them outright rather
+   than run them very fast. */
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge-path {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+  .pulse-dot,
+  .cursor,
+  .dot.status-running,
+  .dot.status-starting,
+  .marker.status-running,
+  .marker.status-in_progress {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .worker-card,
+  .panel {
+    transition: none !important;
+  }
+}

@@ -15,7 +15,7 @@ interface ElkResult {
 const elk = new (ELK as unknown as new () => { layout(graph: unknown): Promise<ElkResult> })()
 
 /**
- * Reserved node width, in sync with `.employee-node` in `styles.css`.
+ * Reserved node width, in sync with `.employee-node` in `app-surfaces.css`.
  *
  * Unlike height this genuinely is one number: every node is the same width by
  * CSS, and only the height varies with content. It still has to be kept in
@@ -26,7 +26,7 @@ const elk = new (ELK as unknown as new () => { layout(graph: unknown): Promise<E
 export const NODE_WIDTH = 300
 
 /**
- * Reserved heights, in sync with `.employee-node` in `styles.css`.
+ * Reserved heights, in sync with `.employee-node` in `app-surfaces.css`.
  *
  * An unseated node is header + footer only — 30 (border + padding) + 54
  * (header) + 8 + 20 (footer) = 112 — so the CSS `min-height: 150px` governs.

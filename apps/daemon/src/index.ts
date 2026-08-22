@@ -97,9 +97,17 @@ export { Broadcaster } from "./broadcaster.js"
 export { Diagnostics, FAULT_REASONS } from "./diagnostics.js"
 export type { DiagnosticsSnapshot, DropReason, DropSample } from "./diagnostics.js"
 export { createServer } from "./server.js"
-export { loadConfig, saveConfig, DEFAULT_CONFIG } from "./config.js"
+export { loadConfig, saveConfig, DEFAULT_CONFIG, ConfigSchema, ConfigPatchSchema } from "./config.js"
 export type { ObserverConfig, CaptureConfig } from "./config.js"
-export { applySeatSkills, diagnoseSeats, seatFor, DEFAULT_SEATS, SEAT_VARIANTS, SeatSpecSchema, SeatsConfigSchema } from "./seats.js"
+export {
+  applySeatSkills,
+  diagnoseSeats,
+  seatFor,
+  DEFAULT_SEATS,
+  SEAT_VARIANTS,
+  SeatSpecSchema,
+  SeatsConfigSchema,
+} from "./seats.js"
 export type {
   SeatDiagnosis,
   SeatIssue,
@@ -109,5 +117,8 @@ export type {
   SeatVariant,
   SeatsConfig,
 } from "./seats.js"
+export { isHostKind, HOST_KINDS, ProviderInstanceConfigSchema, ProvidersConfigSchema } from "./providers.js"
+export type { HostKind, ProviderInstanceConfig } from "./providers.js"
 export { CopilotTailer } from "./copilot-tailer.js"
 export { drainSpool } from "./spool.js"
+export * from "./models.js"

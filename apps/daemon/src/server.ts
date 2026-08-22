@@ -8,11 +8,13 @@ import type { AgentDetail, SessionSnapshot } from "@observer-ai/protocol"
 import { behaviorDirective, ROSTER, rankEmployees } from "@observer-ai/roster"
 import type { Store } from "@observer-ai/storage"
 import { z } from "zod"
+import { ConfigPatchSchema, saveConfig } from "./config.js"
 import type { ObserverConfig } from "./config.js"
 import type { Pipeline } from "./pipeline.js"
 import type { Diagnostics } from "./diagnostics.js"
-import { applySeatSkills } from "./seats.js"
+import { applySeatSkills, diagnoseSeats } from "./seats.js"
 import { Broadcaster } from "./broadcaster.js"
+import { describeCatalogue, listModels } from "./models.js"
 
 const HookRequestSchema = z.object({
   host: HostId,
@@ -114,6 +116,105 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   app.get("/v1/diagnostics", async (request, reply) => {
     if (!authorize(request, reply)) return
     return reply.send(diagnostics.snapshot())
+  })
+
+  app.get("/v1/config", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    return reply.send(configPayload(config))
+  })
+
+  app.put("/v1/config", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    const parsed = ConfigPatchSchema.safeParse(request.body)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid config patch" })
+
+    const previous = {
+      capture: config.capture,
+      retentionDays: config.retentionDays,
+      redaction: config.redaction,
+      guidance: config.guidance,
+      seats: config.seats,
+      providers: config.providers,
+    }
+    try {
+      if (parsed.data.capture !== undefined) config.capture = parsed.data.capture
+      if (parsed.data.retentionDays !== undefined) {
+        config.retentionDays = parsed.data.retentionDays
+        store.setRetentionDays(parsed.data.retentionDays)
+      }
+      if (parsed.data.redaction !== undefined) config.redaction = parsed.data.redaction
+      if (parsed.data.guidance !== undefined) config.guidance = parsed.data.guidance
+      if (parsed.data.seats !== undefined) config.seats = parsed.data.seats
+      if (parsed.data.providers !== undefined) config.providers = parsed.data.providers
+      saveConfig(config)
+    } catch (error) {
+      config.capture = previous.capture
+      config.retentionDays = previous.retentionDays
+      config.redaction = previous.redaction
+      config.guidance = previous.guidance
+      config.seats = previous.seats
+      config.providers = previous.providers
+      store.setRetentionDays(previous.retentionDays)
+      throw error
+    }
+
+    return reply.send(configPayload(config))
+  })
+
+  app.get("/v1/models", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    const parsed = z
+      .object({ probe: z.enum(["true", "false"]).optional() })
+      .safeParse(request.query)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid models query" })
+    const models = listModels({ probeHost: parsed.data.probe === "true" })
+    return reply.send({
+      sources: describeCatalogue(models),
+      count: models.length,
+      models: models.map((model) => ({
+        id: model.id,
+        provider: model.provider,
+        providerLabel: model.providerLabel,
+        label: model.label,
+        contextWindow: model.contextWindow,
+        variants: model.variants,
+        releaseDate: model.releaseDate,
+        known: model.known,
+      })),
+    })
+  })
+
+  app.get("/v1/providers/status", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    const sessions = store.listSessions({ limit: 500 })
+    const configured = Object.entries(config.providers).filter(
+      ([, instance]) => typeof instance.driver === "string" && instance.driver.length > 0,
+    )
+    const ids = Object.keys(HOST_CAPABILITIES)
+    for (const [, instance] of configured) {
+      if (!ids.includes(instance.driver)) ids.push(instance.driver)
+    }
+
+    return reply.send({
+      hosts: ids.map((id) => {
+        const capability = HOST_CAPABILITIES[id as keyof typeof HOST_CAPABILITIES]
+        const instances = configured.filter(([, instance]) => instance.driver === id)
+        const hostSessions = sessions.filter((session) => session.host === id)
+        const lastActiveAt = hostSessions.reduce<number | null>(
+          (latest, session) => (latest === null ? session.updatedAt : Math.max(latest, session.updatedAt)),
+          null,
+        )
+        return {
+          id,
+          label: capability?.label ?? instances[0]?.[1].displayName ?? id,
+          notes: capability?.notes ?? [],
+          sessions: hostSessions.length,
+          lastActiveAt,
+          configured: instances.length > 0,
+          enabledInstances: instances.filter(([, instance]) => instance.enabled).length,
+        }
+      }),
+    })
   })
 
   /**
@@ -308,5 +409,17 @@ function isFile(path: string): boolean {
     return statSync(path).isFile()
   } catch {
     return false
+  }
+}
+
+function configPayload(config: ObserverConfig) {
+  return {
+    capture: config.capture,
+    retentionDays: config.retentionDays,
+    redaction: config.redaction,
+    guidance: config.guidance,
+    seats: config.seats,
+    providers: config.providers,
+    diagnosis: diagnoseSeats(config.seats),
   }
 }

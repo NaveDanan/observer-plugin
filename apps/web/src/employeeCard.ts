@@ -108,7 +108,7 @@ function ratio(value: number): string {
  * Positions are percentages of the card box. Lengths that must scale with
  * type — radii, padding, font sizes — are unitless ratios of the card's
  * width, multiplied by `--nj-card-w` in the stylesheet. That keeps
- * `styles.css` free of card geometry: it reads variables, it does not
+ * `employee-card.css` free of card geometry: it reads variables, it does not
  * restate numbers.
  */
 export function cardCssVariables(): Record<string, string> {

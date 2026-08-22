@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { configPath, dataDir } from "@observer-ai/storage"
 import { z } from "zod"
+import { ProvidersConfigSchema } from "./providers.js"
+import type { ProviderInstanceConfig } from "./providers.js"
 import { DEFAULT_SEATS, SeatsConfigSchema } from "./seats.js"
 import type { SeatsConfig } from "./seats.js"
 
@@ -36,7 +38,23 @@ export interface ObserverConfig {
   guidance: boolean
   /** Per-employee model, reasoning effort and skills. See `seats.ts`. */
   seats: SeatsConfig
+  /** Configured provider instances, keyed by the user's instance id. */
+  providers: Record<string, ProviderInstanceConfig>
 }
+
+export const CaptureConfigSchema = z.object({
+  messages: z.boolean(),
+  reasoning: z.boolean(),
+  toolInput: z.boolean(),
+  toolOutput: z.boolean(),
+  prompts: z.boolean(),
+  rawEvents: z.boolean(),
+})
+
+export const RedactionConfigSchema = z.object({
+  enabled: z.boolean(),
+  maxTextLength: z.number().int().min(0),
+})
 
 export const DEFAULT_CONFIG: Omit<ObserverConfig, "token"> = {
   port: 4599,
@@ -54,6 +72,7 @@ export const DEFAULT_CONFIG: Omit<ObserverConfig, "token"> = {
   },
   guidance: true,
   seats: DEFAULT_SEATS,
+  providers: {},
 }
 
 /**
@@ -79,21 +98,21 @@ const UNKNOWN_KEYS = Symbol.for("observer.config.unknownKeys")
  * settings that sit next to the broken one. A garbage `port` yields 4599 and
  * leaves `token` alone.
  */
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).catch(DEFAULT_CONFIG.port),
   // An unreadable token is regenerated, which is the one unavoidably
   // disruptive fallback: it invalidates every installed hook until they are
   // re-read. That is why `saveConfig` writes atomically.
   token: z.string().min(1).catch(() => createToken()),
   retentionDays: z.number().int().min(0).max(3_650).catch(DEFAULT_CONFIG.retentionDays),
-  redaction: z
-    .object({
+  redaction: RedactionConfigSchema
+    .extend({
       enabled: z.boolean().catch(DEFAULT_CONFIG.redaction.enabled),
       maxTextLength: z.number().int().min(0).catch(DEFAULT_CONFIG.redaction.maxTextLength),
     })
     .catch(DEFAULT_CONFIG.redaction),
-  capture: z
-    .object({
+  capture: CaptureConfigSchema
+    .extend({
       messages: z.boolean().catch(DEFAULT_CONFIG.capture.messages),
       reasoning: z.boolean().catch(DEFAULT_CONFIG.capture.reasoning),
       toolInput: z.boolean().catch(DEFAULT_CONFIG.capture.toolInput),
@@ -104,7 +123,19 @@ const ConfigSchema = z.object({
     .catch(DEFAULT_CONFIG.capture),
   guidance: z.boolean().catch(DEFAULT_CONFIG.guidance),
   seats: SeatsConfigSchema,
+  providers: ProvidersConfigSchema,
 })
+
+export const ConfigPatchSchema = z
+  .object({
+    capture: CaptureConfigSchema.optional(),
+    retentionDays: z.number().int().min(0).max(3_650).optional(),
+    redaction: RedactionConfigSchema.optional(),
+    guidance: z.boolean().optional(),
+    seats: SeatsConfigSchema.optional(),
+    providers: ProvidersConfigSchema.optional(),
+  })
+  .strict()
 
 const DECLARED_KEYS = new Set(Object.keys(ConfigSchema.shape))
 
