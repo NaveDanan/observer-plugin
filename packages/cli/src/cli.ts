@@ -31,9 +31,10 @@ Usage
                                    opened it (auto-detected; --all to unbind)
   observer install <host...|all>   Install Observer into a host
   observer uninstall <host...|all> Remove Observer from a host
-  observer config                  Assign a model, reasoning effort and skills
-                                   to each employee (interactive; prints the
-                                   current seats when not on a terminal)
+  observer config                  Turn seat control on or off and assign a
+                                   model, reasoning effort and skills to each
+                                   employee (interactive; prints the current
+                                   seats when not on a terminal)
   observer doctor                  Diagnose the local setup
   observer where                   Print the paths Observer uses
   observer version                 Print the version
@@ -45,6 +46,10 @@ Options
   --probe         With "config": ask OpenCode for its model list instead of
                   reading the on-disk catalogue. Slower, but picks up models
                   from providers declared only in opencode.json.
+
+Environment
+  NO_COLOR        Draw the config UI without colour. FORCE_COLOR=1 turns it on
+                  where the terminal is not detected as one.
 
 Hosts
   ${HOSTS.join(", ")}

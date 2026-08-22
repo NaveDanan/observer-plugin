@@ -323,6 +323,35 @@ directory and cannot import it. A test loads the plugin's copy and compares its
 output against the original, because drift there would be silent — the installer
 would write one name and the plugin would ask for another.
 
+### The config UI
+
+`observer config` is the one screen where seat control is *changed* rather than
+reported, so it opens on a menu whose first row is the flag itself. Nothing a
+user needs sits behind a key they have to be told about; `c` still toggles from
+anywhere, but it is now a shortcut rather than the only way in. Views unwind one
+level per esc — `models` -> `employee` -> `employees` -> `menu` — and only the
+menu ends the session, so backing out of a picker can never quit by accident.
+
+The split is three files and holds strictly:
+
+```text
+config-ui-state.ts    every transition, pure, no I/O
+config-ui-render.ts   state -> lines of text, pure, no environment reads
+config-ui.ts          raw mode, keypresses, saving, restoring the terminal
+theme.ts              colour mode and the Forgeline palette
+```
+
+Colour is an overlay the caller opts into: `render` emits no ANSI unless the
+viewport carries a theme, so a pipe, a test assertion and a screen reader all
+get the same text a terminal draws. The shell resolves the mode once with
+`colorSupport` (`NO_COLOR`, `FORCE_COLOR`, TTY, `TERM=dumb`) and hands down a
+theme, which is why no view function reads `process.env`. Every distinction is
+still carried by characters — `>` for the cursor, `!` for a flagged seat,
+`warning:`/`error:` on findings, brackets on the armed effort — and colour only
+repeats them. Palette roles come from `.scratch/forgeline-palette.html`; the two
+background swatches are deliberately unused, because a full-screen UI that
+paints its own background overrides the user's terminal theme.
+
 ## Storage
 
 SQLite through Node's built-in `node:sqlite`, so there is no native module to

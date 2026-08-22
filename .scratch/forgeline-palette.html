@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forgeline Palette</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --void: #07032B;
+    --royal: #18009A;
+    --violet: #6C24E4;
+    --cobalt: #2850C8;
+    --cyan: #00E4F8;
+    --magenta: #F82AA8;
+    --amber: #F8B43C;
+    --volt: #14B830;
+    --platinum: #E9E9F2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Space Grotesk', sans-serif;
+    background: var(--void);
+    color: var(--platinum);
+    padding: 64px 48px;
+    min-height: 100vh;
+  }
+  header { margin-bottom: 56px; max-width: 1100px; }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; letter-spacing: 4px;
+    color: var(--cyan); text-transform: uppercase;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .eyebrow::before { content: ''; width: 40px; height: 1px; background: var(--cyan); }
+  h1 { font-size: clamp(36px, 5vw, 64px); line-height: 1.05; margin-top: 16px; letter-spacing: -1px; }
+  h1 em { font-style: normal; color: var(--violet); }
+  .lede { margin-top: 16px; color: rgba(233,233,242,.55); font-size: 17px; max-width: 620px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px; max-width: 1100px;
+  }
+  .card {
+    border-radius: 18px;
+    padding: 24px;
+    min-height: 220px;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    position: relative; overflow: hidden;
+    transition: transform .25s ease, box-shadow .25s ease;
+  }
+  .card:hover { transform: translateY(-6px); box-shadow: 0 20px 44px rgba(0,0,0,.55); }
+  .card .role {
+    position: absolute; top: 20px; left: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+    opacity: .75;
+  }
+  .card .name { font-size: 22px; font-weight: 700; }
+  .card .hex { font-family: 'JetBrains Mono', monospace; font-size: 13px; opacity: .8; margin-top: 4px; }
+  .card .pct { font-family: 'JetBrains Mono', monospace; font-size: 11px; opacity: .55; margin-top: 10px; }
+
+  .c-void    { background: linear-gradient(160deg, #0B0540, var(--void)); color: var(--platinum); box-shadow: inset 0 0 0 1px rgba(108,36,228,.25); }
+  .c-royal   { background: linear-gradient(160deg, #2408C8, var(--royal)); color: #fff; }
+  .c-violet  { background: linear-gradient(160deg, #8A45F5, var(--violet)); color: #fff; }
+  .c-cobalt  { background: linear-gradient(160deg, #3565E8, var(--cobalt)); color: #fff; }
+  .c-cyan    { background: linear-gradient(160deg, #6FF2FF, var(--cyan)); color: #04202B; }
+  .c-magenta { background: linear-gradient(160deg, #FF65C4, var(--magenta)); color: #2B0418; }
+  .c-amber   { background: linear-gradient(160deg, #FFD07A, var(--amber)); color: #2B1D04; }
+  .c-volt    { background: linear-gradient(160deg, #3FE85C, var(--volt)); color: #042B08; }
+  .c-platinum{ background: linear-gradient(160deg, #FFFFFF, var(--platinum)); color: #14103A; }
+
+  section.demo { max-width: 1100px; margin-top: 72px; }
+  section.demo h2 { font-size: 13px; font-family: 'JetBrains Mono', monospace; letter-spacing: 4px; text-transform: uppercase; color: rgba(233,233,242,.5); margin-bottom: 24px; }
+  .demo-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+
+  .btn {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700; font-size: 15px;
+    padding: 15px 32px; border-radius: 999px; border: none;
+    cursor: pointer; letter-spacing: .3px;
+  }
+  .btn-primary { background: var(--violet); color: #fff; }
+  .btn-primary:hover { background: #7E38F2; }
+  .btn-ghost { background: transparent; color: var(--cyan); box-shadow: inset 0 0 0 1.5px var(--cyan); }
+  .btn-ghost:hover { background: rgba(0,228,248,.1); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 999px;
+    font-size: 13px; font-weight: 500;
+  }
+  .b-magenta { background: rgba(248,42,168,.15); color: var(--magenta); }
+  .b-volt { background: rgba(20,184,48,.15); color: var(--volt); }
+  .b-amber { background: rgba(248,180,60,.15); color: var(--amber); }
+
+  .panel {
+    width: 100%; margin-top: 8px;
+    border-radius: 20px; padding: 32px;
+    background: linear-gradient(135deg, #0B0540 0%, #18009A 100%);
+    box-shadow: inset 0 0 0 1px rgba(108,36,228,.35);
+    display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center;
+  }
+  .panel h3 { font-size: 26px; }
+  .panel p { color: rgba(233,233,242,.6); margin-top: 8px; max-width: 520px; }
+  .stat { text-align: right; }
+  .stat .n { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 600; color: var(--cyan); }
+  .stat .l { font-size: 12px; color: rgba(233,233,242,.5); letter-spacing: 2px; text-transform: uppercase; }
+
+  footer { margin-top: 72px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: rgba(233,233,242,.35); letter-spacing: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Color System · Extracted from ID Badge</div>
+  <h1>Forgeline<br><em>Palette</em></h1>
+  <p class="lede">Deep-space indigo foundations carry electric violet and ion cyan accents — engineered to read authoritative, modern, and unapologetically bold.</p>
+</header>
+
+<div class="grid">
+  <div class="card c-void"><span class="role">Base · Backgrounds</span><div class="name">Midnight Forge</div><div class="hex">#07032B</div><div class="pct">~60% coverage</div></div>
+  <div class="card c-royal"><span class="role">Surface · Depth</span><div class="name">Royal Indigo</div><div class="hex">#18009A</div><div class="pct">~15% coverage</div></div>
+  <div class="card c-violet"><span class="role">Primary · Brand</span><div class="name">Electric Violet</div><div class="hex">#6C24E4</div><div class="pct">CTAs &amp; identity</div></div>
+  <div class="card c-cobalt"><span class="role">Interactive</span><div class="name">Cobalt Pulse</div><div class="hex">#2850C8</div><div class="pct">Links &amp; focus</div></div>
+  <div class="card c-cyan"><span class="role">Highlight</span><div class="name">Ion Cyan</div><div class="hex">#00E4F8</div><div class="pct">Key data points</div></div>
+  <div class="card c-magenta"><span class="role">Energy</span><div class="name">Magenta Surge</div><div class="hex">#F82AA8</div><div class="pct">Alerts &amp; emphasis</div></div>
+  <div class="card c-amber"><span class="role">Strength</span><div class="name">Solar Amber</div><div class="hex">#F8B43C</div><div class="pct">Ratings &amp; rewards</div></div>
+  <div class="card c-volt"><span class="role">Success</span><div class="name">Emerald Volt</div><div class="hex">#14B830</div><div class="pct">Status · positive</div></div>
+  <div class="card c-platinum"><span class="role">Text · Light UI</span><div class="name">Platinum Mist</div><div class="hex">#E9E9F2</div><div class="pct">Typography on dark</div></div>
+</div>
+
+<section class="demo">
+  <h2>In Context</h2>
+  <div class="demo-row">
+    <button class="btn btn-primary">Get Started</button>
+    <button class="btn btn-ghost">Learn More</button>
+    <span class="badge b-magenta">&#9679; Critical Priority</span>
+    <span class="badge b-volt">&#9679; All Systems Go</span>
+    <span class="badge b-amber">&#9679; Top Performer</span>
+  </div>
+  <div class="panel" style="margin-top:24px;">
+    <div>
+      <h3>Strength meets precision</h3>
+      <p>Indigo gravitas grounds the system while violet and cyan inject momentum — a palette built for brands that lead.</p>
+    </div>
+    <div class="stat">
+      <div class="n">99.2%</div>
+      <div class="l">Uptime</div>
+    </div>
+  </div>
+</section>
+
+<footer>FORGELINE · 9 COLORS · WCAG-CONSCIOUS PAIRINGS</footer>
+
+</body>
+</html>

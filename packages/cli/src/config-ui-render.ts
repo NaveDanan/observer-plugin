@@ -4,31 +4,43 @@ import {
   type ConfigUIState,
   EMPLOYEE_ROWS,
   type EmployeeRow,
+  type MenuRowKind,
   type PickerEntry,
   currentEmployee,
   effortCycle,
+  menuRows,
   pickerEntries,
   seatOf,
 } from "./config-ui-state.js"
+import { PLAIN_THEME, type Theme, padEnd as pad, truncate } from "./theme.js"
 
 /**
- * Turns state into lines of text. Pure, and emits no ANSI at all.
+ * Turns state into lines of text. Pure, and colours only what it is given a
+ * theme for.
  *
- * Zero escape codes is a deliberate continuation of the rest of this CLI,
- * which says `installed` / `not installed` in words and aligns with `pad()`
- * rather than colouring anything. Three things fall out of it: `NO_COLOR` is
- * honoured by construction rather than by a branch, the output is identical in
- * a terminal and in a test assertion, and every distinction the UI draws — the
- * cursor, a warning, a selected effort — survives being read aloud or piped
- * through `col`. A screen reader gets the same information a sighted user does.
+ * Colour is an overlay, never a carrier: the cursor is still a `>` in a
+ * gutter, a warning still says `warning:`, an armed effort is still in
+ * brackets. Read the output through `col`, a screen reader or a test
+ * assertion and nothing is missing — which is why `render` defaults to
+ * `PLAIN_THEME` and the shell has to opt in. `NO_COLOR` is then honoured one
+ * level up, once, instead of being re-decided in every view.
  *
- * The cost is that the cursor is a `>` in a gutter instead of a reverse-video
- * bar. In a fixed-width table that reads fine, and it is the honest trade.
+ * Layout is three fixed bands and one scrolling one:
+ *
+ *   header   what is in force right now, on every screen
+ *   body     the current view, which scrolls
+ *   notes    the status line and whatever diagnoseSeats has to say
+ *   hints    the keys that work here
+ *
+ * A short terminal loses rows from the body, never from the hints that say
+ * how to get out of it.
  */
 
 export interface Viewport {
   rows: number
   columns: number
+  /** Omitted means plain text: no ANSI at all. */
+  theme?: Theme
 }
 
 export const DEFAULT_VIEWPORT: Viewport = { rows: 24, columns: 100 }
@@ -36,26 +48,36 @@ export const DEFAULT_VIEWPORT: Viewport = { rows: 24, columns: 100 }
 /** Width of the label gutter, matching `observer status` and `observer doctor`. */
 const GUTTER = 20
 
+/**
+ * The band separator.
+ *
+ * A box-drawing character rather than `-`, because this line is furniture and
+ * should not read as content; it is one code point wide, so the column
+ * arithmetic is unaffected.
+ */
+const RULE = "\u2500"
+
 export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPORT): string[] {
   const columns = Math.max(60, viewport.columns)
+  const theme = viewport.theme ?? PLAIN_THEME
   const diagnosis = diagnoseSeats(state.seats)
-  const lines = [...header(state, diagnosis.effective, columns)]
+  const lines = [...header(state, diagnosis.effective, columns, theme)]
 
-  const footer = [...notes(state, diagnosis.issues, columns), "", ...hints(state)]
-  // The list is whatever is left after the fixed chrome, so a short terminal
-  // loses rows from the middle of the list rather than losing the key hints
-  // that say how to get out of it.
+  const footer = [...notes(state, diagnosis.issues, columns, theme), "", ...hints(state, theme)]
   const room = Math.max(3, viewport.rows - lines.length - footer.length - 1)
 
   switch (state.view) {
+    case "menu":
+      lines.push(...mainMenu(state, diagnosis.issues, columns, theme))
+      break
     case "employees":
-      lines.push(...employeeList(state, diagnosis.issues, room, columns))
+      lines.push(...employeeList(state, diagnosis.issues, room, columns, theme))
       break
     case "employee":
-      lines.push(...employeeDetail(state, columns))
+      lines.push(...employeeDetail(state, columns, theme))
       break
     case "models":
-      lines.push(...modelPicker(state, room, columns))
+      lines.push(...modelPicker(state, room, columns, theme))
       break
   }
 
@@ -63,31 +85,36 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
   return lines.map((line) => truncate(line, columns))
 }
 
-function header(state: ConfigUIState, effective: boolean, columns: number): string[] {
+/**
+ * What is in force, on every screen.
+ *
+ * A config UI that lets you pick a model without saying that the flag which
+ * would apply it is off is a UI that lies, so these two answers are fixed
+ * chrome rather than something you have to go and look for. The narrowings —
+ * which host, which delegations — live on the menu row that owns the flag,
+ * where there is room to say them in full.
+ */
+function header(state: ConfigUIState, effective: boolean, columns: number, theme: Theme): string[] {
   const control = state.seats.control
   const lines = [
-    truncate(`Observer config - model, reasoning effort and skills per employee`, columns),
+    theme.heading("Observer config") + theme.dim(" - model, reasoning effort and skills per employee"),
     "",
-    // The plainest possible statement of whether any of this is doing
-    // anything, on every screen. A config UI that lets you pick a model
-    // without saying the flag that would apply it is off is a UI that lies.
     ...field(
       "Seat control",
       control ? "on - Observer sets the model and effort" : "off - model and effort are inert; skills still apply",
+      control ? theme.good : theme.warn,
       columns,
+      theme,
     ),
-    ...field("Right now", effective ? "this config changes what runs" : "this config changes nothing", columns),
-    // Two independent narrowings of "what does any of this touch", under one
-    // label because that is the one question they both answer. The second is
-    // `observer doctor`'s sentence word for word: seat control rewrites
-    // `subagent_type`, and doing that to a specialised agent would throw away
-    // its own prompt, tools and deny-by-default permissions, so only `general`
-    // delegations are ever reseated. A header that named the host but not the
-    // agent type would still be letting a user believe every subagent moves.
-    ...field("Applies to", "OpenCode only - Codex, Claude Code and Copilot CLI are not seated", columns),
-    ...field("", "`general` delegations only - any other agent keeps its own prompt, tools and model", columns),
-    state.dirty ? `${pad("Unsaved changes", GUTTER)}press s to write them to config.json` : "",
-    "",
+    ...field(
+      "Right now",
+      effective ? "this config changes what runs" : "this config changes nothing",
+      effective ? theme.good : theme.dim,
+      columns,
+      theme,
+    ),
+    state.dirty ? theme.dim(pad("Unsaved changes", GUTTER)) + theme.warn("press s to write them to config.json") : "",
+    theme.dim(RULE.repeat(Math.max(0, columns))),
   ]
   return lines
 }
@@ -95,24 +122,115 @@ function header(state: ConfigUIState, effective: boolean, columns: number): stri
 /**
  * One `label   value` row, wrapped into the gutter instead of clipped.
  *
- * The alternative is `truncate`, and truncating this particular column loses
- * the end of sentences that exist to be read in full — "...keeps its own
- * prompt, tools and mo..." is worse than two lines.
+ * The value arrives as plain text with its style beside it rather than
+ * pre-painted, so the wrap is computed on what the user can actually see: a
+ * colour code is not a character, and letting one push a word onto the next
+ * line would make the layout depend on whether colour happened to be on.
+ *
+ * The alternative to wrapping is truncation, and truncating this particular
+ * column loses the end of sentences that exist to be read in full — "...keeps
+ * its own prompt, tools and mo..." is worse than two lines.
  */
-function field(label: string, value: string, columns: number): string[] {
+function field(
+  label: string,
+  value: string,
+  style: (text: string) => string,
+  columns: number,
+  theme: Theme,
+): string[] {
   const wrapped = wrapAt(value, Math.max(24, columns - GUTTER), "").split("\n")
-  return wrapped.map((line, index) => (index === 0 ? pad(label, GUTTER) + line : " ".repeat(GUTTER) + line))
+  return wrapped.map((line, index) =>
+    index === 0 ? theme.dim(pad(label, GUTTER)) + style(line) : " ".repeat(GUTTER) + style(line),
+  )
 }
 
-function employeeList(state: ConfigUIState, issues: SeatIssue[], room: number, columns: number): string[] {
+/**
+ * The top level.
+ *
+ * Rows carry their own state in the value column, so "what is seat control
+ * doing" is answered by looking at it rather than by pressing it. The row
+ * under the cursor expands with the detail that would otherwise be permanent
+ * chrome — the two narrowings on seat control are the whole reason the row
+ * exists, and they are too long to sit on every screen.
+ */
+function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, theme: Theme): string[] {
+  const rows = menuRows(state)
+  const at = Math.min(state.cursor.menu, rows.length - 1)
+  const seated = Object.keys(state.seats.employees).length
+  const errors = issues.filter((issue) => issue.severity === "error").length
+
+  const labels: Record<MenuRowKind, string> = {
+    control: "Seat control",
+    employees: "Employees",
+    save: "Save & exit",
+    exit: "Exit",
+  }
+  const values: Record<MenuRowKind, string> = {
+    control: state.seats.control ? theme.good("on") : theme.warn("off"),
+    employees: `${state.roster.length} people, ${seated === 0 ? "none seated" : `${seated} seated`}${
+      errors > 0 ? theme.alert(`, ${errors} to fix`) : ""
+    }`,
+    save: theme.warn("write these seats to config.json"),
+    exit: theme.dim("leave observer config"),
+  }
+  const details: Record<MenuRowKind, string[]> = {
+    control: [
+      "OpenCode only - Codex, Claude Code and Copilot CLI are not seated",
+      "`general` delegations only - any other agent keeps its own prompt, tools and model",
+    ],
+    employees: ["Give a person a model, a reasoning effort and skills."],
+    save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],
+    exit: [],
+  }
+
+  const lines = [theme.heading("Main menu"), ""]
+  rows.forEach((row, index) => {
+    const selected = index === at
+    const label = pad(labels[row], GUTTER)
+    lines.push(marker(selected, false, theme) + (selected ? theme.focus(label) : label) + values[row])
+    if (!selected) return
+    for (const detail of details[row]) {
+      for (const line of wrapAt(detail, Math.max(24, columns - GUTTER - 2), "").split("\n")) {
+        lines.push(" ".repeat(GUTTER + 2) + theme.dim(line))
+      }
+    }
+  })
+
+  // The one path a new user has to walk, spelled out while it is still true.
+  // It disappears the moment either half of it has been done, so it never
+  // becomes furniture.
+  if (!state.seats.control && Object.keys(state.seats.employees).length === 0) {
+    lines.push(
+      "",
+      theme.heading("Getting started"),
+      theme.dim("  1. Turn seat control on, so the models you pick here reach OpenCode."),
+      theme.dim("  2. Open Employees and give someone a model."),
+      theme.dim("  3. Press s to save."),
+    )
+  }
+  return lines
+}
+
+function employeeList(
+  state: ConfigUIState,
+  issues: SeatIssue[],
+  room: number,
+  columns: number,
+  theme: Theme,
+): string[] {
   const width = listWidths(columns)
   const flagged = new Set(issues.filter((issue) => issue.employeeId !== undefined).map((issue) => issue.employeeId!))
+  const seated = Object.keys(state.seats.employees).length
 
   const lines = [
-    `  ${pad("Employee", width.name)}${pad("Role", width.role)}${pad("Model", width.model)}${pad("Effort", width.effort)}${width.skills > 0 ? "Skills" : ""}`,
+    theme.heading("Employees") + theme.dim(`   ${seated} of ${state.roster.length} seated`),
+    "",
+    theme.dim(
+      `  ${pad("Employee", width.name)}${pad("Role", width.role)}${pad("Model", width.model)}${pad("Effort", width.effort)}${width.skills > 0 ? "Skills" : ""}`,
+    ),
   ]
 
-  const window = windowOf(state.cursor.employees, state.roster.length, room - 1)
+  const window = windowOf(state.cursor.employees, state.roster.length, room - 3)
   for (let index = window.start; index < window.end; index++) {
     const row = state.roster[index]
     if (!row) continue
@@ -120,22 +238,28 @@ function employeeList(state: ConfigUIState, issues: SeatIssue[], room: number, c
     const model = typeof seat?.model === "string" ? seat.model : "inherit"
     const variant = typeof seat?.variant === "string" ? seat.variant : "-"
     const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
+    const selected = index === state.cursor.employees
+    const name = pad(truncate(row.name, width.name - 1), width.name)
+    // A configured model is the one piece of data on the row the user put
+    // there, so it is the one that takes the highlight; `inherit` is the
+    // absence of a choice and reads as secondary.
+    const modelCell = pad(truncate(model, width.model - 1), width.model)
     lines.push(
-      marker(index === state.cursor.employees, flagged.has(row.id)) +
-        pad(truncate(row.name, width.name - 1), width.name) +
-        pad(truncate(row.role, width.role - 1), width.role) +
-        pad(truncate(model, width.model - 1), width.model) +
+      marker(selected, flagged.has(row.id), theme) +
+        (selected ? theme.focus(name) : name) +
+        theme.dim(pad(truncate(row.role, width.role - 1), width.role)) +
+        (typeof seat?.model === "string" ? theme.accent(modelCell) : theme.dim(modelCell)) +
         pad(variant, width.effort) +
-        (width.skills > 0 ? truncate(skills.length > 0 ? skills : "-", width.skills) : ""),
+        (width.skills > 0 ? theme.dim(truncate(skills.length > 0 ? skills : "-", width.skills)) : ""),
     )
   }
   if (window.end < state.roster.length || window.start > 0) {
-    lines.push(`  ${window.start + 1}-${window.end} of ${state.roster.length}`)
+    lines.push(theme.dim(`  ${window.start + 1}-${window.end} of ${state.roster.length}`))
   }
   return lines
 }
 
-function employeeDetail(state: ConfigUIState, columns: number): string[] {
+function employeeDetail(state: ConfigUIState, columns: number, theme: Theme): string[] {
   const employee = currentEmployee(state)
   const seat = seatOf(state, state.employeeId)
   const model = typeof seat?.model === "string" ? seat.model : "inherit (the session's model)"
@@ -143,9 +267,9 @@ function employeeDetail(state: ConfigUIState, columns: number): string[] {
   const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
 
   const values: Record<(typeof EMPLOYEE_ROWS)[number], string> = {
-    model: `${model}   effort ${variant}`,
-    skills: skills.length > 0 ? skills : "none",
-    reset: "clear this employee's model, effort and skills",
+    model: `${typeof seat?.model === "string" ? theme.accent(model) : theme.dim(model)}   ${theme.dim("effort")} ${variant}`,
+    skills: skills.length > 0 ? skills : theme.dim("none"),
+    reset: theme.dim("clear this employee's model, effort and skills"),
   }
   const labels: Record<(typeof EMPLOYEE_ROWS)[number], string> = {
     model: "Model",
@@ -153,11 +277,17 @@ function employeeDetail(state: ConfigUIState, columns: number): string[] {
     reset: "Reset to defaults",
   }
 
-  const lines = [`Configure ${employee?.name ?? state.employeeId ?? "employee"}`, `  ${employee?.role ?? ""}`, ""]
+  const lines = [
+    breadcrumb(theme, "Employees", employee?.name ?? state.employeeId ?? "employee"),
+    theme.dim(`  ${employee?.role ?? ""}`),
+    "",
+  ]
   EMPLOYEE_ROWS.forEach((row, index) => {
+    const selected = index === state.cursor.employee
+    const label = pad(labels[row], GUTTER)
     lines.push(
-      marker(index === state.cursor.employee, false) +
-        pad(labels[row], GUTTER) +
+      marker(selected, false, theme) +
+        (selected ? theme.focus(label) : label) +
         truncate(values[row], columns - GUTTER - 2),
     )
   })
@@ -165,62 +295,64 @@ function employeeDetail(state: ConfigUIState, columns: number): string[] {
   if (state.entry?.field === "skills") {
     lines.push(
       "",
-      `${pad("Skills", GUTTER)}${state.entry.value}_`,
-      `${pad("", GUTTER)}comma separated; enter to apply, esc to cancel`,
+      theme.dim(pad("Skills", GUTTER)) + theme.accent(`${state.entry.value}_`),
+      " ".repeat(GUTTER) + theme.dim("comma separated; enter to apply, esc to cancel"),
     )
   }
   return lines
 }
 
-function modelPicker(state: ConfigUIState, room: number, columns: number): string[] {
+function modelPicker(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
   const employee = currentEmployee(state)
   const entries = pickerEntries(state)
   const cycle = effortCycle(state)
   const width = pickerWidths(columns)
 
   const lines = [
-    `Model for ${employee?.name ?? state.employeeId ?? "employee"}${state.filter.length > 0 ? `   filter: ${state.filter}` : ""}`,
+    breadcrumb(theme, "Employees", employee?.name ?? state.employeeId ?? "employee", "Model") +
+      (state.filter.length > 0 ? theme.dim("   filter: ") + theme.accent(state.filter) : ""),
     "",
   ]
 
   if (state.models.length === 0) {
-    lines.push("  No models to list.")
+    lines.push(theme.dim("  No models to list."))
   }
 
-  lines.push(`  ${pad("Model", width.model)}${pad("Context", width.context)}Reasoning`)
+  lines.push(theme.dim(`  ${pad("Model", width.model)}${pad("Context", width.context)}Reasoning`))
 
-  const window = windowOf(state.cursor.models, entries.length, Math.max(2, room - 3))
+  const window = windowOf(state.cursor.models, entries.length, Math.max(2, room - 4))
   let lastGroup = ""
   for (let index = window.start; index < window.end; index++) {
     const entry = entries[index]
     if (!entry) continue
     const selected = index === state.cursor.models
     if (entry.groupStart && entry.providerLabel !== undefined && entry.providerLabel !== lastGroup) {
-      lines.push(`  ${entry.providerLabel}`)
+      lines.push(`  ${theme.heading(entry.providerLabel)}`)
       lastGroup = entry.providerLabel
     }
+    const label = pad(truncate(labelOf(entry), width.model - 1), width.model)
     lines.push(
-      marker(selected, false) +
-        pad(truncate(labelOf(entry), width.model - 1), width.model) +
-        pad(entry.kind === "inherit" ? "-" : formatContext(entry.model?.contextWindow), width.context) +
-        reasoningCell(entry, selected, cycle, state.draftVariant),
+      marker(selected, false, theme) +
+        (selected ? theme.focus(label) : label) +
+        theme.dim(pad(entry.kind === "inherit" ? "-" : formatContext(entry.model?.contextWindow), width.context)) +
+        reasoningCell(entry, selected, cycle, state.draftVariant, theme),
     )
   }
   if (entries.length === 1 && state.filter.length > 0) {
-    lines.push(`  Nothing matches "${state.filter}". Press / to change the filter, or m to type a model.`)
+    lines.push(theme.dim(`  Nothing matches "${state.filter}". Press / to change the filter, or m to type a model.`))
   }
   if (window.end < entries.length || window.start > 0) {
-    lines.push(`  ${window.start + 1}-${window.end} of ${entries.length}`)
+    lines.push(theme.dim(`  ${window.start + 1}-${window.end} of ${entries.length}`))
   }
 
   if (state.entry?.field === "filter") {
-    lines.push("", `${pad("Filter", GUTTER)}${state.entry.value}_`)
+    lines.push("", theme.dim(pad("Filter", GUTTER)) + theme.accent(`${state.entry.value}_`))
   }
   if (state.entry?.field === "model") {
     lines.push(
       "",
-      `${pad("Model", GUTTER)}${state.entry.value}_`,
-      `${pad("", GUTTER)}written provider/model, e.g. anthropic/claude-opus-4-5; empty to inherit`,
+      theme.dim(pad("Model", GUTTER)) + theme.accent(`${state.entry.value}_`),
+      " ".repeat(GUTTER) + theme.dim("written provider/model, e.g. anthropic/claude-opus-4-5; empty to inherit"),
     )
   }
   return lines
@@ -240,36 +372,39 @@ function modelPicker(state: ConfigUIState, room: number, columns: number): strin
  * empty column. "unknown" is an admission, and the note under the table backs
  * it with the full sentence about the host having the final say. Rendering
  * both as `-` would tell the user we had checked when we had not.
+ *
+ * The brackets stay in the text when colour is on. Colour marks the armed
+ * level; the brackets are what survive a screen reader.
  */
 function reasoningCell(
   entry: PickerEntry,
   selected: boolean,
   cycle: { values: Array<string | undefined>; known: boolean },
   draft: string | undefined,
+  theme: Theme,
 ): string {
-  if (entry.kind === "inherit") return selected ? "no model, so no effort" : "-"
+  if (entry.kind === "inherit") return selected ? theme.dim("no model, so no effort") : theme.dim("-")
   const variants = entry.model?.variants ?? { kind: "unknown" }
   if (!selected) {
     switch (variants.kind) {
       case "unknown":
-        return "unknown"
+        return theme.dim("unknown")
       case "none":
-        return "takes no effort"
+        return theme.dim("takes no effort")
       case "efforts":
-        return variants.values.length === 1
-          ? variants.values[0]!
-          : `${variants.values[0]}-${variants.values[variants.values.length - 1]}`
+        return theme.dim(
+          variants.values.length === 1
+            ? variants.values[0]!
+            : `${variants.values[0]}-${variants.values[variants.values.length - 1]}`,
+        )
     }
   }
-  if (variants.kind === "none") return "this model takes no reasoning effort"
-  if (cycle.values.length <= 1) return "this model takes no reasoning effort"
-  // No "(suggested)" suffix here even when the scale is a guess: the note line
-  // under the table already says it in a full sentence, and repeating it costs
-  // the twelve columns that make the widest scale fit at all.
+  if (variants.kind === "none") return theme.dim("this model takes no reasoning effort")
+  if (cycle.values.length <= 1) return theme.dim("this model takes no reasoning effort")
   return cycle.values
     .map((value) => {
       const text = value ?? "off"
-      return value === draft ? `[${text}]` : text
+      return value === draft ? theme.accent(`[${text}]`) : theme.dim(text)
     })
     .join(" ")
 }
@@ -280,38 +415,66 @@ function reasoningCell(
  * The sentences come straight out of `diagnoseSeats` and are not reworded
  * here. One component decides what is wrong with a seats config and it is not
  * this one — otherwise the installer, the daemon and this UI drift into three
- * different opinions about the same file.
+ * different opinions about the same file. Colour follows the severity the
+ * diagnosis already declared rather than a judgement made at the last minute.
  */
-function notes(state: ConfigUIState, issues: SeatIssue[], columns: number): string[] {
+function notes(state: ConfigUIState, issues: SeatIssue[], columns: number, theme: Theme): string[] {
   const scope = state.employeeId
-  // Drilled into an employee, only their findings and the config-wide ones are
-  // on screen. From the list, everything is, because the list is where a
-  // problem on a row you are not looking at still needs to be visible.
   const shown =
-    scope === undefined || state.view === "employees"
+    scope === undefined || state.view === "employees" || state.view === "menu"
       ? issues
       : issues.filter((issue) => issue.employeeId === undefined || issue.employeeId === scope)
   if (state.status.length === 0 && shown.length === 0) return []
 
   const lines = [""]
-  if (state.status.length > 0) lines.push(wrapAt(state.status, columns, "  "))
-  for (const issue of shown.slice(0, 4)) {
-    lines.push(wrapAt(`${issue.severity}: ${issue.message}`, columns, "  "))
+  if (state.status.length > 0) {
+    lines.push(...wrapAt(state.status, columns, "  ").split("\n").map(theme.accent))
   }
-  if (shown.length > 4) lines.push(`  ...and ${shown.length - 4} more; see observer doctor.`)
-  return lines.flatMap((line) => line.split("\n"))
+  for (const issue of shown.slice(0, 4)) {
+    const paint = issue.severity === "error" ? theme.alert : theme.warn
+    lines.push(...wrapAt(`${issue.severity}: ${issue.message}`, columns, "  ").split("\n").map(paint))
+  }
+  if (shown.length > 4) lines.push(theme.dim(`  ...and ${shown.length - 4} more; see observer doctor.`))
+  return lines
 }
 
-function hints(state: ConfigUIState): string[] {
-  if (state.confirmQuit) return ["Unsaved changes.  s save and quit   q quit anyway   esc keep editing"]
-  if (state.entry !== undefined) return ["enter apply   esc cancel"]
+/** `key label` pairs for the current mode, keys picked out of the sentence. */
+function hints(state: ConfigUIState, theme: Theme): string[] {
+  const bar = (...pairs: Array<[string, string]>): string[] => [
+    pairs.map(([key, label]) => `${theme.accent(key)} ${theme.dim(label)}`).join("   "),
+  ]
+
+  if (state.confirmQuit) {
+    return [
+      theme.warn("Unsaved changes.") +
+        "  " +
+        bar(["s", "save and quit"], ["q", "quit anyway"], ["esc", "keep editing"])[0]!,
+    ]
+  }
+  if (state.entry !== undefined) return bar(["enter", "apply"], ["esc", "cancel"])
   switch (state.view) {
+    case "menu":
+      return bar(["up/down", "move"], ["enter", "select"], ["c", "toggle seat control"], ["s", "save"], ["esc", "quit"])
     case "employees":
-      return ["up/down move   enter configure   c toggle seat control   s save   esc quit"]
+      return bar(
+        ["up/down", "move"],
+        ["enter", "configure"],
+        ["c", "toggle seat control"],
+        ["s", "save"],
+        ["esc", "back"],
+      )
     case "employee":
-      return ["up/down move   enter change   s save   esc back"]
+      return bar(["up/down", "move"], ["enter", "change"], ["s", "save"], ["esc", "back"])
     case "models":
-      return ["up/down move   left/right effort   tab vendor   / filter   m type a model   enter select   esc back"]
+      return bar(
+        ["up/down", "move"],
+        ["left/right", "effort"],
+        ["tab", "vendor"],
+        ["/", "filter"],
+        ["m", "type a model"],
+        ["enter", "select"],
+        ["esc", "back"],
+      )
   }
 }
 
@@ -321,7 +484,8 @@ function hints(state: ConfigUIState): string[] {
  * Raw mode on a non-TTY either throws or hangs forever, so the interactive
  * path is never entered there. Reporting instead of refusing follows
  * `observer doctor`: the command still answers the question you asked, it just
- * cannot take your keystrokes.
+ * cannot take your keystrokes. No theme reaches this function — a pipe gets
+ * text, whatever the terminal it was launched from could have drawn.
  */
 export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[] {
   const diagnosis = diagnoseSeats(seats)
@@ -358,6 +522,14 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[
   }
   lines.push("", "Run `observer config` in a terminal to change any of this.")
   return lines
+}
+
+/** `Employees > Arjun Mehta > Model`, with the leaf picked out. */
+function breadcrumb(theme: Theme, ...parts: string[]): string {
+  const trail = parts.slice(0, -1)
+  const leaf = parts[parts.length - 1] ?? ""
+  if (trail.length === 0) return theme.heading(leaf)
+  return theme.dim(`${trail.join(" > ")} > `) + theme.heading(leaf)
 }
 
 interface ListWidths {
@@ -399,9 +571,12 @@ function pickerWidths(columns: number): { model: number; context: number } {
   return { model: clamp(columns - 2 - context - reasoning, 20, 40), context }
 }
 
-/** `>` for the cursor, `!` for a seat `diagnoseSeats` has something to say about. */
-function marker(selected: boolean, flagged: boolean): string {
-  return `${selected ? ">" : " "}${flagged ? "!" : " "}`
+/**
+ * `>` for the cursor, `!` for a seat `diagnoseSeats` has something to say
+ * about. Colour repeats what the character already says; it never replaces it.
+ */
+function marker(selected: boolean, flagged: boolean, theme: Theme): string {
+  return `${selected ? theme.accent(">") : " "}${flagged ? theme.alert("!") : " "}`
 }
 
 /**
@@ -439,16 +614,6 @@ function labelOf(entry: PickerEntry): string {
   const id = entry.model?.id ?? ""
   const slash = id.indexOf("/")
   return slash >= 0 ? id.slice(slash + 1) : id
-}
-
-function truncate(value: string, width: number): string {
-  if (width <= 0) return ""
-  if (value.length <= width) return value
-  return width >= 8 ? `${value.slice(0, width - 3)}...` : value.slice(0, width)
-}
-
-function pad(value: string, width: number): string {
-  return value.length >= width ? `${value} ` : value.padEnd(width, " ")
 }
 
 function clamp(value: number, low: number, high: number): number {

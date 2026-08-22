@@ -4,7 +4,8 @@ import { ROSTER } from "@observer-ai/roster"
 import { type Viewport, render, renderReport } from "./config-ui-render.js"
 import { type ConfigUIState, type EmployeeRow, type Key, applied, initialState, reduce } from "./config-ui-state.js"
 import { describeCatalogue, listModels } from "./models.js"
-import { syncSeatAgents } from "./seat-agents.js"
+import { seatAgentDir, syncSeatAgents } from "./seat-agents.js"
+import { type Theme, buildTheme, colorSupport } from "./theme.js"
 
 /**
  * The terminal shell for `observer config`.
@@ -17,12 +18,14 @@ import { syncSeatAgents } from "./seat-agents.js"
  */
 
 /**
- * Terminal control, not colour.
+ * Terminal control, and now colour.
  *
- * `NO_COLOR` asks a program not to *colour* its output, and this UI never
- * does: the renderer emits no SGR sequences at all, so there is nothing to
- * suppress. Screen and cursor control is a different thing, and without it a
- * full-screen UI would scribble over the user's scrollback.
+ * These two are still different things. Screen and cursor control is what
+ * stops a full-screen UI scribbling over the user's scrollback, and it
+ * happens whatever `NO_COLOR` says. Colour is decided once, here, by
+ * `colorSupport`, and handed to the renderer as a theme — so the renderer
+ * never reads the environment and a piped `observer config` gets exactly the
+ * plain text it always did.
  */
 const ALT_SCREEN_ON = "\u001B[?1049h"
 const ALT_SCREEN_OFF = "\u001B[?1049l"
@@ -70,13 +73,25 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
     ...(options.probeHost === true ? { probeHost: true } : {}),
   })
 
-  let state = initialState({ seats: config.seats, roster, models })
-  if (models.length === 0) state = { ...state, status: describeCatalogue(models) }
+  const state = initialState({
+    seats: config.seats,
+    roster,
+    models,
+    // An empty catalogue is the one arrival worth explaining before the user
+    // has pressed anything: the picker will offer free text instead of a list,
+    // and `describeCatalogue` says which file it looked in and why.
+    ...(models.length === 0 ? { welcome: describeCatalogue(models) } : {}),
+  })
 
-  return drive(config, state, syncSeatAgents)
+  return drive(config, state, syncSeatAgents, buildTheme(colorSupport(process.env, true)))
 }
 
-function drive(config: ObserverConfig, start: ConfigUIState, sync: SyncSeatAgents | undefined): Promise<number> {
+function drive(
+  config: ObserverConfig,
+  start: ConfigUIState,
+  sync: SyncSeatAgents | undefined,
+  theme: Theme,
+): Promise<number> {
   const stdin = process.stdin
   const stdout = process.stdout
   let state = start
@@ -114,7 +129,7 @@ function drive(config: ObserverConfig, start: ConfigUIState, sync: SyncSeatAgent
   })
 
   const paint = (): void => {
-    const viewport: Viewport = { rows: stdout.rows ?? 24, columns: stdout.columns ?? 100 }
+    const viewport: Viewport = { rows: stdout.rows ?? 24, columns: stdout.columns ?? 100, theme }
     stdout.write(`${HOME_AND_CLEAR}${render(state, viewport).join("\n")}\n`)
   }
 
@@ -215,12 +230,24 @@ function applyNote(seats: SeatsConfig, sync: SyncSeatAgents | undefined): string
   }
 }
 
+/**
+ * The last thing on screen, after the alternate screen has been handed back.
+ *
+ * A full-screen UI takes its own output with it when it exits, so whatever
+ * the user needs to carry away has to be said here, in the scrollback they
+ * keep. With seat control on that includes the step Observer cannot take for
+ * them: OpenCode reads agent definitions at startup, so a session already
+ * running will not see the ones this save just wrote.
+ */
 function farewell(state: ConfigUIState, saves: number): string[] {
   if (state.dirty) return ["Left without saving. The config on disk is unchanged."]
   if (saves === 0) return ["No changes."]
+  if (!state.seats.control) {
+    return ["Seats saved. Seat control is off, so models and efforts stay inert - skills still apply."]
+  }
   return [
-    state.seats.control
-      ? "Seats saved. Seat control is on, so OpenCode subagents will run the models you chose."
-      : "Seats saved. Seat control is off, so models and efforts stay inert - skills still apply.",
+    "Seats saved. Seat control is on, so OpenCode subagents will run the models you chose.",
+    `Agent definitions live in ${seatAgentDir()}.`,
+    "Restart OpenCode to pick them up: it reads agent definitions once, at startup.",
   ]
 }

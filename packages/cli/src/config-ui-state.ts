@@ -18,7 +18,34 @@ import { type ModelInfo, groupByProvider, variantsFor } from "./models.js"
  * (a state transition, tested) apart from "the file was written" (I/O, not).
  */
 
-export type ConfigView = "employees" | "employee" | "models"
+/**
+ * Views, outside-in.
+ *
+ * The UI opens on the `menu` — the organised top level where seat control,
+ * the roster and leaving all live as named rows instead of hidden hotkeys.
+ * Every deeper screen unwinds one level per esc, so navigation has one rule:
+ * esc takes you back exactly one step, and only the menu can end the session.
+ */
+export type ConfigView = "menu" | "employees" | "employee" | "models"
+
+/** One actionable row of the main menu, in display order. */
+export type MenuRowKind = "control" | "employees" | "save" | "exit"
+
+/**
+ * The menu's rows for the current state.
+ *
+ * Derived rather than stored, for the same reason `pickerEntries` is: the
+ * reducer and the renderer cannot disagree about what row 2 is. `Save & exit`
+ * appears only when there are unsaved changes, so the menu never offers an
+ * inert action — and the row indices below it shift, which is why activation
+ * always re-reads this list rather than trusting the remembered cursor.
+ */
+export function menuRows(state: ConfigUIState): MenuRowKind[] {
+  const rows: MenuRowKind[] = ["control", "employees"]
+  if (state.dirty) rows.push("save")
+  rows.push("exit")
+  return rows
+}
 
 /** The roster projected down to what the list view draws. */
 export interface EmployeeRow {
@@ -86,20 +113,22 @@ export interface InitialInput {
   seats: SeatsConfig
   roster: EmployeeRow[]
   models: ModelInfo[]
+  /** Shown once on arrival, e.g. what the model catalogue managed to read. */
+  welcome?: string
 }
 
 export function initialState(input: InitialInput): ConfigUIState {
   return {
-    view: "employees",
+    view: "menu",
     seats: cloneSeats(input.seats),
     roster: input.roster,
     models: input.models,
-    cursor: { employees: 0, employee: 0, models: 0 },
+    cursor: { menu: 0, employees: 0, employee: 0, models: 0 },
     filter: "",
     confirmQuit: false,
     quitAfterSave: false,
     dirty: false,
-    status: "",
+    status: input.welcome ?? "",
   }
 }
 
@@ -205,12 +234,71 @@ export function reduce(state: ConfigUIState, key: Key): ConfigUIState {
   if (base.entry !== undefined) return reduceEntry(base, key)
   if (base.confirmQuit) return reduceConfirm(base, key)
   switch (base.view) {
+    case "menu":
+      return reduceMenu(base, key)
     case "employees":
       return reduceEmployees(base, key)
     case "employee":
       return reduceEmployee(base, key)
     case "models":
       return reduceModels(base, key)
+  }
+}
+
+/**
+ * The top level: named rows instead of hidden keys.
+ *
+ * Seat control is the first row because it is the first thing a new user has
+ * to decide — without it every model choice below is inert. Activation is by
+ * `enter` or `space`, and the row list is re-derived on every keystroke so a
+ * save that removes the `Save & exit` row can never leave the cursor pointing
+ * at a ghost.
+ */
+function reduceMenu(state: ConfigUIState, key: Key): ConfigUIState {
+  if (key.name === "c") return toggleSeatControl(state)
+  if (key.name === "s") return requestSave(state)
+  if (isEscape(key) || key.name === "q") return requestQuit(state)
+
+  const rows = menuRows(state)
+  // A save drops the `Save & exit` row, so a remembered cursor can outlive the
+  // row it was pointing at. Clamping here means neither moving nor activating
+  // can act on a row that is no longer on screen.
+  const at = Math.min(state.cursor.menu, rows.length - 1)
+  const clamped: ConfigUIState = { ...state, cursor: { ...state.cursor, menu: at } }
+  if (isUp(key)) return moveCursor(clamped, "menu", -1, rows.length)
+  if (isDown(key)) return moveCursor(clamped, "menu", 1, rows.length)
+
+  if (isEnter(key) || isSpace(key)) {
+    switch (rows[at]) {
+      case "control":
+        return toggleSeatControl(clamped)
+      case "employees":
+        return { ...clamped, view: "employees", cursor: { ...clamped.cursor, employees: 0 } }
+      case "save": {
+        // The row says "Save & exit", so it does both: the shell performs the
+        // save and `applied` turns the pending quit into a request, which is
+        // the same handshake the confirm-on-the-way-out prompt uses. A save
+        // that fails cancels the quit, there as here.
+        const saving = requestSave(clamped)
+        return saving.request === "save" ? { ...saving, quitAfterSave: true } : saving
+      }
+      case "exit":
+        return requestQuit(clamped)
+    }
+  }
+  return state
+}
+
+/** One place owns the flag flip and the sentence that explains it. */
+function toggleSeatControl(state: ConfigUIState): ConfigUIState {
+  const control = !state.seats.control
+  return {
+    ...state,
+    seats: { ...state.seats, control },
+    dirty: true,
+    status: control
+      ? "Seat control on: models and efforts will be applied. Save to write it."
+      : "Seat control off: models and efforts are inert. Skills still apply.",
   }
 }
 
@@ -249,20 +337,12 @@ function reduceEmployees(state: ConfigUIState, key: Key): ConfigUIState {
     return { ...state, view: "employee", employeeId: row.id, cursor: { ...state.cursor, employee: 0 } }
   }
 
-  if (key.name === "c") {
-    const control = !state.seats.control
-    return {
-      ...state,
-      seats: { ...state.seats, control },
-      dirty: true,
-      status: control
-        ? "Seat control on: models and efforts will be applied. Save to write it."
-        : "Seat control off: models and efforts are inert. Skills still apply.",
-    }
-  }
+  if (key.name === "c") return toggleSeatControl(state)
 
   if (key.name === "s") return requestSave(state)
-  if (isEscape(key) || key.name === "q") return requestQuit(state)
+  if (key.name === "q") return requestQuit(state)
+  // esc unwinds one level; only the menu can end the session.
+  if (isEscape(key)) return { ...state, view: "menu" }
   return state
 }
 
@@ -550,6 +630,11 @@ function isDown(key: Key): boolean {
 
 function isEnter(key: Key): boolean {
   return key.name === "return" || key.name === "enter"
+}
+
+/** Space activates a menu row as well as enter, the way every list UI does. */
+function isSpace(key: Key): boolean {
+  return key.name === "space"
 }
 
 function isEscape(key: Key): boolean {
