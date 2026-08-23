@@ -1,6 +1,6 @@
 {
   "name": "observer-workspace",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Observer - interactive canvas for running agents across OpenCode, Codex, Claude Code and GitHub Copilot CLI",
