@@ -1044,20 +1044,23 @@ function describeFailure(failure: ProbeFailure, binary: string, budgetMs: number
  *  - A 512 KB buffer. `copilot help config` is ~15 KB; this is room for a much
  *    chattier future build and still a ceiling on one that decides to stream
  *    its logs at us.
- *  - `shell` is left off, so the argv is passed to `execvp` verbatim and a
- *    binary path containing shell metacharacters cannot become a command.
+ *  - POSIX launches the binary directly. Windows npm installs expose Copilot
+ *    through a `.cmd` shim, which `spawnSync` cannot execute directly, so the
+ *    invocation uses `cmd.exe /d /s /c` after rejecting command metacharacters.
  */
 function defaultSpawn(
   binary: string,
   args: readonly string[],
   options: { env: NodeJS.ProcessEnv; timeoutMs: number },
 ): CopilotSpawnResult {
-  const result = spawnSync(binary, [...args], {
+  const invocation = copilotSpawnInvocation(binary, args)
+  const result = spawnSync(invocation.command, invocation.args, {
     env: options.env,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
     timeout: options.timeoutMs,
     maxBuffer: 512 * 1024,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   })
 
   const spawnResult: CopilotSpawnResult = {
@@ -1071,6 +1074,33 @@ function defaultSpawn(
   // the signal — is still a timeout.
   else if (result.signal !== null && result.signal !== undefined) spawnResult.timedOut = true
   return spawnResult
+}
+
+export interface CopilotSpawnInvocation {
+  command: string
+  args: string[]
+  windowsVerbatimArguments?: boolean
+}
+
+/** Builds a shell-free invocation, except for the required Windows npm shim. */
+export function copilotSpawnInvocation(
+  binary: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  comspec = process.env["ComSpec"] ?? process.env["COMSPEC"] ?? "cmd.exe",
+): CopilotSpawnInvocation {
+  if (platform !== "win32") return { command: binary, args: [...args] }
+
+  const values = [binary, ...args]
+  if (values.some((value) => /[\r\n"%!&|<>^]/.test(value))) {
+    throw new Error("Copilot binary or arguments contain unsupported Windows command characters")
+  }
+  const command = values.map((value) => `"${value}"`).join(" ")
+  return {
+    command: comspec,
+    args: ["/d", "/s", "/c", `"${command}"`],
+    windowsVerbatimArguments: true,
+  }
 }
 
 function describeSpawnError(error: Error & { code?: string }): string {

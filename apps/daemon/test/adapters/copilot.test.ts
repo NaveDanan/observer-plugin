@@ -5,6 +5,7 @@ import {
   COPILOT_DEFAULT_PROFILE,
   COPILOT_REASONING_OPTION,
   copilotAdapter,
+  copilotSpawnInvocation,
   createCopilotAdapter,
   copilotSeatAgentName,
   copilotSeatAgentReference,
@@ -15,6 +16,29 @@ import {
 } from "../../src/adapters/copilot.js"
 import type { CopilotSpawn, CopilotSpawnResult } from "../../src/adapters/copilot.js"
 import type { SeatTarget } from "../../src/seats.js"
+
+describe("Copilot process invocation", () => {
+  it("uses cmd.exe for the npm shim on Windows", () => {
+    expect(copilotSpawnInvocation("copilot", ["help", "config"], "win32", "C:\\Windows\\cmd.exe")).toEqual({
+      command: "C:\\Windows\\cmd.exe",
+      args: ["/d", "/s", "/c", '""copilot" "help" "config""'],
+      windowsVerbatimArguments: true,
+    })
+  })
+
+  it("rejects Windows command metacharacters instead of evaluating them", () => {
+    expect(() => copilotSpawnInvocation("copilot & whoami", ["help", "config"], "win32")).toThrow(
+      "unsupported Windows command characters",
+    )
+  })
+
+  it("launches the binary directly on other platforms", () => {
+    expect(copilotSpawnInvocation("/usr/local/bin/copilot", ["help", "config"], "linux")).toEqual({
+      command: "/usr/local/bin/copilot",
+      args: ["help", "config"],
+    })
+  })
+})
 
 /**
  * Everything here runs against a fake `copilot`.
