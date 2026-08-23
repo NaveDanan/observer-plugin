@@ -7,6 +7,7 @@ import {
   diffLines,
   formatBytes,
   formatCount,
+  formatDuration,
   languageForPath,
   stripGutter,
 } from "../src/chat/toolStep"
@@ -402,6 +403,13 @@ describe("stripGutter", () => {
     })
   })
 
+  it("advances source line numbers across unnumbered internal blank lines", () => {
+    expect(stripGutter("12| one\n\n14| three")).toEqual({
+      text: "one\n\nthree",
+      firstLine: 12,
+    })
+  })
+
   it("does not infer dotted gutters from arbitrary content", () => {
     const text = "1. First\n2. Second\n3. Third"
     expect(stripGutter(text)).toEqual({ text, firstLine: 1 })
@@ -448,6 +456,11 @@ describe("formatting", () => {
   it("pluralises counts", () => {
     expect(formatCount(1, "line")).toBe("1 line")
     expect(formatCount(0, "match")).toBe("0 matches")
+  })
+
+  it("carries rounded seconds across minute boundaries", () => {
+    expect(formatDuration(59_999)).toBe("1m 0s")
+    expect(formatDuration(119_999)).toBe("2m 0s")
   })
 
   it("scales byte sizes", () => {

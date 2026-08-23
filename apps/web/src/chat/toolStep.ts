@@ -284,7 +284,20 @@ export function stripGutter(text: string, format: GutterFormat = "unambiguous"):
   }
   if (matched < nonBlankCandidates * 0.8) return { text, firstLine: 1 }
   const real = numbers.filter((value) => !Number.isNaN(value))
-  const consecutive = real.every((value, index) => index === 0 || value === (real[index - 1] as number) + 1)
+  let expected: number | null = null
+  const consecutive = numbers.every((value) => {
+    if (Number.isNaN(value)) {
+      if (expected !== null) expected += 1
+      return true
+    }
+    if (expected === null) {
+      expected = value + 1
+      return true
+    }
+    if (value !== expected) return false
+    expected += 1
+    return true
+  })
   if (!consecutive || real.length === 0) return { text, firstLine: 1 }
   if (hasFinalNewline) stripped.push("")
   return { text: stripped.join("\n"), firstLine: real[0] as number }
@@ -448,8 +461,10 @@ export function countChurn(rows: DiffRow[]): { added: number; removed: number } 
 /** Milliseconds are the right unit until they stop being readable. */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
+  const roundedTenths = Math.round(ms / 100)
+  if (roundedTenths < 600) return `${(roundedTenths / 10).toFixed(1)}s`
+  const totalSeconds = Math.round(ms / 1000)
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
 }
 
 export function formatBytes(bytes: number): string {
