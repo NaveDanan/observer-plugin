@@ -2005,14 +2005,17 @@
 }
 .step-row:hover .step-icon,
 .step-row:focus-visible .step-icon,
+.step-row[aria-expanded="true"] .step-icon,
 .step.is-expanded .step-icon {
   opacity: 0;
 }
 .step-row:hover .step-chevron,
 .step-row:focus-visible .step-chevron,
+.step-row[aria-expanded="true"] .step-chevron,
 .step.is-expanded .step-chevron {
   opacity: 0.85;
 }
+.step-row[aria-expanded="true"] .step-chevron,
 .step.is-expanded .step-chevron {
   transform: rotate(180deg);
 }
