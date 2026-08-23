@@ -1,4 +1,12 @@
-import { type SeatIssue, type SeatsConfig, diagnoseSeats } from "@observer-ai/daemon"
+import {
+  LEGACY_TARGET_ID,
+  type SeatIssue,
+  type SeatSpec,
+  type SeatsConfig,
+  diagnoseSeats,
+  readOpencodeTarget,
+  seatTargets,
+} from "@observer-ai/daemon"
 import { formatContext } from "./models.js"
 import { diagnoseOpencodeSeats } from "./seat-agents.js"
 import {
@@ -251,8 +259,9 @@ function employeeList(
     const row = state.roster[index]
     if (!row) continue
     const seat = state.seats.employees[row.id]
-    const model = typeof seat?.model === "string" ? seat.model : "inherit"
-    const variant = typeof seat?.variant === "string" ? seat.variant : "-"
+    const configured = opencodeSeat(seat)
+    const model = configured?.model ?? "inherit"
+    const variant = configured?.variant ?? "-"
     const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
     const selected = index === state.cursor.employees
     const name = pad(truncate(row.name, width.name - 1), width.name)
@@ -264,7 +273,7 @@ function employeeList(
       marker(selected, flagged.has(row.id), theme) +
         (selected ? theme.focus(name) : name) +
         theme.dim(pad(truncate(row.role, width.role - 1), width.role)) +
-        (typeof seat?.model === "string" ? theme.accent(modelCell) : theme.dim(modelCell)) +
+        (configured !== undefined ? theme.accent(modelCell) : theme.dim(modelCell)) +
         pad(variant, width.effort) +
         (width.skills > 0 ? theme.dim(truncate(skills.length > 0 ? skills : "-", width.skills)) : ""),
     )
@@ -278,12 +287,13 @@ function employeeList(
 function employeeDetail(state: ConfigUIState, columns: number, theme: Theme): string[] {
   const employee = currentEmployee(state)
   const seat = seatOf(state, state.employeeId)
-  const model = typeof seat?.model === "string" ? seat.model : "inherit (the session's model)"
-  const variant = typeof seat?.variant === "string" ? seat.variant : "-"
+  const configured = opencodeSeat(seat)
+  const model = configured?.model ?? "inherit (the session's model)"
+  const variant = configured?.variant ?? "-"
   const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
 
   const values: Record<(typeof EMPLOYEE_ROWS)[number], string> = {
-    model: `${typeof seat?.model === "string" ? theme.accent(model) : theme.dim(model)}   ${theme.dim("effort")} ${variant}`,
+    model: `${configured !== undefined ? theme.accent(model) : theme.dim(model)}   ${theme.dim("effort")} ${variant}`,
     skills: skills.length > 0 ? skills : theme.dim("none"),
     reset: theme.dim("clear this employee's model, effort and skills"),
   }
@@ -520,8 +530,9 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[
   } else {
     for (const row of configured) {
       const seat = seats.employees[row.id]!
-      const model = typeof seat.model === "string" ? seat.model : "inherit"
-      const variant = typeof seat.variant === "string" ? seat.variant : "-"
+      const configured = opencodeSeat(seat)
+      const model = configured?.model ?? "inherit"
+      const variant = configured?.variant ?? "-"
       const skills = Array.isArray(seat.skills) ? seat.skills.map((skill) => skill.name).join(", ") : "-"
       lines.push(`${pad(row.id, 18)}${pad(model, 34)}${pad(variant, 8)}${skills.length > 0 ? skills : "-"}`)
     }
@@ -631,6 +642,10 @@ function labelOf(entry: PickerEntry): string {
   const id = entry.model?.id ?? ""
   const slash = id.indexOf("/")
   return slash >= 0 ? id.slice(slash + 1) : id
+}
+
+function opencodeSeat(seat: SeatSpec | undefined): { model: string; variant?: string } | undefined {
+  return readOpencodeTarget(seatTargets(seat)[LEGACY_TARGET_ID])
 }
 
 function clamp(value: number, low: number, high: number): number {

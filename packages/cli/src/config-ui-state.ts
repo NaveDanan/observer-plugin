@@ -1,4 +1,13 @@
-import type { SeatSpec, SeatsConfig } from "@observer-ai/daemon"
+import {
+  LEGACY_TARGET_ID,
+  OPENCODE_VARIANT_OPTION,
+  readOpencodeTarget,
+  seatTargets,
+  type SeatSpec,
+  type SeatTarget,
+  type SeatTargetOption,
+  type SeatsConfig,
+} from "@observer-ai/daemon"
 import type { EmployeeSkill } from "@observer-ai/roster"
 import { type ModelInfo, groupByProvider, variantsFor } from "./models.js"
 
@@ -158,8 +167,8 @@ export function pickerEntries(state: ConfigUIState): PickerEntry[] {
   const matches = needle.length === 0 ? state.models : state.models.filter((model) => hits(model, needle))
   const entries: PickerEntry[] = [{ kind: "inherit", groupStart: false }]
 
-  const configured = seatOf(state, state.employeeId)?.model
-  if (typeof configured === "string" && configured.length > 0 && !state.models.some((m) => m.id === configured)) {
+  const configured = modelOf(seatOf(state, state.employeeId))
+  if (configured.length > 0 && !state.models.some((m) => m.id === configured)) {
     const model = strayModel(configured)
     if (needle.length === 0 || hits(model, needle)) {
       entries.push({ kind: "model", model, groupStart: true, providerLabel: model.providerLabel })
@@ -426,9 +435,11 @@ function reduceConfirm(state: ConfigUIState, key: Key): ConfigUIState {
 }
 
 function openPicker(state: ConfigUIState, seat: SeatSpec | undefined): ConfigUIState {
-  const model = typeof seat?.model === "string" ? seat.model : undefined
+  const target = opencodeTargetOf(seat)
+  const model = readOpencodeTarget(target)?.model
   const next: ConfigUIState = { ...state, view: "models", filter: "" }
-  if (typeof seat?.variant === "string") next.draftVariant = seat.variant
+  const variant = readOpencodeTarget(target)?.variant
+  if (variant !== undefined) next.draftVariant = variant
   else delete next.draftVariant
   // Land on the model the seat already names, so opening the picker to change
   // only the effort does not first make the user hunt for where they are.
@@ -449,16 +460,21 @@ function assignModel(state: ConfigUIState, model: string | undefined, variant: s
   const id = state.employeeId
   if (id === undefined) return state
   const next = updateSeat(state, id, (seat) => {
-    const spec: SeatSpec = { ...seat }
+    const targets = seatTargets(seat)
     if (model === undefined) {
-      delete spec.model
-      delete spec.variant
+      delete targets[LEGACY_TARGET_ID]
     } else {
-      spec.model = model
-      if (variant === undefined) delete spec.variant
-      else spec.variant = variant
+      const current = targets[LEGACY_TARGET_ID]
+      const target: SeatTarget =
+        current && typeof current === "object" && !Array.isArray(current)
+          ? { ...current, host: "opencode", model }
+          : { host: "opencode", model }
+      target.options = setTargetOption(target.options, OPENCODE_VARIANT_OPTION, variant)
+      if (target.options.length === 0) delete target.options
+      targets[LEGACY_TARGET_ID] = target
     }
-    return spec
+    const { model: _model, variant: _variant, targets: _targets, ...rest } = seat
+    return Object.keys(targets).length === 0 ? rest : { ...rest, targets }
   })
   return {
     ...next,
@@ -613,7 +629,7 @@ function wrap(index: number, length: number): number {
 }
 
 function modelOf(seat: SeatSpec | undefined): string {
-  return typeof seat?.model === "string" ? seat.model : ""
+  return readOpencodeTarget(opencodeTargetOf(seat))?.model ?? ""
 }
 
 function skillNames(seat: SeatSpec | undefined): string[] {
@@ -659,6 +675,27 @@ function printable(key: Key): string | undefined {
 
 function cloneSeats(seats: SeatsConfig): SeatsConfig {
   const employees: Record<string, SeatSpec> = {}
-  for (const [id, spec] of Object.entries(seats.employees ?? {})) employees[id] = { ...spec }
+  for (const [id, spec] of Object.entries(seats.employees ?? {})) {
+    const copy: SeatSpec = { ...spec }
+    if (spec.targets !== undefined) copy.targets = structuredClone(spec.targets)
+    employees[id] = copy
+  }
   return { control: seats.control === true, employees }
+}
+
+function opencodeTargetOf(seat: SeatSpec | undefined): SeatTarget | undefined {
+  return seatTargets(seat)[LEGACY_TARGET_ID]
+}
+
+function setTargetOption(
+  options: SeatTargetOption[] | undefined,
+  id: string,
+  value: string | boolean | undefined,
+): SeatTargetOption[] {
+  const existing = Array.isArray(options) ? options : []
+  if (value === undefined || value === "") return existing.filter((option) => option.id !== id)
+  if (existing.some((option) => option.id === id)) {
+    return existing.map((option) => (option.id === id ? { ...option, value } : option))
+  }
+  return [...existing, { id, value }]
 }

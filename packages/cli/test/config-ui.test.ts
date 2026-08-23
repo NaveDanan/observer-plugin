@@ -381,7 +381,9 @@ describe("effort", () => {
     let state = press(employees(), "return", "return", "m")
     state = type(state, "someone/exotic-model")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.model).toBe("someone/exotic-model")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]?.model).toBe(
+      "someone/exotic-model",
+    )
 
     // Re-opening the picker on an unknown model still offers a scale, flagged.
     const reopened = press(state, "return")
@@ -391,18 +393,67 @@ describe("effort", () => {
 })
 
 describe("assigning a model", () => {
+  it("writes an OpenCode target instead of ignored legacy fields", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          model: "anthropic/ignored",
+          variant: "high",
+          targets: { "opencode:default": { host: "opencode" } },
+        },
+      },
+    }
+    const state = press(
+      into(initialState({ seats, roster: ROSTER, models: MODELS })),
+      "return",
+      "return",
+      ...Array<string>(OPUS).fill("down"),
+      "right",
+      "return",
+    )
+    const seat = state.seats.employees["arjun-mehta"]
+
+    expect(seat?.model).toBeUndefined()
+    expect(seat?.variant).toBeUndefined()
+    expect(seat?.targets).toEqual({
+      "opencode:default": {
+        host: "opencode",
+        model: "anthropic/claude-opus-4-8",
+        options: [{ id: "variant", value: "low" }],
+      },
+    })
+    expect(diagnoseSeats(state.seats).issues.map((issue) => issue.code)).not.toContain("legacy-fields-shadowed")
+    expect(diagnoseSeats(state.seats).issues.map((issue) => issue.code)).not.toContain("empty-target")
+    const output = render(state, { rows: 40, columns: 100 }).join("\n")
+    expect(output).not.toContain('older "model" and "variant" fields are ignored')
+    expect(output).not.toContain("This target sets nothing")
+  })
+
   it("writes the model onto the seat and returns to the employee view", () => {
     const state = press(employees(), "return", "return", ...Array<string>(OPUS).fill("down"), "return")
     expect(state.view).toBe("employee")
-    expect(state.seats.employees["arjun-mehta"]).toEqual({ model: "anthropic/claude-opus-4-8" })
+    expect(state.seats.employees["arjun-mehta"]).toEqual({
+      targets: {
+        "opencode:default": {
+          host: "opencode",
+          model: "anthropic/claude-opus-4-8",
+        },
+      },
+    })
     expect(state.dirty).toBe(true)
   })
 
   it("commits the model and the effort together", () => {
     const state = press(employees(), "return", "return", ...Array<string>(OPUS).fill("down"), "right", "return")
     expect(state.seats.employees["arjun-mehta"]).toEqual({
-      model: "anthropic/claude-opus-4-8",
-      variant: "low",
+      targets: {
+        "opencode:default": {
+          host: "opencode",
+          model: "anthropic/claude-opus-4-8",
+          options: [{ id: "variant", value: "low" }],
+        },
+      },
     })
   })
 
@@ -456,7 +507,9 @@ describe("assigning a model", () => {
     let state = press(into(empty), "return", "return", "m")
     state = type(state, "bedrock/some-model")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.model).toBe("bedrock/some-model")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]?.model).toBe(
+      "bedrock/some-model",
+    )
   })
 
   it("stores a malformed model rather than swallowing it, and lets the OpenCode diagnosis say why", () => {
@@ -471,7 +524,7 @@ describe("assigning a model", () => {
     let state = press(employees(), "return", "return", "m")
     state = type(state, "claude-opus")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.model).toBe("claude-opus")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]?.model).toBe("claude-opus")
     const issue = diagnoseOpencodeSeats(state.seats).find((entry) => entry.code === "malformed-model")
     expect(issue?.severity).toBe("error")
     expect(collapse(render(state, { rows: 40, columns: 100 }).join("\n"))).toContain(collapse(issue!.message))

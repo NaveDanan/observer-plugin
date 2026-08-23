@@ -1,5 +1,13 @@
 import { emitKeypressEvents } from "node:readline"
-import { type ObserverConfig, type SeatsConfig, loadConfig, saveConfig } from "@observer-ai/daemon"
+import {
+  LEGACY_TARGET_ID,
+  type ObserverConfig,
+  type SeatsConfig,
+  loadConfig,
+  readOpencodeTarget,
+  saveConfig,
+  seatTargets,
+} from "@observer-ai/daemon"
 import { ROSTER } from "@observer-ai/roster"
 import { type Viewport, render, renderReport } from "./config-ui-render.js"
 import { type ConfigUIState, type EmployeeRow, type Key, applied, initialState, reduce } from "./config-ui-state.js"
@@ -66,7 +74,7 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
   // Models the config already names are pinned into the list, so an existing
   // seat is never invisible in the picker that is supposed to edit it.
   const configured = Object.values(config.seats.employees)
-    .map((seat) => seat.model)
+    .map((seat) => readOpencodeTarget(seatTargets(seat)[LEGACY_TARGET_ID])?.model)
     .filter((model): model is string => typeof model === "string" && model.length > 0)
   const models = listModels({
     include: configured,
