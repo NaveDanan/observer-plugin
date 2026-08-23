@@ -1,17 +1,30 @@
 import { emitKeypressEvents } from "node:readline"
 import {
   LEGACY_TARGET_ID,
+  createOpencodeAdapter,
+  type HostSeatAdapter,
+  type ModelCatalogue,
   type ObserverConfig,
   type SeatsConfig,
   loadConfig,
   readOpencodeTarget,
   saveConfig,
+  seatAdapters,
   seatTargets,
 } from "@observer-ai/daemon"
 import { ROSTER } from "@observer-ai/roster"
 import { type Viewport, render, renderReport } from "./config-ui-render.js"
-import { type ConfigUIState, type EmployeeRow, type Key, applied, initialState, reduce } from "./config-ui-state.js"
-import { describeCatalogue, listModels } from "./models.js"
+import {
+  type ConfigUIState,
+  type EmployeeRow,
+  type Key,
+  type TargetProfile,
+  applied,
+  catalogueApplied,
+  initialState,
+  reduce,
+} from "./config-ui-state.js"
+import { listModels } from "./models.js"
 import { seatAgentDir, syncSeatAgents } from "./seat-agents.js"
 import { type Theme, buildTheme, colorSupport } from "./theme.js"
 
@@ -43,6 +56,7 @@ const HOME_AND_CLEAR = "\u001B[H\u001B[2J"
 
 /** What the apply layer exposes, as this file needs it. */
 type SyncSeatAgents = typeof syncSeatAgents
+type LoadTargetCatalogue = (targetId: string) => ModelCatalogue
 
 export function rosterRows(): EmployeeRow[] {
   return ROSTER.map((profile) => ({ id: profile.id, name: profile.fullName, role: profile.title }))
@@ -65,39 +79,49 @@ export interface ConfigCommandOptions {
 export async function runConfig(options: ConfigCommandOptions = {}): Promise<number> {
   const config = loadConfig()
   const roster = rosterRows()
-
-  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
-    for (const line of renderReport(config.seats, roster)) process.stdout.write(`${line}\n`)
-    return 0
-  }
-
-  // Models the config already names are pinned into the list, so an existing
-  // seat is never invisible in the picker that is supposed to edit it.
   const configured = Object.values(config.seats.employees)
     .map((seat) => readOpencodeTarget(seatTargets(seat)[LEGACY_TARGET_ID])?.model)
     .filter((model): model is string => typeof model === "string" && model.length > 0)
-  const models = listModels({
-    include: configured,
-    ...(options.probeHost === true ? { probeHost: true } : {}),
-  })
+  const adapters = seatAdapters().map((adapter) =>
+    adapter.kind === "opencode"
+      ? createOpencodeAdapter({
+          include: configured,
+          readModels: (modelOptions) =>
+            listModels({
+              ...modelOptions,
+              ...(options.probeHost === true ? { probeHost: true } : {}),
+            }),
+        })
+      : adapter,
+  )
+  const profiles = targetProfiles(adapters)
+
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    for (const line of renderReport(config.seats, roster, profiles)) process.stdout.write(`${line}\n`)
+    return 0
+  }
 
   const state = initialState({
     seats: config.seats,
     roster,
-    models,
-    // An empty catalogue is the one arrival worth explaining before the user
-    // has pressed anything: the picker will offer free text instead of a list,
-    // and `describeCatalogue` says which file it looked in and why.
-    ...(models.length === 0 ? { welcome: describeCatalogue(models) } : {}),
+    models: [],
+    profiles,
   })
 
-  return drive(config, state, syncSeatAgents, buildTheme(colorSupport(process.env, true)))
+  return drive(
+    config,
+    state,
+    syncSeatAgents,
+    (targetId) => loadTargetCatalogue(adapters, profiles, targetId),
+    buildTheme(colorSupport(process.env, true)),
+  )
 }
 
 function drive(
   config: ObserverConfig,
   start: ConfigUIState,
   sync: SyncSeatAgents | undefined,
+  loadCatalogue: LoadTargetCatalogue,
   theme: Theme,
 ): Promise<number> {
   const stdin = process.stdin
@@ -155,11 +179,27 @@ function drive(
       if (next === state) return
       state = next
 
+      if (state.request === "catalogue" && state.targetId !== undefined) {
+        const targetId = state.targetId
+        try {
+          state = catalogueApplied(state, targetId, loadCatalogue(targetId))
+        } catch (error) {
+          state = catalogueApplied(state, targetId, {
+            models: [],
+            source: targetId,
+            freshness: "unknown",
+            warnings: [
+              `Observer could not read this target's models: ${error instanceof Error ? error.message : String(error)}`,
+            ],
+          })
+        }
+      }
       if (state.request === "save") {
         const outcome = save(config, state.seats, sync)
         if (outcome.saved) saves++
         state = applied(state, outcome)
       }
+
       if (state.request === "quit") {
         finish()
         return
@@ -175,6 +215,47 @@ function drive(
     stdin.on("keypress", onKey)
     stdout.on("resize", paint)
   })
+}
+
+function targetProfiles(adapters: HostSeatAdapter[]): TargetProfile[] {
+  return adapters.flatMap((adapter) =>
+    adapter.profiles().map((profile) => ({
+      id: profile.id,
+      host: adapter.kind,
+      hostLabel: adapter.label,
+      profileLabel:
+        profile.label === adapter.label
+          ? (profile.id.includes(":") ? profile.id.slice(profile.id.indexOf(":") + 1) : "default")
+          : profile.label,
+      capabilities: adapter.capabilities(profile.id),
+    })),
+  )
+}
+
+function loadTargetCatalogue(
+  adapters: HostSeatAdapter[],
+  profiles: TargetProfile[],
+  targetId: string,
+): ModelCatalogue {
+  const profile = profiles.find((entry) => entry.id === targetId)
+  if (profile === undefined) {
+    return {
+      models: [],
+      source: targetId,
+      freshness: "unknown",
+      warnings: [`No adapter profile claims "${targetId}". Type a model id or remove this target.`],
+    }
+  }
+  const adapter = adapters.find((entry) => entry.kind === profile.host)
+  if (adapter === undefined) {
+    return {
+      models: [],
+      source: targetId,
+      freshness: "unknown",
+      warnings: [`No adapter in this build claims "${profile.host}".`],
+    }
+  }
+  return adapter.catalogue(profile.id)
 }
 
 /**

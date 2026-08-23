@@ -1,6 +1,10 @@
 import {
   LEGACY_TARGET_ID,
   OPENCODE_VARIANT_OPTION,
+  type CatalogueModel,
+  type HostCapabilities,
+  type ModelCatalogue,
+  type ModelOptionDescriptor,
   readOpencodeTarget,
   seatTargets,
   type SeatSpec,
@@ -35,7 +39,7 @@ import { type ModelInfo, groupByProvider, variantsFor } from "./models.js"
  * Every deeper screen unwinds one level per esc, so navigation has one rule:
  * esc takes you back exactly one step, and only the menu can end the session.
  */
-export type ConfigView = "menu" | "employees" | "employee" | "models"
+export type ConfigView = "menu" | "employees" | "employee" | "targets" | "models" | "options"
 
 /** One actionable row of the main menu, in display order. */
 export type MenuRowKind = "control" | "employees" | "save" | "exit"
@@ -65,7 +69,9 @@ export interface EmployeeRow {
 
 /** Rows of the per-employee view, in display order. */
 export const EMPLOYEE_ROWS = ["model", "skills", "reset"] as const
+export const TARGET_EMPLOYEE_ROWS = ["targets", "skills", "reset"] as const
 export type EmployeeRowKind = (typeof EMPLOYEE_ROWS)[number]
+export type TargetEmployeeRowKind = (typeof TARGET_EMPLOYEE_ROWS)[number]
 
 export type EntryField = "model" | "skills" | "filter"
 
@@ -75,7 +81,30 @@ export interface EntryState {
 }
 
 /** Something only the shell can do. Drained by `applied`. */
-export type ConfigRequest = "save" | "quit"
+export type ConfigRequest = "save" | "quit" | "catalogue"
+
+export interface TargetProfile {
+  id: string
+  host: string
+  hostLabel: string
+  profileLabel: string
+  capabilities: HostCapabilities
+}
+
+export interface TargetRow {
+  id: string
+  host: string
+  hostLabel: string
+  profileLabel: string
+  capabilities?: HostCapabilities
+  configured: boolean
+  target?: SeatTarget
+}
+
+export interface TargetControl {
+  label: "applied" | "experimental" | "configured" | "not applied to children"
+  effective: boolean
+}
 
 export interface ConfigUIState {
   view: ConfigView
@@ -83,10 +112,15 @@ export interface ConfigUIState {
   seats: SeatsConfig
   roster: EmployeeRow[]
   models: ModelInfo[]
+  /** Spawn-free host/profile directory. Empty keeps the legacy OpenCode-only flow. */
+  profiles: TargetProfile[]
+  /** Loaded only after the user opens one target. */
+  catalogues: Record<string, ModelCatalogue>
   /** One cursor per view, so backing out and re-entering keeps your place. */
   cursor: Record<ConfigView, number>
   /** The employee the `employee` and `models` views are scoped to. */
   employeeId?: string
+  targetId?: string
   /**
    * The effort the picker will commit alongside the highlighted model.
    *
@@ -122,6 +156,8 @@ export interface InitialInput {
   seats: SeatsConfig
   roster: EmployeeRow[]
   models: ModelInfo[]
+  profiles?: TargetProfile[]
+  catalogues?: Record<string, ModelCatalogue>
   /** Shown once on arrival, e.g. what the model catalogue managed to read. */
   welcome?: string
 }
@@ -132,7 +168,9 @@ export function initialState(input: InitialInput): ConfigUIState {
     seats: cloneSeats(input.seats),
     roster: input.roster,
     models: input.models,
-    cursor: { menu: 0, employees: 0, employee: 0, models: 0 },
+    profiles: input.profiles ?? [],
+    catalogues: input.catalogues ?? {},
+    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0 },
     filter: "",
     confirmQuit: false,
     quitAfterSave: false,
@@ -167,7 +205,8 @@ export function pickerEntries(state: ConfigUIState): PickerEntry[] {
   const matches = needle.length === 0 ? state.models : state.models.filter((model) => hits(model, needle))
   const entries: PickerEntry[] = [{ kind: "inherit", groupStart: false }]
 
-  const configured = modelOf(seatOf(state, state.employeeId))
+  const configured =
+    state.targetId === undefined ? modelOf(seatOf(state, state.employeeId)) : (targetModel(currentTarget(state)) ?? "")
   if (configured.length > 0 && !state.models.some((m) => m.id === configured)) {
     const model = strayModel(configured)
     if (needle.length === 0 || hits(model, needle)) {
@@ -228,6 +267,95 @@ export function seatOf(state: ConfigUIState, id: string | undefined): SeatSpec |
   return state.seats.employees[id]
 }
 
+export function employeeRows(state: ConfigUIState): ReadonlyArray<EmployeeRowKind | TargetEmployeeRowKind> {
+  return state.profiles.length > 0 ? TARGET_EMPLOYEE_ROWS : EMPLOYEE_ROWS
+}
+
+export function targetRows(state: ConfigUIState): TargetRow[] {
+  const seat = seatOf(state, state.employeeId)
+  const configured = seatTargets(seat)
+  const rows: TargetRow[] = state.profiles.map((profile) => {
+    const isConfigured = Object.hasOwn(configured, profile.id)
+    const target = isConfigured ? configured[profile.id] : undefined
+    const storedHost =
+      target && typeof target === "object" && !Array.isArray(target) && typeof target.host === "string"
+        ? target.host
+        : profile.host
+    const mismatched = isConfigured && storedHost !== profile.host
+    return {
+      id: profile.id,
+      host: storedHost,
+      hostLabel: mismatched ? storedHost : profile.hostLabel,
+      profileLabel: profile.profileLabel,
+      ...(mismatched ? {} : { capabilities: profile.capabilities }),
+      configured: isConfigured,
+      ...(isConfigured ? { target } : {}),
+    }
+  })
+  const known = new Set(rows.map((row) => row.id))
+  for (const id of Object.keys(configured).sort()) {
+    if (known.has(id)) continue
+    const target = configured[id]
+    const host =
+      target && typeof target === "object" && !Array.isArray(target) && typeof target.host === "string"
+        ? target.host
+        : targetHostFromId(id)
+    rows.push({
+      id,
+      host,
+      hostLabel: host,
+      profileLabel: profileLabelFromId(id),
+      configured: true,
+      target,
+    })
+  }
+  return rows
+}
+
+export function currentTargetRow(state: ConfigUIState): TargetRow | undefined {
+  if (state.targetId === undefined) return undefined
+  return targetRows(state).find((row) => row.id === state.targetId)
+}
+
+export function targetControl(row: TargetRow, enabled: boolean): TargetControl {
+  const capabilities = row.capabilities
+  const target = row.target
+  const hasSetting =
+    target &&
+    typeof target === "object" &&
+    !Array.isArray(target) &&
+    ((typeof target.model === "string" && target.model.length > 0) ||
+      (Array.isArray(target.options) && target.options.length > 0))
+  if (row.configured && !hasSetting) return { label: "configured", effective: false }
+  if (
+    capabilities === undefined ||
+    (capabilities.childModel === "unsupported" && capabilities.childReasoning === "unsupported")
+  ) {
+    return { label: "not applied to children", effective: false }
+  }
+  if (capabilities.childModel === "experimental" || capabilities.childReasoning === "experimental") {
+    return { label: "experimental", effective: false }
+  }
+  if (!enabled) return { label: "configured", effective: false }
+  return { label: "applied", effective: true }
+}
+
+export function targetDescriptors(state: ConfigUIState): ModelOptionDescriptor[] {
+  const target = currentTarget(state)
+  const model = targetModel(target)
+  if (model === undefined || state.targetId === undefined) return []
+  const catalogue = state.catalogues[state.targetId]
+  return catalogue?.models.find((entry) => entry.id === model)?.options ?? []
+}
+
+export function targetOptionValue(
+  target: SeatTarget | undefined,
+  descriptor: ModelOptionDescriptor,
+): string | boolean | undefined {
+  if (!Array.isArray(target?.options)) return undefined
+  return target.options.find((option) => option?.id === descriptor.id)?.value
+}
+
 /**
  * Folds one keypress into the state.
  *
@@ -249,8 +377,12 @@ export function reduce(state: ConfigUIState, key: Key): ConfigUIState {
       return reduceEmployees(base, key)
     case "employee":
       return reduceEmployee(base, key)
+    case "targets":
+      return reduceTargets(base, key)
     case "models":
       return reduceModels(base, key)
+    case "options":
+      return reduceOptions(base, key)
   }
 }
 
@@ -327,6 +459,7 @@ export function applied(state: ConfigUIState, outcome: { saved?: boolean; status
     // them must stay up.
     return next
   }
+
   next.dirty = false
   next.confirmQuit = false
   if (next.quitAfterSave) {
@@ -334,6 +467,18 @@ export function applied(state: ConfigUIState, outcome: { saved?: boolean; status
     next.request = "quit"
   }
   return next
+}
+
+export function catalogueApplied(state: ConfigUIState, targetId: string, catalogue: ModelCatalogue): ConfigUIState {
+  const next: ConfigUIState = {
+    ...state,
+    catalogues: { ...state.catalogues, [targetId]: catalogue },
+    status: catalogue.warnings.join(" "),
+  }
+  if (next.request === "catalogue") delete next.request
+  if (state.targetId !== targetId) return next
+  next.models = catalogueModels(state, targetId, catalogue.models)
+  return positionTargetPicker(next)
 }
 
 function reduceEmployees(state: ConfigUIState, key: Key): ConfigUIState {
@@ -356,15 +501,23 @@ function reduceEmployees(state: ConfigUIState, key: Key): ConfigUIState {
 }
 
 function reduceEmployee(state: ConfigUIState, key: Key): ConfigUIState {
-  if (isUp(key)) return moveCursor(state, "employee", -1, EMPLOYEE_ROWS.length)
-  if (isDown(key)) return moveCursor(state, "employee", 1, EMPLOYEE_ROWS.length)
+  const rows = employeeRows(state)
+  if (isUp(key)) return moveCursor(state, "employee", -1, rows.length)
+  if (isDown(key)) return moveCursor(state, "employee", 1, rows.length)
   if (isEscape(key)) return { ...state, view: "employees" }
   if (key.name === "s") return requestSave(state)
 
   if (isEnter(key)) {
-    const row = EMPLOYEE_ROWS[state.cursor.employee]
+    const row = rows[state.cursor.employee]
     const seat = seatOf(state, state.employeeId)
     if (row === "model") return openPicker(state, seat)
+    if (row === "targets") {
+      return {
+        ...state,
+        view: "targets",
+        cursor: { ...state.cursor, targets: 0 },
+      }
+    }
     if (row === "skills") {
       return { ...state, entry: { field: "skills", value: skillNames(seat).join(", ") } }
     }
@@ -374,6 +527,7 @@ function reduceEmployee(state: ConfigUIState, key: Key): ConfigUIState {
 }
 
 function reduceModels(state: ConfigUIState, key: Key): ConfigUIState {
+  if (state.targetId !== undefined) return reduceTargetModels(state, key)
   const entries = pickerEntries(state)
 
   if (isUp(key)) return clampVariant({ ...state, cursor: step(state.cursor, "models", -1, entries.length) }, entries)
@@ -390,6 +544,60 @@ function reduceModels(state: ConfigUIState, key: Key): ConfigUIState {
     if (!entry) return state
     if (entry.kind === "inherit") return assignModel(state, undefined, undefined)
     return assignModel(state, entry.model?.id, state.draftVariant)
+  }
+  return state
+}
+
+function reduceTargets(state: ConfigUIState, key: Key): ConfigUIState {
+  const rows = targetRows(state)
+  if (isUp(key)) return moveCursor(state, "targets", -1, rows.length)
+  if (isDown(key)) return moveCursor(state, "targets", 1, rows.length)
+  if (isEscape(key)) {
+    const next = { ...state, view: "employee" as const }
+    delete next.targetId
+    return next
+  }
+  if (key.name === "s") return requestSave(state)
+  if (key.name === "d" || key.name === "delete") return removeTargetAtCursor(state, rows)
+  if (isEnter(key)) {
+    const row = rows[state.cursor.targets]
+    return row === undefined ? state : openTargetPicker(state, row)
+  }
+  return state
+}
+
+function reduceTargetModels(state: ConfigUIState, key: Key): ConfigUIState {
+  const entries = pickerEntries(state)
+  if (isUp(key)) return moveCursor(state, "models", -1, entries.length)
+  if (isDown(key)) return moveCursor(state, "models", 1, entries.length)
+  if (key.name === "tab") return jumpGroup(state, entries, key.shift === true ? -1 : 1)
+  if (key.name === "/") return { ...state, entry: { field: "filter", value: state.filter } }
+  if (key.name === "m") {
+    return { ...state, entry: { field: "model", value: targetModel(currentTarget(state)) ?? "" } }
+  }
+  if (isEscape(key)) return { ...state, view: "targets" }
+  if (isEnter(key)) {
+    const entry = entries[state.cursor.models]
+    if (entry === undefined) return state
+    return assignTargetModel(state, entry.kind === "inherit" ? undefined : entry.model?.id)
+  }
+  return state
+}
+
+function reduceOptions(state: ConfigUIState, key: Key): ConfigUIState {
+  const descriptors = targetDescriptors(state)
+  if (descriptors.length === 0) return isEscape(key) ? { ...state, view: "models" } : state
+  if (isUp(key)) return moveCursor(state, "options", -1, descriptors.length)
+  if (isDown(key)) return moveCursor(state, "options", 1, descriptors.length)
+  if (isEscape(key)) return { ...state, view: "models" }
+  const descriptor = descriptors[state.cursor.options]
+  if (descriptor === undefined) return state
+  if (descriptor.type === "boolean" && (isEnter(key) || isSpace(key))) {
+    const current = targetOptionValue(currentTarget(state), descriptor)
+    return setCurrentTargetOption(state, descriptor.id, current === true ? undefined : true)
+  }
+  if (descriptor.type === "select" && (key.name === "left" || key.name === "right" || isEnter(key))) {
+    return cycleTargetOption(state, descriptor, key.name === "left" ? -1 : 1)
   }
   return state
 }
@@ -418,6 +626,7 @@ function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
     }
     if (entry.field === "skills") return setSkills(next, entry.value)
     const typed = entry.value.trim()
+    if (next.targetId !== undefined) return assignTargetModel(next, typed.length === 0 ? undefined : typed)
     if (typed.length === 0) return assignModel(next, undefined, undefined)
     return assignModel(next, typed, next.draftVariant)
   }
@@ -449,6 +658,46 @@ function openPicker(state: ConfigUIState, seat: SeatSpec | undefined): ConfigUIS
   return clampVariant(next, entries)
 }
 
+function openTargetPicker(state: ConfigUIState, row: TargetRow): ConfigUIState {
+  const catalogue = state.catalogues[row.id]
+  const next: ConfigUIState = {
+    ...state,
+    view: "models",
+    targetId: row.id,
+    models: catalogue === undefined ? [] : catalogueModels(state, row.id, catalogue.models),
+    filter: "",
+  }
+  delete next.draftVariant
+  if (catalogue === undefined && row.capabilities !== undefined) next.request = "catalogue"
+  return positionTargetPicker(next)
+}
+
+function positionTargetPicker(state: ConfigUIState): ConfigUIState {
+  const model = targetModel(currentTarget(state))
+  const entries = pickerEntries(state)
+  const index = model === undefined ? 0 : entries.findIndex((entry) => entry.model?.id === model)
+  return { ...state, cursor: { ...state.cursor, models: index >= 0 ? index : 0 } }
+}
+
+function catalogueModels(
+  state: ConfigUIState,
+  targetId: string,
+  models: CatalogueModel[],
+): ModelInfo[] {
+  const row = targetRows({ ...state, targetId }).find((entry) => entry.id === targetId)
+  const provider = row?.host ?? targetHostFromId(targetId)
+  const providerLabel = row?.hostLabel ?? provider
+  return models.map((model) => ({
+    id: model.id,
+    provider,
+    providerLabel,
+    label: model.label,
+    ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+    variants: { kind: "unknown" },
+    known: true,
+  }))
+}
+
 /**
  * Writes model and effort together, and clears the effort when the model goes.
  *
@@ -473,8 +722,7 @@ function assignModel(state: ConfigUIState, model: string | undefined, variant: s
       if (target.options.length === 0) delete target.options
       targets[LEGACY_TARGET_ID] = target
     }
-    const { model: _model, variant: _variant, targets: _targets, ...rest } = seat
-    return Object.keys(targets).length === 0 ? rest : { ...rest, targets }
+    return seatWithTargets(seat, targets)
   })
   return {
     ...next,
@@ -484,6 +732,121 @@ function assignModel(state: ConfigUIState, model: string | undefined, variant: s
         ? "Model cleared. This employee inherits the session's model, and the effort was dropped with it."
         : `Model set to ${model}${variant === undefined ? "" : ` at ${variant} effort`}.`,
   }
+}
+
+function assignTargetModel(state: ConfigUIState, model: string | undefined): ConfigUIState {
+  const id = state.employeeId
+  const row = currentTargetRow(state)
+  if (id === undefined || row === undefined) return state
+  if (model === undefined && !row.configured) {
+    return { ...state, view: "targets", status: `${row.hostLabel} is already unconfigured for this employee.` }
+  }
+
+  const catalogue = state.catalogues[row.id]
+  const catalogueModel = catalogue?.models.find((candidate) => candidate.id === model)
+  const descriptors = catalogueModel?.options ?? []
+  const next = updateSeat(state, id, (seat) => {
+    const targets = seatTargets(seat)
+    if (model === undefined) {
+      delete targets[row.id]
+      return seatWithTargets(seat, targets)
+    }
+    const existing = targets[row.id]
+    const target: SeatTarget =
+      existing && typeof existing === "object" && !Array.isArray(existing)
+        ? { ...existing, host: row.host, model }
+        : { host: row.host, model }
+    const options =
+      catalogueModel === undefined
+        ? Array.isArray(target.options)
+          ? target.options
+          : []
+        : clampTargetOptions(target.options, descriptors)
+    if (options.length === 0) delete target.options
+    else target.options = options
+    targets[row.id] = target
+    return seatWithTargets(seat, targets)
+  })
+  return {
+    ...next,
+    view: model !== undefined && descriptors.length > 0 ? "options" : "targets",
+    cursor: { ...next.cursor, options: 0 },
+    status:
+      model === undefined
+        ? `${row.hostLabel} target removed.`
+        : `${row.hostLabel} model set to ${model}.${descriptors.length > 0 ? " Configure its options below." : ""}`,
+  }
+}
+
+function removeTargetAtCursor(state: ConfigUIState, rows: TargetRow[]): ConfigUIState {
+  const row = rows[state.cursor.targets]
+  const id = state.employeeId
+  if (row === undefined || id === undefined) return state
+  if (!row.configured) return { ...state, status: `${row.hostLabel} is not configured for this employee.` }
+  const next = updateSeat(state, id, (seat) => {
+    const targets = seatTargets(seat)
+    delete targets[row.id]
+    return seatWithTargets(seat, targets)
+  })
+  return { ...next, status: `${row.hostLabel} target removed.` }
+}
+
+function setCurrentTargetOption(
+  state: ConfigUIState,
+  optionId: string,
+  value: string | boolean | undefined,
+): ConfigUIState {
+  const employeeId = state.employeeId
+  const targetId = state.targetId
+  if (employeeId === undefined || targetId === undefined) return state
+  return updateSeat(state, employeeId, (seat) => {
+    const targets = seatTargets(seat)
+    const current = targets[targetId]
+    if (!current || typeof current !== "object" || Array.isArray(current)) return seat
+    const target = { ...current }
+    const options = setTargetOption(target.options, optionId, value)
+    if (options.length === 0) delete target.options
+    else target.options = options
+    targets[targetId] = target
+    return seatWithTargets(seat, targets)
+  })
+}
+
+function cycleTargetOption(
+  state: ConfigUIState,
+  descriptor: ModelOptionDescriptor,
+  direction: number,
+): ConfigUIState {
+  const values: Array<string | undefined> = [
+    undefined,
+    ...(descriptor.choices ?? []).map((choice) => choice.id),
+  ]
+  if (values.length <= 1) {
+    return { ...state, status: `${descriptor.label} has no choices to cycle through.` }
+  }
+  const current = targetOptionValue(currentTarget(state), descriptor)
+  const at = typeof current === "string" ? values.indexOf(current) : 0
+  return setCurrentTargetOption(state, descriptor.id, values[wrap(at + direction, values.length)])
+}
+
+function clampTargetOptions(
+  options: SeatTargetOption[] | undefined,
+  descriptors: ModelOptionDescriptor[],
+): SeatTargetOption[] {
+  if (!Array.isArray(options)) return []
+  return options.filter((option) => {
+    const descriptor = descriptors.find((candidate) => candidate.id === option.id)
+    if (descriptor === undefined) return false
+    if (descriptor.type === "boolean") return typeof option.value === "boolean"
+    if (typeof option.value !== "string") return false
+    const choices = descriptor.choices ?? []
+    return choices.length === 0 || choices.some((choice) => choice.id === option.value)
+  })
+}
+
+function seatWithTargets(seat: SeatSpec, targets: Record<string, SeatTarget>): SeatSpec {
+  const { model: _model, variant: _variant, targets: _targets, ...rest } = seat
+  return Object.keys(targets).length === 0 ? rest : { ...rest, targets }
 }
 
 function setSkills(state: ConfigUIState, raw: string): ConfigUIState {
@@ -630,6 +993,27 @@ function wrap(index: number, length: number): number {
 
 function modelOf(seat: SeatSpec | undefined): string {
   return readOpencodeTarget(opencodeTargetOf(seat))?.model ?? ""
+}
+
+function currentTarget(state: ConfigUIState): SeatTarget | undefined {
+  if (state.targetId === undefined) return undefined
+  return seatTargets(seatOf(state, state.employeeId))[state.targetId]
+}
+
+function targetModel(target: SeatTarget | undefined): string | undefined {
+  return target && typeof target === "object" && !Array.isArray(target) && typeof target.model === "string"
+    ? target.model
+    : undefined
+}
+
+function targetHostFromId(targetId: string): string {
+  const separator = targetId.indexOf(":")
+  return separator === -1 ? targetId : targetId.slice(0, separator)
+}
+
+function profileLabelFromId(targetId: string): string {
+  const separator = targetId.indexOf(":")
+  return separator === -1 ? "default" : targetId.slice(separator + 1)
 }
 
 function skillNames(seat: SeatSpec | undefined): string[] {

@@ -3,17 +3,19 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { diagnoseSeats } from "../../../apps/daemon/dist/index.js"
+import { type ModelCatalogue, diagnoseSeats } from "../../../apps/daemon/dist/index.js"
 import {
   type ConfigUIState,
   type EmployeeRow,
   type Key,
   type ModelInfo,
   type SeatsConfig,
+  type TargetProfile,
   applied,
   buildCatalogue,
   buildTheme,
   colorSupport,
+  catalogueApplied,
   diagnoseOpencodeSeats,
   effortCycle,
   initialState,
@@ -23,6 +25,7 @@ import {
   render,
   renderReport,
   rosterRows,
+  targetRows,
 } from "../dist/index.js"
 
 /**
@@ -87,6 +90,128 @@ const MODELS: ModelInfo[] = buildCatalogue({
   }),
 })
 
+const TARGET_PROFILES: TargetProfile[] = [
+  {
+    id: "opencode:default",
+    host: "opencode",
+    hostLabel: "OpenCode",
+    profileLabel: "default",
+    capabilities: {
+      discovery: "cached",
+      childModel: "supported",
+      childReasoning: "supported",
+      requiresReload: true,
+    },
+  },
+  {
+    id: "codex:default",
+    host: "codex",
+    hostLabel: "Codex",
+    profileLabel: "default",
+    capabilities: {
+      discovery: "live",
+      childModel: "experimental",
+      childReasoning: "experimental",
+      requiresReload: true,
+    },
+  },
+  {
+    id: "copilot:default",
+    host: "copilot",
+    hostLabel: "GitHub Copilot CLI",
+    profileLabel: "default",
+    capabilities: {
+      discovery: "live",
+      childModel: "unsupported",
+      childReasoning: "unsupported",
+      requiresReload: true,
+    },
+  },
+]
+
+const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
+  "opencode:default": {
+    source: "fixture",
+    freshness: "cached",
+    warnings: [],
+    models: [
+      {
+        id: "github-copilot/claude-opus-5",
+        label: "Claude Opus 5",
+        options: [
+          {
+            id: "variant",
+            label: "Reasoning effort",
+            type: "select",
+            choices: [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium" },
+              { id: "high", label: "high" },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  "codex:default": {
+    source: "fixture",
+    freshness: "live",
+    warnings: [],
+    models: [
+      {
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6 Sol",
+        options: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning effort",
+            type: "select",
+            choices: [
+              { id: "low", label: "low" },
+              { id: "high", label: "high" },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  "copilot:default": {
+    source: "fixture",
+    freshness: "live",
+    warnings: [],
+    models: [
+      {
+        id: "claude-opus-5",
+        label: "Claude Opus 5",
+        options: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning effort",
+            type: "select",
+            choices: [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium" },
+              { id: "high", label: "high" },
+            ],
+          },
+        ],
+      },
+      {
+        id: "claude-haiku-4.5",
+        label: "Claude Haiku 4.5",
+        options: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning effort",
+            type: "select",
+            choices: [{ id: "low", label: "low" }],
+          },
+        ],
+      },
+    ],
+  },
+}
+
 /** Picker rows: 0 inherit, 1 Opus, 2 Sonnet, 3 Haiku, 4 Nano, 5 GPT-4o. */
 const OPUS = 1
 const SONNET = 2
@@ -99,6 +224,19 @@ function start(seats: Partial<SeatsConfig> = {}): ConfigUIState {
     seats: { control: false, employees: {}, ...seats },
     roster: ROSTER,
     models: MODELS,
+  })
+}
+
+function targetStart(
+  seats: Partial<SeatsConfig> = {},
+  catalogues: Record<string, ModelCatalogue> = TARGET_CATALOGUES,
+): ConfigUIState {
+  return initialState({
+    seats: { control: true, employees: {}, ...seats },
+    roster: ROSTER,
+    models: [],
+    profiles: TARGET_PROFILES,
+    catalogues,
   })
 }
 
@@ -115,6 +253,13 @@ function into(state: ConfigUIState): ConfigUIState {
 
 function employees(seats: Partial<SeatsConfig> = {}): ConfigUIState {
   return into(start(seats))
+}
+
+function targets(
+  seats: Partial<SeatsConfig> = {},
+  catalogues: Record<string, ModelCatalogue> = TARGET_CATALOGUES,
+): ConfigUIState {
+  return press(into(targetStart(seats, catalogues)), "return", "return")
 }
 
 /** `"down"` is a key name; `"a"` is a character typed into a text field. */
@@ -245,6 +390,186 @@ describe("navigation", () => {
     expect(pickerEntries(second)[second.cursor.models]?.providerLabel).toBe("OpenAI")
     const back = press(second, { name: "tab", shift: true })
     expect(pickerEntries(back)[back.cursor.models]?.providerLabel).toBe("Anthropic")
+  })
+})
+
+describe("host targets", () => {
+  it("loads one target catalogue only after that target is opened", () => {
+    let state = targets({}, {})
+    expect(state.view).toBe("targets")
+    expect(state.catalogues).toEqual({})
+
+    state = press(state, "return")
+    expect(state.view).toBe("models")
+    expect(state.targetId).toBe("opencode:default")
+    expect(state.request).toBe("catalogue")
+
+    state = catalogueApplied(state, "opencode:default", TARGET_CATALOGUES["opencode:default"]!)
+    expect(state.request).toBeUndefined()
+    expect(pickerEntries(state).map((entry) => entry.model?.id)).toEqual([
+      undefined,
+      "github-copilot/claude-opus-5",
+    ])
+  })
+
+  it("configures Copilot honestly as recorded but not applied to children", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "copilot:default": { host: "copilot" },
+            "opencode:default": {
+              host: "opencode",
+              model: "github-copilot/claude-opus-5",
+              options: [{ id: "variant", value: "medium" }],
+            },
+          },
+        },
+      },
+    }
+    let state = press(targets(seats), "down", "down")
+    expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("empty - choose a model or remove")
+
+    state = press(state, "return", "down", "return")
+    expect(state.view).toBe("options")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
+      host: "copilot",
+      model: "claude-opus-5",
+    })
+    state = press(state, "right")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.options).toEqual([
+      { id: "reasoningEffort", value: "low" },
+    ])
+    expect(diagnoseSeats(state.seats).issues.map((issue) => issue.code)).not.toContain("empty-target")
+    state = press(state, "escape", "escape")
+    expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("not applied to children")
+  })
+
+  it("labels Codex child control experimental", () => {
+    let state = press(targets(), "down", "return", "down", "return")
+    expect(state.view).toBe("options")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["codex:default"]?.model).toBe("gpt-5.6-sol")
+    state = press(state, "escape", "escape")
+    expect(state.view).toBe("targets")
+    expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("experimental")
+  })
+
+  it("clears options the newly selected model does not offer", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "copilot:default": {
+              host: "copilot",
+              model: "claude-opus-5",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+          },
+        },
+      },
+    }
+    const state = press(targets(seats), "down", "down", "return", "down", "return")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
+      host: "copilot",
+      model: "claude-haiku-4.5",
+    })
+  })
+
+  it("preserves options when the catalogue does not know the model", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "copilot:default": {
+              host: "copilot",
+              model: "future-model",
+              options: [{ id: "futureOption", value: "kept", metadata: 42 }],
+            },
+          },
+        },
+      },
+    }
+    const state = press(targets(seats), "down", "down", "return", "return")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.options).toEqual([
+      { id: "futureOption", value: "kept", metadata: 42 },
+    ])
+  })
+
+  it("does not report a target as applied when its key and stored host disagree", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "opencode:default": { host: "copilot", model: "claude-opus-5" },
+          },
+        },
+      },
+    }
+    const output = render(targets(seats), { rows: 40, columns: 120 }).join("\n")
+    expect(output).toContain("not applied to children")
+    expect(output).not.toContain("claude-opus-5          applied")
+  })
+
+  it("unwinds options through models and targets one level at a time", () => {
+    let state = press(targets(), "down", "return", "down", "return")
+    expect(state.view).toBe("options")
+    state = press(state, "escape")
+    expect(state.view).toBe("models")
+    state = press(state, "escape")
+    expect(state.view).toBe("targets")
+    state = press(state, "escape")
+    expect(state.view).toBe("employee")
+  })
+
+  it("removes an empty target and the warning reported for it", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "copilot:default": { host: "copilot" },
+            "opencode:default": { host: "opencode", model: "github-copilot/claude-opus-5" },
+          },
+        },
+      },
+    }
+    const state = press(targets(seats), "down", "down", "d")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toBeUndefined()
+    expect(render(state, { rows: 40, columns: 120 }).join("\n")).not.toContain("This target sets nothing")
+  })
+
+  it("lists unsupported targets in report mode instead of flattening them into OpenCode", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: { "copilot:default": { host: "copilot", model: "claude-opus-5" } },
+        },
+      },
+    }
+    const report = renderReport(seats, ROSTER, TARGET_PROFILES).join("\n")
+    expect(report).toContain("copilot:default")
+    expect(report).toContain("claude-opus-5")
+    expect(report).toContain("not applied to children")
+  })
+
+  it("lists targets for unknown employee ids in report mode", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-metha": {
+          targets: { "codex:default": { host: "codex", model: "gpt-5.6-sol" } },
+        },
+      },
+    }
+    const report = renderReport(seats, ROSTER, TARGET_PROFILES).join("\n")
+    expect(report).toContain("arjun-metha (not on the roster)")
+    expect(report).toContain("codex:default")
+    expect(report).toContain("gpt-5.6-sol")
   })
 })
 

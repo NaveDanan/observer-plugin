@@ -2,6 +2,7 @@ import {
   LEGACY_TARGET_ID,
   type SeatIssue,
   type SeatSpec,
+  type SeatTarget,
   type SeatsConfig,
   diagnoseSeats,
   readOpencodeTarget,
@@ -11,15 +12,23 @@ import { formatContext } from "./models.js"
 import { diagnoseOpencodeSeats } from "./seat-agents.js"
 import {
   type ConfigUIState,
-  EMPLOYEE_ROWS,
   type EmployeeRow,
   type MenuRowKind,
   type PickerEntry,
+  type TargetProfile,
+  type TargetControl,
+  type TargetRow,
   currentEmployee,
+  currentTargetRow,
+  employeeRows,
   effortCycle,
   menuRows,
   pickerEntries,
   seatOf,
+  targetControl,
+  targetDescriptors,
+  targetOptionValue,
+  targetRows,
 } from "./config-ui-state.js"
 import { PLAIN_THEME, type Theme, padEnd as pad, truncate } from "./theme.js"
 
@@ -100,8 +109,14 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
     case "employee":
       lines.push(...employeeDetail(state, columns, theme))
       break
+    case "targets":
+      lines.push(...targetList(state, room, columns, theme))
+      break
     case "models":
       lines.push(...modelPicker(state, room, columns, theme))
+      break
+    case "options":
+      lines.push(...optionEditor(state, columns, theme))
       break
   }
 
@@ -121,7 +136,7 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
 function header(state: ConfigUIState, effective: boolean, columns: number, theme: Theme): string[] {
   const control = state.seats.control
   const lines = [
-    theme.heading("Observer config") + theme.dim(" - model, reasoning effort and skills per employee"),
+    theme.heading("Observer config") + theme.dim(" - host targets, model options and skills per employee"),
     "",
     ...field(
       "Seat control",
@@ -198,11 +213,18 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
     exit: theme.dim("leave observer config"),
   }
   const details: Record<MenuRowKind, string[]> = {
-    control: [
-      "OpenCode only - Codex, Claude Code and Copilot CLI are not seated",
-      "`general` delegations only - any other agent keeps its own prompt, tools and model",
-    ],
-    employees: ["Give a person a model, a reasoning effort and skills."],
+    control:
+      state.profiles.length === 0
+        ? [
+            "OpenCode only - Codex, Claude Code and Copilot CLI are not seated",
+            "`general` delegations only - any other agent keeps its own prompt, tools and model",
+          ]
+        : [
+            "OpenCode targets are applied; Codex is experimental; Claude Code and Copilot CLI targets are recorded only",
+            "Each target says whether it is applied, experimental, configured, or not applied to children",
+            "`general` OpenCode delegations only - any other agent keeps its own prompt, tools and model",
+          ],
+    employees: ["Give a person one target per host/profile, plus shared skills."],
     save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],
     exit: [],
   }
@@ -210,7 +232,7 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
   const lines = [theme.heading("Main menu"), ""]
   rows.forEach((row, index) => {
     const selected = index === at
-    const label = pad(labels[row], GUTTER)
+    const label = pad(labels[row] ?? row, GUTTER)
     lines.push(marker(selected, false, theme) + (selected ? theme.focus(label) : label) + values[row])
     if (!selected) return
     for (const detail of details[row]) {
@@ -260,8 +282,15 @@ function employeeList(
     if (!row) continue
     const seat = state.seats.employees[row.id]
     const configured = opencodeSeat(seat)
-    const model = configured?.model ?? "inherit"
-    const variant = configured?.variant ?? "-"
+    const targets = seatTargets(seat)
+    const targetCount = Object.keys(targets).length
+    const model =
+      state.profiles.length > 0
+        ? targetCount === 0
+          ? "no targets"
+          : `${targetCount} target${targetCount === 1 ? "" : "s"}`
+        : (configured?.model ?? "inherit")
+    const variant = state.profiles.length > 0 ? "-" : (configured?.variant ?? "-")
     const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
     const selected = index === state.cursor.employees
     const name = pad(truncate(row.name, width.name - 1), width.name)
@@ -273,7 +302,7 @@ function employeeList(
       marker(selected, flagged.has(row.id), theme) +
         (selected ? theme.focus(name) : name) +
         theme.dim(pad(truncate(row.role, width.role - 1), width.role)) +
-        (configured !== undefined ? theme.accent(modelCell) : theme.dim(modelCell)) +
+        (state.profiles.length > 0 ? (targetCount > 0 ? theme.accent(modelCell) : theme.dim(modelCell)) : configured !== undefined ? theme.accent(modelCell) : theme.dim(modelCell)) +
         pad(variant, width.effort) +
         (width.skills > 0 ? theme.dim(truncate(skills.length > 0 ? skills : "-", width.skills)) : ""),
     )
@@ -287,18 +316,21 @@ function employeeList(
 function employeeDetail(state: ConfigUIState, columns: number, theme: Theme): string[] {
   const employee = currentEmployee(state)
   const seat = seatOf(state, state.employeeId)
+  const rows = employeeRows(state)
   const configured = opencodeSeat(seat)
   const model = configured?.model ?? "inherit (the session's model)"
   const variant = configured?.variant ?? "-"
   const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
 
-  const values: Record<(typeof EMPLOYEE_ROWS)[number], string> = {
+  const values: Record<string, string> = {
     model: `${configured !== undefined ? theme.accent(model) : theme.dim(model)}   ${theme.dim("effort")} ${variant}`,
+    targets: `${Object.keys(seatTargets(seat)).length} configured   ${theme.dim("enter to edit by host and profile")}`,
     skills: skills.length > 0 ? skills : theme.dim("none"),
-    reset: theme.dim("clear this employee's model, effort and skills"),
+    reset: theme.dim("clear this employee's targets and skills"),
   }
-  const labels: Record<(typeof EMPLOYEE_ROWS)[number], string> = {
+  const labels: Record<string, string> = {
     model: "Model",
+    targets: "Targets",
     skills: "Skills",
     reset: "Reset to defaults",
   }
@@ -308,13 +340,13 @@ function employeeDetail(state: ConfigUIState, columns: number, theme: Theme): st
     theme.dim(`  ${employee?.role ?? ""}`),
     "",
   ]
-  EMPLOYEE_ROWS.forEach((row, index) => {
+  rows.forEach((row, index) => {
     const selected = index === state.cursor.employee
-    const label = pad(labels[row], GUTTER)
+    const label = pad(labels[row] ?? row, GUTTER)
     lines.push(
       marker(selected, false, theme) +
         (selected ? theme.focus(label) : label) +
-        truncate(values[row], columns - GUTTER - 2),
+        truncate(values[row] ?? "", columns - GUTTER - 2),
     )
   })
 
@@ -328,7 +360,78 @@ function employeeDetail(state: ConfigUIState, columns: number, theme: Theme): st
   return lines
 }
 
+function targetList(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
+  const employee = currentEmployee(state)
+  const rows = targetRows(state)
+  const lines = [
+    breadcrumb(theme, "Employees", employee?.name ?? state.employeeId ?? "employee", "Targets"),
+    "",
+    theme.dim(`  ${pad("Host / profile", 26)}${pad("Model", 38)}Status`),
+  ]
+  const window = windowOf(state.cursor.targets, rows.length, Math.max(2, room - 3))
+  for (let index = window.start; index < window.end; index++) {
+    const row = rows[index]
+    if (row === undefined) continue
+    const selected = index === state.cursor.targets
+    const target = isTarget(row.target) ? row.target : undefined
+    const model = target?.model ?? (row.configured ? "empty - choose a model or remove" : "not configured")
+    const verdict = targetControl(row, state.seats.control)
+    const title = `${row.hostLabel} / ${row.profileLabel}`
+    lines.push(
+      marker(selected, row.configured && target === undefined, theme) +
+        (selected ? theme.focus(pad(truncate(title, 25), 26)) : pad(truncate(title, 25), 26)) +
+        (row.configured ? theme.accent(pad(truncate(model, 37), 38)) : theme.dim(pad(truncate(model, 37), 38))) +
+        (row.configured ? controlStyle(verdict.label, theme)(verdict.label) : theme.dim("-")),
+    )
+    if (selected && target !== undefined) {
+      const summary = optionSummary(target)
+      if (summary.length > 0) lines.push("  " + theme.dim(`options: ${summary}`))
+    }
+  }
+  if (window.end < rows.length || window.start > 0) {
+    lines.push(theme.dim(`  ${window.start + 1}-${window.end} of ${rows.length}`))
+  }
+  return lines
+}
+
+function optionEditor(state: ConfigUIState, columns: number, theme: Theme): string[] {
+  const employee = currentEmployee(state)
+  const row = currentTargetRow(state)
+  const target = isTarget(row?.target) ? row.target : undefined
+  const descriptors = targetDescriptors(state)
+  const lines = [
+    breadcrumb(
+      theme,
+      "Employees",
+      employee?.name ?? state.employeeId ?? "employee",
+      "Targets",
+      `${row?.hostLabel ?? "Host"} options`,
+    ),
+    "",
+    theme.dim(`  ${pad("Option", GUTTER)}Value`),
+  ]
+  descriptors.forEach((descriptor, index) => {
+    const selected = index === state.cursor.options
+    const value = targetOptionValue(target, descriptor)
+    const rendered =
+      descriptor.type === "boolean"
+        ? value === true
+          ? "on"
+          : "off"
+        : selectOptionScale(descriptor.choices?.map((choice) => choice.id) ?? [], value)
+    const label = pad(descriptor.label, GUTTER)
+    lines.push(
+      marker(selected, false, theme) +
+        (selected ? theme.focus(label) : label) +
+        (selected ? theme.accent(rendered) : truncate(rendered, columns - GUTTER - 2)),
+    )
+  })
+  if (descriptors.length === 0) lines.push(theme.dim("  This model exposes no configurable options."))
+  return lines
+}
+
 function modelPicker(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
+  if (state.targetId !== undefined) return targetModelPicker(state, room, columns, theme)
   const employee = currentEmployee(state)
   const entries = pickerEntries(state)
   const cycle = effortCycle(state)
@@ -379,6 +482,50 @@ function modelPicker(state: ConfigUIState, room: number, columns: number, theme:
       "",
       theme.dim(pad("Model", GUTTER)) + theme.accent(`${state.entry.value}_`),
       " ".repeat(GUTTER) + theme.dim("written provider/model, e.g. anthropic/claude-opus-4-5; empty to inherit"),
+    )
+  }
+  return lines
+}
+
+function targetModelPicker(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
+  const employee = currentEmployee(state)
+  const row = currentTargetRow(state)
+  const entries = pickerEntries(state)
+  const modelWidth = Math.max(28, columns - 14)
+  const lines = [
+    breadcrumb(
+      theme,
+      "Employees",
+      employee?.name ?? state.employeeId ?? "employee",
+      "Targets",
+      `${row?.hostLabel ?? "Host"} model`,
+    ) + (state.filter.length > 0 ? theme.dim("   filter: ") + theme.accent(state.filter) : ""),
+    "",
+    theme.dim(`  ${pad("Model", modelWidth)}Context`),
+  ]
+  const window = windowOf(state.cursor.models, entries.length, Math.max(2, room - 3))
+  for (let index = window.start; index < window.end; index++) {
+    const entry = entries[index]
+    if (entry === undefined) continue
+    const selected = index === state.cursor.models
+    const label = pad(truncate(labelOf(entry), modelWidth - 1), modelWidth)
+    lines.push(
+      marker(selected, false, theme) +
+        (selected ? theme.focus(label) : label) +
+        theme.dim(entry.kind === "inherit" ? "-" : formatContext(entry.model?.contextWindow)),
+    )
+  }
+  if (entries.length === 1 && state.filter.length > 0) {
+    lines.push(theme.dim(`  Nothing matches "${state.filter}". Press / to change the filter, or m to type a model.`))
+  }
+  if (state.entry?.field === "filter") {
+    lines.push("", theme.dim(pad("Filter", GUTTER)) + theme.accent(`${state.entry.value}_`))
+  }
+  if (state.entry?.field === "model") {
+    lines.push(
+      "",
+      theme.dim(pad("Model", GUTTER)) + theme.accent(`${state.entry.value}_`),
+      " ".repeat(GUTTER) + theme.dim("type this host's model id; empty removes the target"),
     )
   }
   return lines
@@ -458,7 +605,8 @@ function notes(state: ConfigUIState, issues: SeatIssue[], columns: number, theme
   }
   for (const issue of shown.slice(0, 4)) {
     const paint = issue.severity === "error" ? theme.alert : theme.warn
-    lines.push(...wrapAt(`${issue.severity}: ${issue.message}`, columns, "  ").split("\n").map(paint))
+    const target = issue.targetId === undefined ? "" : `${issue.targetId}: `
+    lines.push(...wrapAt(`${issue.severity}: ${target}${issue.message}`, columns, "  ").split("\n").map(paint))
   }
   if (shown.length > 4) lines.push(theme.dim(`  ...and ${shown.length - 4} more; see observer doctor.`))
   return lines
@@ -491,16 +639,28 @@ function hints(state: ConfigUIState, theme: Theme): string[] {
       )
     case "employee":
       return bar(["up/down", "move"], ["enter", "change"], ["s", "save"], ["esc", "back"])
+    case "targets":
+      return bar(["up/down", "move"], ["enter", "configure"], ["d", "remove"], ["s", "save"], ["esc", "back"])
     case "models":
-      return bar(
-        ["up/down", "move"],
-        ["left/right", "effort"],
-        ["tab", "vendor"],
-        ["/", "filter"],
-        ["m", "type a model"],
-        ["enter", "select"],
-        ["esc", "back"],
-      )
+      return state.targetId === undefined
+        ? bar(
+            ["up/down", "move"],
+            ["left/right", "effort"],
+            ["tab", "vendor"],
+            ["/", "filter"],
+            ["m", "type a model"],
+            ["enter", "select"],
+            ["esc", "back"],
+          )
+        : bar(
+            ["up/down", "move"],
+            ["/", "filter"],
+            ["m", "type a model"],
+            ["enter", "select"],
+            ["esc", "back"],
+          )
+    case "options":
+      return bar(["up/down", "move"], ["left/right", "change select"], ["enter", "toggle/change"], ["esc", "back"])
   }
 }
 
@@ -513,7 +673,7 @@ function hints(state: ConfigUIState, theme: Theme): string[] {
  * cannot take your keystrokes. No theme reaches this function — a pipe gets
  * text, whatever the terminal it was launched from could have drawn.
  */
-export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[] {
+export function renderReport(seats: SeatsConfig, roster: EmployeeRow[], profiles: TargetProfile[] = []): string[] {
   const diagnosis = diagnoseSeats(seats)
   const issues = seatIssues(seats)
   const lines = [
@@ -527,6 +687,10 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[
   const configured = roster.filter((row) => seats.employees[row.id] !== undefined)
   if (configured.length === 0) {
     lines.push("No employee has a seat. Every subagent inherits the session's model.")
+  } else if (profiles.length > 0) {
+    for (const row of configured) {
+      lines.push(...reportTargetSeat(row.id, seats.employees[row.id]!, profiles, seats.control))
+    }
   } else {
     for (const row of configured) {
       const seat = seats.employees[row.id]!
@@ -542,13 +706,54 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[]): string[
   // separate: they are invisible in a roster-ordered table, and they are
   // exactly the typo a user needs told about.
   const strays = Object.keys(seats.employees).filter((id) => !roster.some((row) => row.id === id))
-  for (const id of strays) lines.push(`${pad(id, 18)}not on the roster`)
+  for (const id of strays) {
+    if (profiles.length > 0) lines.push(...reportTargetSeat(`${id} (not on the roster)`, seats.employees[id]!, profiles, seats.control))
+    else lines.push(`${pad(id, 18)}not on the roster`)
+  }
 
   if (issues.length > 0) {
     lines.push("", "Notes")
-    for (const issue of issues) lines.push(`  ${issue.severity}: ${issue.message}`)
+    for (const issue of issues) {
+      const scope = [issue.employeeId, issue.targetId].filter((part): part is string => typeof part === "string").join(" / ")
+      lines.push(`  ${issue.severity}: ${scope.length > 0 ? `${scope}: ` : ""}${issue.message}`)
+    }
   }
   lines.push("", "Run `observer config` in a terminal to change any of this.")
+  return lines
+}
+
+function reportTargetSeat(
+  employee: string,
+  seat: SeatSpec,
+  profiles: TargetProfile[],
+  control: boolean,
+): string[] {
+  const targets = seatTargets(seat)
+  const ids = Object.keys(targets).sort()
+  if (ids.length === 0) {
+    const skills = Array.isArray(seat.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
+    return [`${employee}  no targets${skills.length > 0 ? `  skills: ${skills}` : ""}`]
+  }
+  const lines = [employee]
+  for (const id of ids) {
+    const target = targets[id]
+    const host = isTarget(target) ? target.host : targetHostFromId(id)
+    const profile = profiles.find((entry) => entry.id === id)
+    const profileMatches = profile?.host === host
+    const row: TargetRow = {
+      id,
+      host,
+      hostLabel: profileMatches ? profile.hostLabel : host,
+      profileLabel: profile?.profileLabel ?? profileLabelFromId(id),
+      ...(profileMatches ? { capabilities: profile.capabilities } : {}),
+      configured: true,
+      target,
+    }
+    const verdict = targetControl(row, control)
+    const model = isTarget(target) && typeof target.model === "string" ? target.model : "inherit"
+    const options = isTarget(target) ? optionSummary(target) : "not a target"
+    lines.push(`  ${pad(id, 22)}${pad(model, 38)}${pad(verdict.label, 26)}${options || "-"}`)
+  }
   return lines
 }
 
@@ -646,6 +851,40 @@ function labelOf(entry: PickerEntry): string {
 
 function opencodeSeat(seat: SeatSpec | undefined): { model: string; variant?: string } | undefined {
   return readOpencodeTarget(seatTargets(seat)[LEGACY_TARGET_ID])
+}
+
+function isTarget(value: unknown): value is SeatTarget {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function optionSummary(target: SeatTarget): string {
+  if (!Array.isArray(target.options)) return ""
+  return target.options
+    .filter((option) => option && typeof option === "object" && typeof option.id === "string")
+    .map((option) => `${option.id}=${String(option.value)}`)
+    .join(", ")
+}
+
+function selectOptionScale(choices: string[], current: string | boolean | undefined): string {
+  return ["off", ...choices]
+    .map((choice) => (choice === (current ?? "off") ? `[${choice}]` : choice))
+    .join(" ")
+}
+
+function controlStyle(label: TargetControl["label"], theme: Theme): (text: string) => string {
+  if (label === "applied") return theme.good
+  if (label === "experimental") return theme.warn
+  return theme.dim
+}
+
+function targetHostFromId(targetId: string): string {
+  const separator = targetId.indexOf(":")
+  return separator === -1 ? targetId : targetId.slice(0, separator)
+}
+
+function profileLabelFromId(targetId: string): string {
+  const separator = targetId.indexOf(":")
+  return separator === -1 ? "default" : targetId.slice(separator + 1)
 }
 
 function clamp(value: number, low: number, high: number): number {
