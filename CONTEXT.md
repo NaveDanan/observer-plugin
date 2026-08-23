@@ -104,3 +104,17 @@ The Chat tab's merged view of an agent's messages *and* its tool calls, ordered 
 sits between the messages it happened between. Built by `buildTimeline`. There is no Tools tab —
 a tool call read apart from the sentence that explains it is the thing this merge exists to fix.
 _Avoid_: Thread (that is the `<ol>` inside it), tool log
+
+**Step**:
+One line in the transcript for one thing the agent did — a tool call, or a stretch of thinking.
+It says what was done ("Edit toolStep.ts"), how it went (`+7 −6`, "exit 1", "14 matches"), and
+opens into a **tool card**. Derived from a raw tool call by `describeToolCall`, which is where
+every host's argument vocabulary is reconciled: `filePath` and `path` and `file_path` are the
+same fact, and the panel should not care which host said it.
+_Avoid_: Tool row, activity line
+
+**Tool card**:
+What a step opens into: the arguments the call was given and the output it produced, shown as
+what they *are* — a file with its own line gutter, a terminal, a list of matches, a diff — over a
+footer carrying the start time, the duration and the output size.
+_Avoid_: Tool detail, expando

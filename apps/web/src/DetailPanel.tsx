@@ -12,6 +12,7 @@ import { ChatMarkdown } from "./chat/ChatMarkdown"
 import { EMPTY_VOCABULARY, type InlineVocabulary } from "./chat/InlineVocabulary"
 import { buildTimeline } from "./chat/timeline"
 import { ToolRun } from "./chat/ToolRun"
+import { Thought } from "./chat/Thought"
 import { churnSummary, churnTitle } from "./churn"
 import { useDismissLayer } from "./dismissLayer"
 import { ProfileTab } from "./ProfileTab"
@@ -234,6 +235,8 @@ function ChatTab({
                   failed={row.failed}
                   running={row.running}
                 />
+              ) : row.message.role === "reasoning" ? (
+                <Thought key={row.id} message={row.message} vocabulary={vocabulary} />
               ) : (
                 <li key={row.id} className={`msg is-${row.message.role}${row.grouped ? " is-grouped" : ""}`}>
                   {!row.grouped && (

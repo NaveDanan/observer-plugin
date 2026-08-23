@@ -15,6 +15,11 @@ import type { MessageEntity, ToolCallEntity } from "@observer-ai/protocol"
 
 export type ToolAction = "read" | "edit" | "command" | "search" | "task" | "todo" | "other"
 
+/** Exact file-creation tools, after removing host-specific separators and case. */
+export function isFileCreationTool(tool: string): boolean {
+  return tool.toLowerCase().replace(/[^a-z0-9]/g, "") === "createfile"
+}
+
 export type TimelineRow =
   | {
       kind: "message"
@@ -132,7 +137,13 @@ export function toolAction(tool: string): ToolAction {
   if (name.includes("bash") || name.includes("shell") || name.includes("exec") || name.includes("terminal")) {
     return "command"
   }
-  if (name.includes("edit") || name.includes("write") || name.includes("patch") || name.includes("apply")) {
+  if (
+    name.includes("edit") ||
+    name.includes("write") ||
+    isFileCreationTool(tool) ||
+    name.includes("patch") ||
+    name.includes("apply")
+  ) {
     return "edit"
   }
   if (name.includes("read") || name.includes("view") || name.includes("fetch") || name.includes("cat")) return "read"

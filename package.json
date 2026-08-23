@@ -1,6 +1,6 @@
 {
   "name": "observer-workspace",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Observer - interactive canvas for running agents across OpenCode, Codex, Claude Code and GitHub Copilot CLI",
@@ -17,9 +17,11 @@
     "test:only": "vitest run",
     "test:watch": "vitest",
     "dev": "pnpm --filter=@observer-ai/daemon dev",
+    "icons:build": "node scripts/build-file-icons.mjs",
     "clean": "rm -rf node_modules release **/dist **/node_modules"
   },
   "devDependencies": {
+    "@iconify-json/vscode-icons": "^1.2.74",
     "@types/node": "^22.10.2",
     "esbuild": "^0.24.2",
     "tsx": "^4.19.2",
