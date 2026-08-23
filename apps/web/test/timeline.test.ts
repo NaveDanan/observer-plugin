@@ -128,6 +128,7 @@ describe("toolAction", () => {
     ["edit", "edit"],
     ["str_replace_editor", "edit"],
     ["write", "edit"],
+    ["create_file", "edit"],
     ["bash", "command"],
     ["shell_exec", "command"],
     ["grep", "search"],

@@ -209,6 +209,16 @@ describe("describeToolCall — edits, delegations, todos", () => {
     })
   })
 
+  it("shows an explicitly named create tool as a creation diff", () => {
+    const step = describeToolCall(call("create_file", { input: { path: "src/new.ts", content: "export {}" } }))
+    expect(step.title).toBe("Create new.ts")
+    expect(step.churn).toEqual({ added: 1, removed: 0 })
+    expect(step.input).toMatchObject({
+      kind: "diff",
+      rows: [{ sign: "+", text: "export {}" }],
+    })
+  })
+
   it("preserves empty and whitespace-only replacement text exactly", () => {
     const whitespace = describeToolCall(call("edit", { input: { path: "a.txt", old_str: " ", new_str: "\t" } }))
     expect(whitespace.input).toMatchObject({
