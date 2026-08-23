@@ -119,7 +119,8 @@ the subagent is briefed with a persona directive. None of that changes what the
 host runs. **Seat control** (`seats.control`, off by default) is the one path
 where Observer stops observing and acts.
 
-Only OpenCode can honour it. The mechanism is forced by the host:
+OpenCode and GitHub Copilot can honour it. Each host requires a generated
+employee-specific agent because its task tool selects an agent, not a model:
 
 ```text
 seats.employees.<id>.model
@@ -130,11 +131,33 @@ seats.employees.<id>.model
   -> task tool resolves the agent, and uses its model
 ```
 
-There is no shorter route. OpenCode's task tool accepts
+```text
+seats.employees.<id>.targets.copilot
+  -> observer install copilot --plugin
+  -> plugin/agents/observer-<id>.agent.md
+  -> ~/.copilot/settings.json subagents.agents.observer:observer-<id>
+  -> preToolUse rewrites args.agent_type to observer:observer-<id>,
+     but only when it was `general-purpose`
+  -> task tool resolves the agent, model, effort, and context tier
+```
+
+There is no shorter OpenCode route. Its task tool accepts
 `{description, prompt, subagent_type, …}` and no model, and it applies a
 `variant` only when the resolved agent sets its own `model`
 (`variant: agent.model ? undefined : parentEffort`). So an effort without a
 model is a no-op, and the only lever is which agent the delegation names.
+
+Copilot's `task` tool likewise has no per-call model or effort fields.
+Observer's synchronous `preToolUse` controller preserves every argument except
+the neutral `agent_type`; generated plugin agents supply the model, and
+Observer-owned entries in `~/.copilot/settings.json` supply `effortLevel` and
+`contextTier`. The controller routes only when both the marker-owned agent file
+and its exact model/effort/context settings are present. Controller failures are
+fail-open: it emits an empty decision and exits successfully so delegation
+proceeds unchanged. Copilot loads agents and subagent settings at startup, so
+the CLI/app must be restarted after seat configuration changes. This path is
+local-only; GitHub-hosted coding-agent sandboxes do not receive the user's local
+plugin or settings.
 
 ### Why only `general` is ever replaced
 
@@ -142,9 +165,8 @@ model is a no-op, and the only lever is which agent the delegation names.
 prompt, tool permissions, mode. Substituting a generated seat agent for it
 discards everything the named agent was for and keeps only the model.
 
-`general` is the only built-in that ships with no prompt and no tool
-restriction, which is what makes the swap lossless there — it changes the model
-and nothing else. `explore` is the case that settles it: it carries a
+OpenCode's `general` and Copilot's `general-purpose` are the only neutral
+built-ins eligible for replacement. `explore` is the case that settles it: it carries a
 substantial specialised prompt *and* a deny-by-default permission set that
 allows only reads and searches (`{permission: "*", pattern: "*", action:
 "deny"}` followed by explicit allows for `read`, `grep`, `glob` and `list`).
@@ -393,6 +415,17 @@ paints its own background overrides the user's terminal theme.
 SQLite through Node's built-in `node:sqlite`, so there is no native module to
 compile. Schema changes are append-only migrations tracked with
 `PRAGMA user_version`.
+
+Collection APIs use keyset pagination rather than offsets. Session cursors are
+opaque and encode the `(updated_at, id)` sort key; raw-event cursors are event
+sequence numbers. Responses keep their named collection and add
+`page: { nextCursor, hasMore }`. Limits are validated and capped at 100 sessions
+or 500 events, keeping read cost bounded as the event log grows.
+
+Retention deletes expired projections in set-based statements inside one
+transaction. Composite indexes cover session paging, running-tool lookup, and
+coordination rate limits; WAL writers wait briefly for transient contention
+instead of failing immediately.
 
 Entity ids are deterministic and composed with `~`:
 

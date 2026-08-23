@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest"
+import { join } from "node:path"
 import {
   COPILOT_CONTEXT_TIER_OPTION,
   COPILOT_DEFAULT_PROFILE,
   COPILOT_REASONING_OPTION,
   copilotAdapter,
   createCopilotAdapter,
+  copilotSeatAgentName,
+  copilotSeatAgentReference,
   helpDeclaresAutoModel,
   parseCopilotChoices,
   parseCopilotModelIds,
+  readCopilotTarget,
 } from "../../src/adapters/copilot.js"
 import type { CopilotSpawn, CopilotSpawnResult } from "../../src/adapters/copilot.js"
 import type { SeatTarget } from "../../src/seats.js"
@@ -119,7 +123,7 @@ describe("copilot adapter profiles", () => {
         host: "copilot",
         label: "GitHub Copilot CLI",
         binaryPath: "copilot",
-        homePath: "/home/tester/.copilot",
+        homePath: join("/home/tester", ".copilot"),
       },
     ])
     // Discovery is not a probe. Listing profiles must cost nothing — this is
@@ -205,7 +209,7 @@ describe("copilot adapter catalogue", () => {
 
     expect(calls.map((call) => call.args.join(" "))).toEqual(["help config", "--help"])
     for (const call of calls) {
-      expect(call.env["COPILOT_HOME"]).toBe("/home/tester/.copilot")
+      expect(call.env["COPILOT_HOME"]).toBe(join("/home/tester", ".copilot"))
       // A config-screen keystroke must never be able to upgrade the user's
       // toolchain in the background.
       expect(call.env["COPILOT_AUTO_UPDATE"]).toBe("false")
@@ -339,8 +343,8 @@ describe("copilot adapter catalogue", () => {
     expect(calls.map((call) => call.env["COPILOT_HOME"])).toEqual([
       "/srv/work",
       "/srv/work",
-      "/home/tester/.copilot",
-      "/home/tester/.copilot",
+      join("/home/tester", ".copilot"),
+      join("/home/tester", ".copilot"),
     ])
   })
 })
@@ -348,18 +352,12 @@ describe("copilot adapter catalogue", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("copilot adapter capabilities", () => {
-  it("reports child model and reasoning as unsupported", () => {
-    // Copilot really does have `subagents.agents.<name>.{model,effortLevel}`.
-    // This flag is a statement about Observer's verified path to it, which does
-    // not exist: the setting is persistent config in the same directory as the
-    // GitHub token, not a per-delegation parameter, and the parent never places
-    // the call. A seat UI reads these flags to decide whether to tell a user
-    // their employee "runs Opus", and that sentence is a claim about their bill.
+  it("reports generated-agent control as supported", () => {
     const { adapter } = adapterWith(HEALTHY)
     expect(adapter.capabilities(COPILOT_DEFAULT_PROFILE)).toEqual({
       discovery: "live",
-      childModel: "unsupported",
-      childReasoning: "unsupported",
+      childModel: "supported",
+      childReasoning: "supported",
       requiresReload: true,
     })
   })
@@ -394,6 +392,32 @@ describe("copilot adapter diagnosis", () => {
     expect(
       diagnose(target({ model: "claude-opus-5", options: [{ id: COPILOT_REASONING_OPTION, value: "xhigh" }] })),
     ).toEqual([])
+  })
+
+  describe("Copilot seat target decoding", () => {
+    it("decodes model, effort, and context using Copilot's field names", () => {
+      expect(
+        readCopilotTarget(
+          target({
+            model: " claude-opus-5 ",
+            options: [
+              { id: COPILOT_REASONING_OPTION, value: "high" },
+              { id: COPILOT_CONTEXT_TIER_OPTION, value: "long_context" },
+            ],
+          }),
+        ),
+      ).toEqual({ model: "claude-opus-5", effortLevel: "high", contextTier: "long_context" })
+    })
+
+    it("rejects another host and an empty model", () => {
+      expect(readCopilotTarget({ host: "codex", model: "gpt-5.6-sol" })).toBeUndefined()
+      expect(readCopilotTarget(target({ model: "  " }))).toBeUndefined()
+    })
+
+    it("uses a stable namespaced agent id", () => {
+      expect(copilotSeatAgentName("Nia Okafor")).toBe("observer-nia-okafor")
+      expect(copilotSeatAgentReference("Nia Okafor")).toBe("observer:observer-nia-okafor")
+    })
   })
 
   it("accepts `auto` as a model", () => {
@@ -552,6 +576,6 @@ describe("the default copilot adapter", () => {
     // module shelled out at import, this file would have done it already.
     expect(copilotAdapter.kind).toBe("copilot")
     expect(copilotAdapter.profiles()).toHaveLength(1)
-    expect(copilotAdapter.capabilities(COPILOT_DEFAULT_PROFILE).childModel).toBe("unsupported")
+    expect(copilotAdapter.capabilities(COPILOT_DEFAULT_PROFILE).childModel).toBe("supported")
   })
 })

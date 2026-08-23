@@ -28,8 +28,8 @@ import type { HostDirectory } from "./hosts"
 /**
  * The five states.
  *
- *  - `applied`      — the adapter can steer a delegated child and consent is
- *                     given. Only OpenCode reaches this today.
+ *  - `applied`      — a supported adapter can steer a delegated child and
+ *                     consent is given.
  *  - `experimental` — the adapter has a prototyped path that fails open.
  *  - `configured`   — the adapter could apply this, but `seats.control` is off.
  *  - `unknown`      — nobody could tell us. A `null` capabilities block, a host

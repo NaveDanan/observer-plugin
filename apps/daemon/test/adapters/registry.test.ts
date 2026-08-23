@@ -81,6 +81,6 @@ describe("the adapter registry", () => {
     expect(seatAdapter("opencode")?.capabilities("").childModel).toBe("supported")
     expect(seatAdapter("codex")?.capabilities("").childModel).toBe("experimental")
     expect(seatAdapter("claude")?.capabilities("").childModel).toBe("unsupported")
-    expect(seatAdapter("copilot")?.capabilities("").childModel).toBe("unsupported")
+    expect(seatAdapter("copilot")?.capabilities("").childModel).toBe("supported")
   })
 })

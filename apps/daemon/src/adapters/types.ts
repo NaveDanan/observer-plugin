@@ -17,10 +17,10 @@ import type { SeatIssue, SeatTarget } from "../seats.js"
  *  - **Discovery** is "can Observer list what this host can run". Every host
  *    can do some version of this.
  *  - **Control** is "can Observer make a delegated child run a chosen model".
- *    Only OpenCode can, today. A UI that promotes the first into the second
- *    tells the user their Cursor employee runs Opus when it demonstrably does
- *    not, so `HostCapabilities` reports them as separate fields and no adapter
- *    may collapse them.
+ *    OpenCode and Copilot support this through narrow neutral-agent paths. A
+ *    UI that promotes discovery into control would tell the user their Cursor
+ *    employee runs Opus when it demonstrably does not, so `HostCapabilities`
+ *    reports them separately and no adapter may collapse them.
  *
  * Everything here is synchronous. The catalogue is a file read and the
  * diagnosis is arithmetic over it; making the interface async would push a

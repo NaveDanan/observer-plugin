@@ -63,6 +63,20 @@ observer open
 Restart any running agent session so the host picks up the new hooks. Codex
 additionally requires you to approve new hooks with `/hooks` inside Codex.
 
+### Install into the GitHub Copilot desktop app (Copilot plugin)
+
+To have Observer appear in Copilot's installed plugins instead of editing
+`~/.copilot/hooks/observer.json`:
+
+```bash
+observer install copilot --plugin
+```
+
+Then restart Copilot CLI and the desktop app. Verify with `copilot plugin list`.
+
+Use either this or `observer install copilot`, not both — the CLI warns you if
+you do, because each event would be recorded twice.
+
 ### Install into the ChatGPT desktop app (Codex plugin)
 
 To have Observer appear in the ChatGPT desktop app's Plugins directory instead
@@ -136,14 +150,22 @@ In `~/.observer/config.json`:
 }
 ```
 
-Run `observer install opencode` after editing, then **restart OpenCode**.
+Run `observer install opencode` and/or `observer install copilot --plugin` after
+editing, then restart the affected host.
 
 ### What it actually does
 
 OpenCode's task tool takes no model parameter. The only lever is
 `subagent_type`, so `observer install opencode` writes one hidden agent
 definition per configured employee into `~/.config/opencode/agent/observer-*.md`,
-and the plugin points a seated delegation at it. That is the whole mechanism.
+and the plugin points a seated delegation at it.
+
+Copilot's task tool also selects an agent rather than a model. The plugin writes
+one `agents/observer-*.agent.md` definition per Copilot target and owns the
+matching `subagents.agents["observer:observer-*"]` settings for effort and
+context tier. Its
+synchronous `preToolUse` controller redirects only `general-purpose`
+delegations and otherwise fails open.
 
 The generated definition keeps the built-in `general` prompt and work
 permissions: empty prompt, `mode: subagent`, and `todowrite: deny`. The plugin
@@ -159,17 +181,16 @@ explicit user value.
 
 - **Permission prompts name a different agent.** The task tool asks for
   permission using the agent name it was handed, so a seated delegation now
-  prompts for `observer-arjun-mehta` instead of `general`. This is the most
-  visible effect and the main reason the flag defaults off.
+  prompts for `observer-arjun-mehta` instead of `general`/`general-purpose`.
+  This is the most visible effect and the main reason the flag defaults off.
 - **Billing.** Delegations run on the model you named, not the session's.
 
 ### What it will not do
 
-- **It only ever replaces a `general` delegation.** `subagent_type` does not
+- **It only ever replaces a neutral delegation.** Agent type does not
   name a model, it names a whole agent definition — prompt, permissions,
-  everything. `general` is the only built-in that ships with no prompt and no
-  restriction, which is what makes swapping it lossless: the model changes and
-  nothing else. If the model delegates to `explore` — which carries a
+  everything. OpenCode's `general` and Copilot's `general-purpose` are the only
+  eligible types. If the model delegates to `explore` — which carries a
   specialised prompt *and* a deny-by-default permission set that allows only
   reads and searches — or to any other built-in, or to an agent you wrote
   yourself, Observer leaves it alone. You keep that agent's behaviour and its
@@ -187,7 +208,8 @@ explicit user value.
 - **Nothing happens without a restart.** OpenCode reads agent definitions once
   at startup and never rescans, so files written by the installer are invisible
   to a session that was already running.
-- **A missing definition is a no-op, never an error.** If the agent the plugin
+- **A missing definition is a no-op, never an error.** If the generated agent
+  the plugin
   wants is not in the host's registry — config edited without re-running the
   installer, agent directory cleaned out, config carried to another machine by
   dotfiles — the plugin leaves `subagent_type` exactly as it found it. You lose
@@ -200,19 +222,17 @@ explicit user value.
   definition rather than merely ignoring it, so you cannot keep paying for a
   model you stopped asking for.
 
-### Only OpenCode
+### Host support
 
 | | OpenCode | Codex | Claude Code | Copilot CLI |
 | --- | --- | --- | --- | --- |
-| Seat `model` | applied to `general` delegations, with `control` on | **ignored** | **ignored** | **ignored** |
-| Seat `variant` (effort) | applied, needs a model the effort exists on | **ignored** | **ignored** | **ignored** |
+| Seat `model` | applied to `general` delegations, with `control` on | **ignored** | **ignored** | applied to `general-purpose` delegations with `control` on |
+| Seat effort/context | effort applied, needs a model the effort exists on | **ignored** | **ignored** | applied from Copilot subagent settings |
 | Seat `skills` | applied | applied | applied | applied |
 
-The other three hosts integrate through a subprocess hook that fires *after* a
-subagent has been created. There is no point at which Observer could name a
-model, so it does not offer to. Setting `model` or `variant` for an employee
-you only ever run under Codex or Claude Code changes nothing at all, and
-Observer would rather say that than imply a setting works everywhere.
+Codex and Claude Code do not currently expose a proven control path in
+Observer. Copilot control applies to the local CLI/app plugin. GitHub-hosted
+coding-agent sandboxes do not receive local plugins, hooks, or user settings.
 
 Skills are the exception, and are not gated on `control`: they are prompt text
 folded into the persona directive the daemon already returns, so they carry

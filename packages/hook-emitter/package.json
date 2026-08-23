@@ -4,12 +4,17 @@
   "private": true,
   "type": "module",
   "bin": {
-    "observer-emit": "./dist/emit.js"
+    "observer-emit": "./dist/emit.js",
+    "observer-copilot-control": "./dist/copilot-control.js"
   },
   "main": "./dist/emit.js",
   "files": ["dist"],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/emit.js', 0o755)\"",
+    "build": "tsc -p tsconfig.json && node -e \"for (const f of ['dist/emit.js','dist/copilot-control.js']) require('fs').chmodSync(f, 0o755)\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@observer-ai/daemon": "workspace:*",
+    "@observer-ai/roster": "workspace:*"
   }
 }

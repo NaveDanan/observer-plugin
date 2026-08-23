@@ -52,13 +52,15 @@ on the first save. Unknown fields keep surviving exactly as they do today.
 
 ## Capability truth
 
-Discovery and control are separate. Only OpenCode has both.
+Discovery and control are separate. OpenCode and the local Copilot plugin have
+supported control paths.
 
 | Host | Model inventory | Child control |
 | --- | --- | --- |
 | OpenCode | CLI/server plus cache | supported, `general` rewrite only |
 | Codex | live `model/list` | experimental, needs a synchronous `PreToolUse` prototype |
 | Claude | versioned list, SDK later | off, needs generated definitions plus Agent rewrite |
+| Copilot | CLI help/config | supported, local `general-purpose` rewrite only |
 | Cursor | live ACP options | unsupported, no per-child setter exists |
 | Grok | ACP session setup | unsupported, no child graph on main |
 

@@ -25,7 +25,8 @@ import {
   reduce,
 } from "./config-ui-state.js"
 import { listModels } from "./models.js"
-import { seatAgentDir, syncSeatAgents } from "./seat-agents.js"
+import { syncSeatControl } from "./seat-control.js"
+import { seatAgentDir } from "./seat-agents.js"
 import { type Theme, buildTheme, colorSupport } from "./theme.js"
 
 /**
@@ -55,7 +56,7 @@ const CURSOR_SHOW = "\u001B[?25h"
 const HOME_AND_CLEAR = "\u001B[H\u001B[2J"
 
 /** What the apply layer exposes, as this file needs it. */
-type SyncSeatAgents = typeof syncSeatAgents
+type SyncSeatAgents = typeof syncSeatControl
 type LoadTargetCatalogue = (targetId: string) => ModelCatalogue
 
 export function rosterRows(): EmployeeRow[] {
@@ -111,7 +112,7 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
   return drive(
     config,
     state,
-    syncSeatAgents,
+    syncSeatControl,
     (targetId) => loadTargetCatalogue(adapters, profiles, targetId),
     buildTheme(colorSupport(process.env, true)),
   )

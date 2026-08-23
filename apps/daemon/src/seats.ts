@@ -25,8 +25,9 @@ import { HOST_KINDS, isHostKind } from "./providers.js"
  *    "only when using the agent's configured model", and the task tool
  *    confirms it with `variant: agent.model ? undefined : effort`. An effort
  *    with no model is a no-op, so `diagnoseSeats` says so out loud.
- *  - Only OpenCode can honour any of this today. The other hosts integrate
- *    through a subprocess and are not seated at all.
+ *  - Copilot uses the same indirection: a synchronous
+ *    `preToolUse` hook redirects neutral `general-purpose` tasks to generated
+ *    plugin agents, with effort/context stored in Copilot's subagent settings.
  *
  * Skills are the exception: they are prompt text, they ride the directive
  * `behaviorDirective` already renders, and they carry none of the above

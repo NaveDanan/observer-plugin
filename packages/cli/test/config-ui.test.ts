@@ -122,8 +122,8 @@ const TARGET_PROFILES: TargetProfile[] = [
     profileLabel: "default",
     capabilities: {
       discovery: "live",
-      childModel: "unsupported",
-      childReasoning: "unsupported",
+      childModel: "supported",
+      childReasoning: "supported",
       requiresReload: true,
     },
   },
@@ -185,7 +185,7 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
         label: "Claude Opus 5",
         options: [
           {
-            id: "reasoningEffort",
+            id: "effortLevel",
             label: "Reasoning effort",
             type: "select",
             choices: [
@@ -201,7 +201,7 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
         label: "Claude Haiku 4.5",
         options: [
           {
-            id: "reasoningEffort",
+            id: "effortLevel",
             label: "Reasoning effort",
             type: "select",
             choices: [{ id: "low", label: "low" }],
@@ -412,7 +412,7 @@ describe("host targets", () => {
     ])
   })
 
-  it("configures Copilot honestly as recorded but not applied to children", () => {
+  it("configures Copilot as applied child control", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
@@ -439,11 +439,11 @@ describe("host targets", () => {
     })
     state = press(state, "right")
     expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.options).toEqual([
-      { id: "reasoningEffort", value: "low" },
+      { id: "effortLevel", value: "low" },
     ])
     expect(diagnoseSeats(state.seats).issues.map((issue) => issue.code)).not.toContain("empty-target")
     state = press(state, "escape", "escape")
-    expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("not applied to children")
+    expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("applied")
   })
 
   it("labels Codex child control experimental", () => {
@@ -464,7 +464,7 @@ describe("host targets", () => {
             "copilot:default": {
               host: "copilot",
               model: "claude-opus-5",
-              options: [{ id: "reasoningEffort", value: "high" }],
+              options: [{ id: "effortLevel", value: "high" }],
             },
           },
         },
@@ -542,7 +542,7 @@ describe("host targets", () => {
     expect(render(state, { rows: 40, columns: 120 }).join("\n")).not.toContain("This target sets nothing")
   })
 
-  it("lists unsupported targets in report mode instead of flattening them into OpenCode", () => {
+  it("lists supported Copilot targets in report mode instead of flattening them into OpenCode", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
@@ -554,7 +554,7 @@ describe("host targets", () => {
     const report = renderReport(seats, ROSTER, TARGET_PROFILES).join("\n")
     expect(report).toContain("copilot:default")
     expect(report).toContain("claude-opus-5")
-    expect(report).toContain("not applied to children")
+    expect(report).toContain("applied")
   })
 
   it("lists targets for unknown employee ids in report mode", () => {
@@ -1086,29 +1086,26 @@ describe("render", () => {
     expect(lines.some((line) => line.includes("Employees") && line.includes("3 people"))).toBe(true)
   })
 
-  it("names the one host that can honour any of this, on the row that owns the flag", () => {
+  it("names the hosts that can apply seat control on the row that owns the flag", () => {
     // The narrowings are too long to sit on every screen, so they expand under
     // the cursor — which starts on Seat control, where they belong.
     expect(render(menu, viewport).join("\n")).toContain(
-      "OpenCode only - Codex, Claude Code and Copilot CLI are not seated",
+      "OpenCode and Copilot CLI can apply seat control",
     )
   })
 
-  it("says seat control reaches `general` delegations only, in observer doctor's words", () => {
+  it("says seat control reaches neutral delegations only", () => {
     /**
      * The second narrowing, and it is not cosmetic.
      *
-     * Seating works by rewriting `subagent_type`, and doing that to a
-     * specialised agent would throw away its own prompt, tools and
-     * deny-by-default permissions — so only `general` delegations are ever
-     * reseated. A UI that named the host but not the agent type would leave a
-     * user believing every subagent they see moves onto the model they just
-     * picked. `observer doctor` already says this sentence; the wording is
-     * copied rather than reworded so the two cannot drift.
+     * Seating works by rewriting the host's neutral agent type. Doing that to a
+     * specialist would throw away its own prompt, tools and permissions. A UI
+     * that omitted this limit would imply every child moves onto the selected
+     * model.
      */
     const text = collapse(render(menu, viewport).join("\n"))
     expect(text).toContain(
-      collapse("`general` delegations only - any other agent keeps its own prompt, tools and model"),
+      collapse("Only neutral delegations are redirected - specialist agents keep their prompt, tools and model"),
     )
   })
 
@@ -1125,7 +1122,7 @@ describe("render", () => {
     // prompt, tools and mo..." is worse than two lines.
     for (const columns of [60, 80, 100, 160]) {
       const text = collapse(render(menu, { rows: 30, columns }).join("\n"))
-      expect(text).toContain(collapse("any other agent keeps its own prompt, tools and model"))
+      expect(text).toContain(collapse("specialist agents keep their prompt, tools and model"))
     }
   })
 

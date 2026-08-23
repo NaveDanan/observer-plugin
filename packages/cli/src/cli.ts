@@ -12,6 +12,13 @@ import {
   personalMarketplacePath,
   uninstallCodexPlugin,
 } from "./codex-plugin.js"
+import {
+  COPILOT_PLUGIN_NAME,
+  copilotPluginDir,
+  installCopilotPlugin,
+  isCopilotPluginStaged,
+  uninstallCopilotPlugin,
+} from "./copilot-plugin.js"
 import { openBrowser, diagnostics, start, status, stop } from "./daemon-control.js"
 import { runConfig } from "./config-ui.js"
 import { canvasUrl, detectHarness, detectSession } from "./harness.js"
@@ -40,9 +47,10 @@ Usage
   observer version                 Print the version
 
 Options
-  --plugin        With "install codex": install as a Codex plugin instead of
-                  writing hooks directly, so it appears in the ChatGPT desktop
-                  app's Plugins directory.
+  --plugin        With "install codex" or "install copilot": install as a real
+                  plugin instead of writing hooks directly, so it appears in the
+                  host's plugin list (the ChatGPT desktop app's Plugins
+                  directory, or "copilot plugin list").
   --probe         With "config": ask OpenCode for its model list instead of
                   reading the on-disk catalogue. Slower, but picks up models
                   from providers declared only in opencode.json.
@@ -102,6 +110,7 @@ async function main(argv: string[]): Promise<number> {
         print(`  ${pad(HOST_CAPABILITIES[host].label, 20)} ${installed ? "installed" : "not installed"}`)
       }
       if (isCodexPluginInstalled()) print(`  ${pad("Codex (plugin)", 20)} installed`)
+      if (isCopilotPluginStaged()) print(`  ${pad("Copilot (plugin)", 20)} installed`)
       return 0
     }
 
@@ -134,34 +143,42 @@ async function main(argv: string[]): Promise<number> {
         return 1
       }
       for (const host of hosts) {
-        // Codex can take Observer as a packaged plugin instead of raw hooks.
-        const usePlugin = asPlugin && host === "codex"
+        // Codex and Copilot can both take Observer as a packaged plugin
+        // instead of raw hooks.
+        const usePlugin = asPlugin && (host === "codex" || host === "copilot")
         const result = usePlugin
-          ? command === "install"
-            ? installCodexPlugin(VERSION)
-            : uninstallCodexPlugin()
+          ? host === "codex"
+            ? command === "install"
+              ? installCodexPlugin(VERSION)
+              : uninstallCodexPlugin()
+            : command === "install"
+              ? installCopilotPlugin(VERSION)
+              : uninstallCopilotPlugin()
           : command === "install"
             ? install(host)
             : uninstall(host)
-        const label = usePlugin ? "Codex (plugin)" : HOST_CAPABILITIES[host].label
+        const label = usePlugin ? `${HOST_CAPABILITIES[host].label} (plugin)` : HOST_CAPABILITIES[host].label
         print(`${pad(label, 20)} ${pad(result.action, 10)} ${result.path}`)
         for (const note of result.notes) print(`  - ${note}`)
 
-        // Running both Codex integrations at once would report every event
-        // twice, so say so rather than silently doubling the data.
-        if (command === "install" && host === "codex") {
+        // Running both integrations for one host at once would report every
+        // event twice, so say so rather than silently doubling the data.
+        if (command === "install" && (host === "codex" || host === "copilot")) {
           const other = usePlugin
-            ? isInstalled("codex") && "observer uninstall codex"
-            : isCodexPluginInstalled() && "observer uninstall codex --plugin"
+            ? isInstalled(host) && `observer uninstall ${host}`
+            : (host === "codex" ? isCodexPluginInstalled() : isCopilotPluginStaged()) &&
+              `observer uninstall ${host} --plugin`
           if (other) {
-            print(`  ! Codex is also configured the other way, which would record every event twice.`)
+            print(
+              `  ! ${HOST_CAPABILITIES[host].label} is also configured the other way, which would record every event twice.`,
+            )
             print(`    Remove one with: ${other}`)
           }
         }
       }
-      if (asPlugin && !hosts.includes("codex")) {
+      if (asPlugin && !hosts.some((host) => host === "codex" || host === "copilot")) {
         print("")
-        print("--plugin only applies to codex; other hosts were configured normally.")
+        print("--plugin only applies to codex and copilot; other hosts were configured normally.")
       }
       if (command === "install") {
         print("")
@@ -189,6 +206,7 @@ async function main(argv: string[]): Promise<number> {
       for (const host of HOSTS) print(`${pad(host, 10)}${hostConfigPath(host)}`)
       print(`${pad("codex+", 10)}${codexPluginDir()}`)
       print(`${pad("market", 10)}${personalMarketplacePath()}`)
+      print(`${pad("copilot+", 10)}${copilotPluginDir()}`)
       return 0
     }
 
@@ -242,6 +260,11 @@ async function doctor(): Promise<number> {
   )
   if (isCodexPluginInstalled()) print(`      ${codexPluginDir()}`)
   else print(`      install with: observer install codex --plugin`)
+  print(
+    `  ${pad("Copilot (plugin)", 20)} ${pad(isCopilotPluginStaged() ? "installed" : "not installed", 16)}${COPILOT_PLUGIN_NAME}`,
+  )
+  if (isCopilotPluginStaged()) print(`      ${copilotPluginDir()}`)
+  else print(`      install with: observer install copilot --plugin`)
 
   print("")
   print("Capture settings")

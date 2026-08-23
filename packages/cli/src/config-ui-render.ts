@@ -216,13 +216,13 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
     control:
       state.profiles.length === 0
         ? [
-            "OpenCode only - Codex, Claude Code and Copilot CLI are not seated",
-            "`general` delegations only - any other agent keeps its own prompt, tools and model",
+            "OpenCode and Copilot CLI can apply seat control",
+            "Only neutral delegations are redirected - specialist agents keep their prompt, tools and model",
           ]
         : [
-            "OpenCode targets are applied; Codex is experimental; Claude Code and Copilot CLI targets are recorded only",
+            "OpenCode and Copilot CLI targets are applied; Codex and Claude Code targets are recorded only",
             "Each target says whether it is applied, experimental, configured, or not applied to children",
-            "`general` OpenCode delegations only - any other agent keeps its own prompt, tools and model",
+            "Only neutral delegations are redirected - specialist agents keep their prompt, tools and model",
           ],
     employees: ["Give a person one target per host/profile, plus shared skills."],
     save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],

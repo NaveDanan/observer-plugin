@@ -17,8 +17,8 @@
  *
  *  - **Overstate.** Every target carries its own control status from the
  *    adapter's `capabilities()`, computed in `status.ts` and rendered
- *    identically on the card, the row and the editor. Only OpenCode reaches
- *    "applied", and only with seat control on.
+ *    identically on the card, the row and the editor. OpenCode and Copilot
+ *    reach "applied" when seat control is on.
  *  - **Hide anyone.** The list is a map over the roster, not over the config.
  *    See `roster.ts`.
  *

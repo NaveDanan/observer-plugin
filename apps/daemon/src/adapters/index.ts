@@ -42,8 +42,8 @@ type AdapterFactory = () => HostSeatAdapter
  * correct entry for them until someone writes the adapter.
  *
  * Insertion order is the order `/v1/hosts` reports and therefore the order a
- * picker renders. OpenCode first because it is the only host with `supported`
- * control today.
+ * picker renders. OpenCode first because it has the established `supported`
+ * control path.
  */
 const ADAPTERS: Partial<Record<HostKind, AdapterFactory>> = {
   opencode: () => opencodeAdapter,
@@ -147,5 +147,13 @@ export { createCodexAdapter, codexAdapter, CODEX_DEFAULT_PROFILE } from "./codex
 export type { CodexAdapterOptions, CodexSpawn, CodexSpawnResult } from "./codex.js"
 export { createClaudeAdapter, claudeAdapter, CLAUDE_DEFAULT_PROFILE_ID } from "./claude.js"
 export type { ClaudeAdapterOptions, ClaudeVersionRunner } from "./claude.js"
-export { createCopilotAdapter, copilotAdapter, COPILOT_DEFAULT_PROFILE } from "./copilot.js"
-export type { CopilotAdapterOptions, CopilotSpawn, CopilotSpawnResult } from "./copilot.js"
+export {
+  createCopilotAdapter,
+  copilotAdapter,
+  copilotSeatAgentName,
+  copilotSeatAgentReference,
+  readCopilotTarget,
+  COPILOT_SEAT_AGENT_MARKER,
+  COPILOT_DEFAULT_PROFILE,
+} from "./copilot.js"
+export type { CopilotAdapterOptions, CopilotSeatTarget, CopilotSpawn, CopilotSpawnResult } from "./copilot.js"

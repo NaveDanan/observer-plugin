@@ -40,6 +40,21 @@ export function emitterPath(): string {
   }
 }
 
+/** Absolute path to the synchronous Copilot seat controller. */
+export function copilotControlPath(): string {
+  const candidates = [
+    resolve(here(), "./copilot-control.js"), // published package
+    resolve(here(), "../../hook-emitter/dist/copilot-control.js"), // monorepo
+  ]
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (found) return found
+  try {
+    return require.resolve("@observer-ai/hook-emitter/dist/copilot-control.js")
+  } catch {
+    return candidates[0] as string
+  }
+}
+
 /** Absolute path to the daemon entry point. */
 export function daemonPath(): string {
   const candidates = [
@@ -125,4 +140,10 @@ export function opencodeAgentDir(): string {
 export function codexHome(): string {
   const override = process.env["CODEX_HOME"]
   return override && override.length > 0 ? override : join(homeDir(), ".codex")
+}
+
+/** Copilot CLI's own state directory. */
+export function copilotHome(): string {
+  const override = process.env["COPILOT_HOME"]
+  return override && override.length > 0 ? override : join(homeDir(), ".copilot")
 }

@@ -165,7 +165,65 @@ were disabled, set `[features] hooks = true` in `~/.codex/config.toml`.
 
 ## GitHub Copilot CLI
 
+Copilot offers two integration modes. Pick **one** — running both records every
+event twice, and `observer install` warns you if you do.
+
+### Mode A: plugin (recommended)
+
+```bash
+observer install copilot --plugin
+```
+
+This packages Observer as a real Copilot plugin, so it shows up in
+`copilot plugin list` and in the GitHub Copilot desktop app's installed plugins.
+
+It writes:
+
+```text
+~/.copilot/plugins/observer/
+  plugin.json            manifest, points at hooks/hooks.json
+  hooks/hooks.json       lifecycle hooks
+  agents/*.agent.md      generated employee agents
+  scripts/emit.js        telemetry emitter
+  scripts/copilot-control.js  synchronous task controller
+```
+
+then runs `copilot plugin install ~/.copilot/plugins/observer`, which is what
+actually registers it. Copilot copies the staged directory to
+`~/.copilot/installed-plugins/_direct/observer/` and records it in
+`~/.copilot/config.json`; copying files there by hand does not work.
+
+Restart Copilot CLI (and the desktop app) so the new session picks it up.
+
+Unlike the Codex plugin, the hook commands use **absolute paths** to `node` and
+the installed emitter rather than `$PLUGIN_ROOT`. Copilot documents
+`${PLUGIN_ROOT}` for LSP configuration but makes no such promise for hook
+command strings, so the plugin uses paths that are known to resolve.
+`scripts/emit.js` still ships inside the plugin for provenance.
+
+With `seats.control: true`, the plugin's controller redirects only a
+`general-purpose` task to the selected employee agent. The agent supplies the
+configured Copilot model; Observer-owned `observer:observer-*` entries under
+`~/.copilot/settings.json` supply subagent effort and context tier. All other
+task arguments and all specialist agent selections are preserved. Controller
+errors emit an empty decision and exit successfully, so a failure leaves the
+delegation unchanged instead of blocking it. Restart Copilot after changing a
+seat because agents and subagent settings load at startup. This control path
+affects the local CLI/app only.
+
+To remove it:
+
+```bash
+observer uninstall copilot --plugin
+```
+
+### Mode B: direct hooks
+
 **Installed to:** `~/.copilot/hooks/observer.json` (honours `COPILOT_HOME`)
+
+```bash
+observer install copilot
+```
 
 Observer owns this file entirely, and ships both shells so the same
 configuration works on Windows:
@@ -189,6 +247,9 @@ configuration works on Windows:
 Subscribed events: `sessionStart`, `sessionEnd`, `userPromptSubmitted`,
 `preToolUse`, `postToolUse`, `postToolUseFailure`, `agentStop`, `subagentStart`,
 `subagentStop`, `errorOccurred`.
+
+Both modes subscribe to the same events — the plugin generates its hook list
+from the same table the direct install uses, so the two cannot drift.
 
 Because no Copilot hook carries the main agent's reply text, the daemon also
 tails `~/.copilot/session-state/<id>/events.jsonl` for sessions it already knows

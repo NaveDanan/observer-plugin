@@ -126,6 +126,49 @@ export const COPILOT_CONTEXT_TIER_OPTION = "contextTier"
 /** The two option ids this adapter understands. Nothing else is a Copilot option. */
 export const COPILOT_OPTION_IDS = [COPILOT_REASONING_OPTION, COPILOT_CONTEXT_TIER_OPTION] as const
 
+/** The Copilot fields a generated employee agent can apply. */
+export interface CopilotSeatTarget {
+  model: string
+  effortLevel?: string
+  contextTier?: string
+}
+
+export const COPILOT_SEAT_AGENT_MARKER = "observer:copilot-seat-agent v1"
+
+/**
+ * Decodes one Copilot target without applying policy from another host.
+ *
+ * The same decoder is used by diagnosis, plugin generation, and the hook
+ * controller so a saved target cannot mean three subtly different things.
+ */
+export function readCopilotTarget(target: SeatTarget | undefined): CopilotSeatTarget | undefined {
+  if (target?.host !== "copilot" || typeof target.model !== "string") return undefined
+  const model = target.model.trim()
+  if (model.length === 0) return undefined
+
+  const result: CopilotSeatTarget = { model }
+  for (const option of Array.isArray(target.options) ? target.options : []) {
+    if (typeof option.value !== "string" || option.value.trim().length === 0) continue
+    if (option.id === COPILOT_REASONING_OPTION) result.effortLevel = option.value.trim()
+    if (option.id === COPILOT_CONTEXT_TIER_OPTION) result.contextTier = option.value.trim()
+  }
+  return result
+}
+
+/** Stable custom-agent id shared by generation and pre-tool routing. */
+export function copilotSeatAgentName(employeeId: string): string {
+  const slug = String(employeeId)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return `observer-${slug.length > 0 ? slug : "unknown"}`
+}
+
+/** Runtime id Copilot assigns to an agent contributed by the Observer plugin. */
+export function copilotSeatAgentReference(employeeId: string): string {
+  return `observer:${copilotSeatAgentName(employeeId)}`
+}
+
 /** Command name assumed when no profile pins a `binaryPath`. */
 const DEFAULT_BINARY = "copilot"
 
@@ -788,7 +831,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
      * field instead of an empty list. This reads the cache only; it never
      * probes, so `capabilities()` stays free to call on a render path.
      *
-     * ### `childModel` and `childReasoning`: `"unsupported"`
+     * ### `childModel` and `childReasoning`: `"supported"`
      *
      * This is the finding the brief expected to go the other way, so it is
      * worth being exact about what is and is not true.
@@ -802,32 +845,16 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
      * hook reports `agentName` and that is precisely the key this setting is
      * filed under.
      *
-     * What is missing is Observer's path to it, on three counts:
+     * Observer now has a narrow path to it. Its plugin generates a namespaced
+     * custom agent per configured employee, writes only that agent's entry under
+     * `settings.json`'s documented `subagents.agents` key, and a synchronous
+     * `preToolUse` hook changes only neutral `task(agent_type="general-purpose")`
+     * calls. Specialised agents and every uncertain input are left untouched.
      *
-     *  1. It is **persistent configuration, not a per-delegation parameter.**
-     *     There is no argument on a delegation that carries a model. Setting it
-     *     changes the model for every future delegation to that agent name in
-     *     that profile, including ones Observer did not initiate. A seat is a
-     *     per-employee statement; this knob is a global one wearing a
-     *     per-agent label.
-     *  2. **The parent does not place the call.** Both `--help` and the docs
-     *     describe delegation as something the model chooses to do. There is no
-     *     control point at which a parent hands a child a model.
-     *  3. **Writing it means writing into the credential directory.** The
-     *     setting lives in `$COPILOT_HOME/config.json`, in the same directory
-     *     as the CLI's stored GitHub token. Observer read-modify-writing that
-     *     file — concurrently with a running CLI that also writes it — to gain
-     *     an unproven capability is a trade this adapter declines. A corrupted
-     *     `config.json` next to a token store is a much worse outcome than a
-     *     seat that does not set a child model.
-     *
-     * So: `"unsupported"`, which is a statement about Observer and not about
-     * Copilot. It becomes `"experimental"` when someone has a measured,
-     * concurrency-safe writer for `subagents.agents.<name>` that does not touch
-     * anything else in that directory, and `"supported"` when that has been run
-     * against real Copilot versions. Not before: a seat UI reads these flags to
-     * decide whether to tell a user their employee "runs Opus", and that
-     * sentence is a claim about their bill.
+     * The path accepts both the documented object-shaped arguments and Copilot
+     * CLI's serialized task arguments. End-to-end validation confirms that a
+     * real delegated child reports the generated plugin agent and its configured
+     * model. The desktop app consumes the same installed plugin cache.
      *
      * ### `requiresReload`
      *
@@ -847,7 +874,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
         // is describing. An optimistic "live" is the safe failure here: it
         // costs a list that turns out empty, not a crash.
       }
-      return { discovery, childModel: "unsupported", childReasoning: "unsupported", requiresReload: true }
+      return { discovery, childModel: "supported", childReasoning: "supported", requiresReload: true }
     },
   }
 }

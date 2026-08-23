@@ -148,7 +148,14 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
-  packages/hook-emitter: {}
+  packages/hook-emitter:
+    dependencies:
+      '@observer-ai/daemon':
+        specifier: workspace:*
+        version: link:../../apps/daemon
+      '@observer-ai/roster':
+        specifier: workspace:*
+        version: link:../roster
 
   packages/protocol:
     dependencies:
