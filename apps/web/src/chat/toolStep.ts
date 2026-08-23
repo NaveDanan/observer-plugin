@@ -266,6 +266,7 @@ export function stripGutter(text: string, format: GutterFormat = "unambiguous"):
   if (candidates.length === 0) return { text, firstLine: 1 }
   const pattern =
     format === "dotted" ? /^\s{0,8}(\d{1,6})\. ?(.*)$/ : /^\s{0,8}(\d{1,6})(?:\||:|\t) ?(.*)$/
+  const nonBlankCandidates = candidates.filter((line) => line.trim().length > 0).length
   const numbers: number[] = []
   const stripped: string[] = []
   let matched = 0
@@ -281,7 +282,7 @@ export function stripGutter(text: string, format: GutterFormat = "unambiguous"):
     numbers.push(Number(found[1]))
     stripped.push(found[2] ?? "")
   }
-  if (matched < candidates.length * 0.8) return { text, firstLine: 1 }
+  if (matched < nonBlankCandidates * 0.8) return { text, firstLine: 1 }
   const real = numbers.filter((value) => !Number.isNaN(value))
   const consecutive = real.every((value, index) => index === 0 || value === (real[index - 1] as number) + 1)
   if (!consecutive || real.length === 0) return { text, firstLine: 1 }
@@ -327,13 +328,11 @@ export function diffLines(before: string, after: string): DiffRow[] {
   const afterLines = splitForDiff(after)
   let a = beforeLines.lines.map((text) => ({ text, noNewline: false }))
   let b = afterLines.lines.map((text) => ({ text, noNewline: false }))
-  if (beforeLines.endsWithNewline !== afterLines.endsWithNewline) {
-    if (!beforeLines.endsWithNewline && a.length > 0) {
-      a = [...a.slice(0, -1), { text: (a.at(-1) as DiffInputLine).text, noNewline: true }]
-    }
-    if (!afterLines.endsWithNewline && b.length > 0) {
-      b = [...b.slice(0, -1), { text: (b.at(-1) as DiffInputLine).text, noNewline: true }]
-    }
+  if (!beforeLines.endsWithNewline && a.length > 0) {
+    a = [...a.slice(0, -1), { text: (a.at(-1) as DiffInputLine).text, noNewline: true }]
+  }
+  if (!afterLines.endsWithNewline && b.length > 0) {
+    b = [...b.slice(0, -1), { text: (b.at(-1) as DiffInputLine).text, noNewline: true }]
   }
 
   let head = 0
@@ -633,15 +632,15 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
           const rows = diffLines(removed, added)
           step.input = { kind: "diff", rows, language: languageForPath(path) }
           step.inputLabel = "Change"
-          derivedChurn = countChurn(rows)
+          if (!hasIncompletePayload(removed) && !hasIncompletePayload(added)) derivedChurn = countChurn(rows)
         } else if (added !== null) {
           step.input = { kind: "code", text: added, language: languageForPath(path), firstLine: 1 }
           step.inputLabel = "New content"
-          derivedChurn = { added: contentLines(added).length, removed: null }
+          if (!hasIncompletePayload(added)) derivedChurn = { added: contentLines(added).length, removed: null }
         } else if (removed !== null) {
           step.input = { kind: "code", text: removed, language: languageForPath(path), firstLine: 1 }
           step.inputLabel = "Previous content"
-          derivedChurn = { added: null, removed: contentLines(removed).length }
+          if (!hasIncompletePayload(removed)) derivedChurn = { added: null, removed: contentLines(removed).length }
         }
       }
 

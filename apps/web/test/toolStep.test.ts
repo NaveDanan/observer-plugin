@@ -169,7 +169,11 @@ describe("describeToolCall — reads", () => {
 describe("describeToolCall — edits, delegations, todos", () => {
   it("shows a Copilot edit as a diff, and sizes it from the host's own count", () => {
     const step = describeToolCall(
-      call("edit", { input: { path: "src/a.ts", old_str: "const a = 1", new_str: "const a = 2" }, linesAdded: 1, linesRemoved: 1 }),
+      call("edit", {
+        input: { path: "src/a.ts", old_str: "const a = 1\n", new_str: "const a = 2\n" },
+        linesAdded: 1,
+        linesRemoved: 1,
+      }),
     )
     expect(step.title).toBe("Edit a.ts")
     expect(step.churn).toEqual({ added: 1, removed: 1 })
@@ -187,7 +191,7 @@ describe("describeToolCall — edits, delegations, todos", () => {
   it("keeps the unchanged lines around a hunk as context", () => {
     const step = describeToolCall(
       call("edit", {
-        input: { path: "a.ts", old_str: "one\ntwo\nthree", new_str: "one\nTWO\nthree" },
+        input: { path: "a.ts", old_str: "one\ntwo\nthree\n", new_str: "one\nTWO\nthree\n" },
       }),
     )
     expect(step.input).toEqual({
@@ -217,7 +221,7 @@ describe("describeToolCall — edits, delegations, todos", () => {
   })
 
   it("shows an explicitly named create tool as a creation diff", () => {
-    const step = describeToolCall(call("create_file", { input: { path: "src/new.ts", content: "export {}" } }))
+    const step = describeToolCall(call("create_file", { input: { path: "src/new.ts", content: "export {}\n" } }))
     expect(step.title).toBe("Create new.ts")
     expect(step.churn).toEqual({ added: 1, removed: 0 })
     expect(step.input).toMatchObject({
@@ -244,8 +248,25 @@ describe("describeToolCall — edits, delegations, todos", () => {
     expect(step.input).toEqual({ kind: "code", text: content, language: "ts", firstLine: 1 })
   })
 
+  it("does not derive replacement churn from incomplete content", () => {
+    const step = describeToolCall(
+      call("edit", {
+        input: { path: "src/a.ts", old_str: "[redacted]", new_str: "export const value = 1" },
+      }),
+    )
+    expect(step.input).toMatchObject({ kind: "diff" })
+    expect(step.churn).toBeNull()
+
+    const oneSided = describeToolCall(
+      call("edit", {
+        input: { path: "src/a.ts", new_str: "export const value = 1\n… [truncated 40 characters]" },
+      }),
+    )
+    expect(oneSided.churn).toBeNull()
+  })
+
   it("preserves empty and whitespace-only replacement text exactly", () => {
-    const whitespace = describeToolCall(call("edit", { input: { path: "a.txt", old_str: " ", new_str: "\t" } }))
+    const whitespace = describeToolCall(call("edit", { input: { path: "a.txt", old_str: " \n", new_str: "\t\n" } }))
     expect(whitespace.input).toMatchObject({
       kind: "diff",
       rows: [
@@ -254,7 +275,7 @@ describe("describeToolCall — edits, delegations, todos", () => {
       ],
     })
 
-    const empty = describeToolCall(call("edit", { input: { path: "a.txt", old_str: "x", new_str: "" } }))
+    const empty = describeToolCall(call("edit", { input: { path: "a.txt", old_str: "x\n", new_str: "" } }))
     expect(empty.input).toMatchObject({ kind: "diff", rows: [{ sign: "-", text: "x" }] })
     expect(empty.churn).toEqual({ added: 0, removed: 1 })
   })
@@ -374,6 +395,13 @@ describe("stripGutter", () => {
     expect(stripGutter("12| one\n13| two\n")).toEqual({ text: "one\ntwo\n", firstLine: 12 })
   })
 
+  it("ignores blank lines when measuring gutter confidence and preserves them", () => {
+    expect(stripGutter("12| one\n13| two\n14| three\n\n")).toEqual({
+      text: "one\ntwo\nthree\n\n",
+      firstLine: 12,
+    })
+  })
+
   it("does not infer dotted gutters from arbitrary content", () => {
     const text = "1. First\n2. Second\n3. Third"
     expect(stripGutter(text)).toEqual({ text, firstLine: 1 })
@@ -393,11 +421,20 @@ describe("diffLines", () => {
 
   it("preserves content that ends with the old internal marker text", () => {
     const literal = "value\u0000observer:no-newline"
-    expect(diffLines(literal, literal)).toEqual([{ sign: " ", text: literal }])
+    expect(diffLines(`${literal}\n`, `${literal}\n`)).toEqual([{ sign: " ", text: literal }])
     expect(diffLines(literal, `${literal}\n`)).toEqual([
       { sign: "-", text: literal },
       { sign: "\\", text: "No newline at end of file" },
       { sign: "+", text: literal },
+    ])
+  })
+
+  it("marks both changed sides when neither has a final newline", () => {
+    expect(diffLines("before", "after")).toEqual([
+      { sign: "-", text: "before" },
+      { sign: "\\", text: "No newline at end of file" },
+      { sign: "+", text: "after" },
+      { sign: "\\", text: "No newline at end of file" },
     ])
   })
 })
