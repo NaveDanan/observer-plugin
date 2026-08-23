@@ -1,5 +1,5 @@
 import type { ToolCallEntity } from "@observer-ai/protocol"
-import { toolAction, type ToolAction } from "./timeline"
+import { isFileCreationTool, toolAction, type ToolAction } from "./timeline"
 
 /**
  * What one tool call looks like when a reader is asked to understand it.
@@ -159,7 +159,7 @@ function readRange(input: Record<string, unknown>): { from: number; to: number |
   const range = input["view_range"] ?? input["viewRange"] ?? input["range"]
   if (Array.isArray(range)) {
     const [from, to] = range
-    if (typeof from === "number") return { from, to: typeof to === "number" ? to : null }
+    if (typeof from === "number") return { from, to: typeof to === "number" && to !== -1 ? to : null }
   }
   const offset = num(input, ["offset", "start_line", "startLine"])
   const limit = num(input, ["limit", "line_count", "lineCount"])
@@ -295,13 +295,13 @@ function unwrapFile(text: string): string {
   return match?.[1] ?? text
 }
 
-function lines(text: string): string[] {
+export function contentLines(text: string): string[] {
   if (text === "") return []
   return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n")
 }
 
 function nonEmptyLines(text: string): string[] {
-  return lines(text).filter((line) => line.trim().length > 0)
+  return contentLines(text).filter((line) => line.trim().length > 0)
 }
 
 // ---------------------------------------------------------------- formatting
@@ -325,25 +325,29 @@ function nonEmptyLines(text: string): string[] {
 export function diffLines(before: string, after: string): DiffRow[] {
   const beforeLines = splitForDiff(before)
   const afterLines = splitForDiff(after)
-  let a = beforeLines.lines
-  let b = afterLines.lines
+  let a = beforeLines.lines.map((text) => ({ text, noNewline: false }))
+  let b = afterLines.lines.map((text) => ({ text, noNewline: false }))
   if (beforeLines.endsWithNewline !== afterLines.endsWithNewline) {
     if (!beforeLines.endsWithNewline && a.length > 0) {
-      a = [...a.slice(0, -1), `${a.at(-1) as string}${NO_NEWLINE_SENTINEL}`]
+      a = [...a.slice(0, -1), { text: (a.at(-1) as DiffInputLine).text, noNewline: true }]
     }
     if (!afterLines.endsWithNewline && b.length > 0) {
-      b = [...b.slice(0, -1), `${b.at(-1) as string}${NO_NEWLINE_SENTINEL}`]
+      b = [...b.slice(0, -1), { text: (b.at(-1) as DiffInputLine).text, noNewline: true }]
     }
   }
 
   let head = 0
-  while (head < a.length && head < b.length && a[head] === b[head]) head += 1
+  while (head < a.length && head < b.length && sameDiffLine(a[head] as DiffInputLine, b[head] as DiffInputLine)) head += 1
   let tail = 0
-  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) {
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    sameDiffLine(a[a.length - 1 - tail] as DiffInputLine, b[b.length - 1 - tail] as DiffInputLine)
+  ) {
     tail += 1
   }
 
-  const context = (text: string): DiffRow => ({ sign: " ", text })
+  const context = (line: DiffInputLine): PendingDiffRow => ({ sign: " ", ...line })
   return expandNoNewlineMarkers([
     ...a.slice(0, head).map(context),
     ...alignLines(a.slice(head, a.length - tail), b.slice(head, b.length - tail)),
@@ -352,7 +356,13 @@ export function diffLines(before: string, after: string): DiffRow[] {
 }
 
 const DIFF_CELL_LIMIT = 250_000
-const NO_NEWLINE_SENTINEL = "\u0000observer:no-newline"
+
+interface DiffInputLine {
+  text: string
+  noNewline: boolean
+}
+
+type PendingDiffRow = DiffRow & { noNewline: boolean }
 
 function splitForDiff(text: string): { lines: string[]; endsWithNewline: boolean } {
   if (text === "") return { lines: [], endsWithNewline: false }
@@ -361,19 +371,24 @@ function splitForDiff(text: string): { lines: string[]; endsWithNewline: boolean
   return { lines: body.split("\n"), endsWithNewline }
 }
 
-function expandNoNewlineMarkers(rows: DiffRow[]): DiffRow[] {
+function sameDiffLine(a: DiffInputLine, b: DiffInputLine): boolean {
+  return a.text === b.text && a.noNewline === b.noNewline
+}
+
+function expandNoNewlineMarkers(rows: PendingDiffRow[]): DiffRow[] {
   return rows.flatMap((row) => {
-    if (!row.text.endsWith(NO_NEWLINE_SENTINEL)) return [row]
+    const content: DiffRow = { sign: row.sign, text: row.text }
+    if (!row.noNewline) return [content]
     return [
-      { ...row, text: row.text.slice(0, -NO_NEWLINE_SENTINEL.length) },
+      content,
       { sign: "\\", text: "No newline at end of file" },
     ]
   })
 }
 
-function alignLines(a: string[], b: string[]): DiffRow[] {
-  const removed = (text: string): DiffRow => ({ sign: "-", text })
-  const added = (text: string): DiffRow => ({ sign: "+", text })
+function alignLines(a: DiffInputLine[], b: DiffInputLine[]): PendingDiffRow[] {
+  const removed = (line: DiffInputLine): PendingDiffRow => ({ sign: "-", ...line })
+  const added = (line: DiffInputLine): PendingDiffRow => ({ sign: "+", ...line })
   if (a.length === 0) return b.map(added)
   if (b.length === 0) return a.map(removed)
   if (a.length * b.length > DIFF_CELL_LIMIT) return [...a.map(removed), ...b.map(added)]
@@ -385,29 +400,32 @@ function alignLines(a: string[], b: string[]): DiffRow[] {
   const at = (i: number, j: number): number => table[i * width + j] as number
   for (let i = a.length - 1; i >= 0; i -= 1) {
     for (let j = b.length - 1; j >= 0; j -= 1) {
-      table[i * width + j] = a[i] === b[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1))
+      table[i * width + j] =
+        sameDiffLine(a[i] as DiffInputLine, b[j] as DiffInputLine)
+          ? at(i + 1, j + 1) + 1
+          : Math.max(at(i + 1, j), at(i, j + 1))
     }
   }
 
-  const rows: DiffRow[] = []
+  const rows: PendingDiffRow[] = []
   let i = 0
   let j = 0
   while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      rows.push({ sign: " ", text: a[i] as string })
+    if (sameDiffLine(a[i] as DiffInputLine, b[j] as DiffInputLine)) {
+      rows.push({ sign: " ", ...(a[i] as DiffInputLine) })
       i += 1
       j += 1
     } else if (at(i + 1, j) >= at(i, j + 1)) {
       // Removals lead their replacements, the way every diff tool prints them.
-      rows.push(removed(a[i] as string))
+      rows.push(removed(a[i] as DiffInputLine))
       i += 1
     } else {
-      rows.push(added(b[j] as string))
+      rows.push(added(b[j] as DiffInputLine))
       j += 1
     }
   }
-  while (i < a.length) rows.push(removed(a[i++] as string))
-  while (j < b.length) rows.push(added(b[j++] as string))
+  while (i < a.length) rows.push(removed(a[i++] as DiffInputLine))
+  while (j < b.length) rows.push(added(b[j++] as DiffInputLine))
   return rows
 }
 
@@ -507,7 +525,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
     stats: {
       startedAt: call.startedAt,
       durationMs: call.durationMs,
-      lines: output === null || output === "" ? null : lines(output).length,
+      lines: output === null || output === "" ? null : contentLines(output).length,
       bytes: output === null || output === "" ? null : byteLength(output),
     },
     running,
@@ -560,7 +578,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
       }
       if (output !== null) {
         const body = stripGutter(unwrapFile(output), readGutterFormat(call.tool, input))
-        step.meta = formatCount(lines(body.text).length, "line")
+        step.meta = formatCount(contentLines(body.text).length, "line")
         step.output = {
           kind: "code",
           text: body.text,
@@ -581,11 +599,14 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
         const content = exactText(input, NEW_KEYS)
         const verb = family === "create" ? "Create" : "Write"
         step.title = call.title ?? (path ? `${verb} ${baseName(path)}` : prettyTool(call.tool))
-        if (content !== null && family === "create") {
+        if (content !== null && family === "create" && !hasIncompletePayload(content)) {
           const rows = diffLines("", content)
           step.input = { kind: "diff", rows, language: languageForPath(path) }
           step.inputLabel = "Change"
           derivedChurn = countChurn(rows)
+        } else if (content !== null && family === "create") {
+          step.input = { kind: "code", text: content, language: languageForPath(path), firstLine: 1 }
+          step.inputLabel = "Captured content"
         } else if (content !== null) {
           step.input = { kind: "code", text: content, language: languageForPath(path), firstLine: 1 }
           step.inputLabel = "New content"
@@ -616,11 +637,11 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
         } else if (added !== null) {
           step.input = { kind: "code", text: added, language: languageForPath(path), firstLine: 1 }
           step.inputLabel = "New content"
-          derivedChurn = { added: lines(added).length, removed: null }
+          derivedChurn = { added: contentLines(added).length, removed: null }
         } else if (removed !== null) {
           step.input = { kind: "code", text: removed, language: languageForPath(path), firstLine: 1 }
           step.inputLabel = "Previous content"
-          derivedChurn = { added: null, removed: lines(removed).length }
+          derivedChurn = { added: null, removed: contentLines(removed).length }
         }
       }
 
@@ -719,11 +740,17 @@ function normaliseToolName(tool: string): string {
 
 function editFamily(tool: string): "create" | "multiedit" | "patch" | "replace" | "write" {
   const name = normaliseToolName(tool)
-  if (name === "createfile") return "create"
+  if (isFileCreationTool(tool)) return "create"
   if (name === "write" || name === "writefile" || name === "filewrite") return "write"
   if (name === "multiedit") return "multiedit"
   if (name === "applypatch" || name === "patch") return "patch"
   return "replace"
+}
+
+const INCOMPLETE_PAYLOAD_MARKERS = ["[redacted]", "\u2026 [truncated ", "[depth limit]"]
+
+function hasIncompletePayload(text: string): boolean {
+  return INCOMPLETE_PAYLOAD_MARKERS.some((marker) => text.includes(marker))
 }
 
 function readGutterFormat(tool: string, input: Record<string, unknown>): GutterFormat {

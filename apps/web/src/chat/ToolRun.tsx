@@ -17,6 +17,7 @@ import { useHighlighted } from "./highlighter"
 import { toolAction, type ToolAction } from "./timeline"
 import {
   baseName,
+  contentLines,
   describeToolCall,
   type DiffRow,
   formatBytes,
@@ -419,7 +420,7 @@ function ShowMore({ hidden, noun, onClick }: { hidden: number; noun: string; onC
 /** Head-first truncation, and the toggle that undoes it. */
 function usePreview(text: string): { shown: string; hidden: number; expand: () => void } {
   const [full, setFull] = useState(false)
-  const all = text.replace(/\n+$/, "").split("\n")
+  const all = contentLines(text)
   const hidden = full ? 0 : Math.max(0, all.length - PREVIEW_LINES)
   return {
     shown: hidden > 0 ? all.slice(0, PREVIEW_LINES).join("\n") : all.join("\n"),

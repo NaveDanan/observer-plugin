@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { ToolCallEntity } from "@observer-ai/protocol"
 import {
   countChurn,
+  contentLines,
   describeToolCall,
   diffLines,
   formatBytes,
@@ -126,6 +127,12 @@ describe("describeToolCall — reads", () => {
     expect(step.output).toMatchObject({ kind: "code", firstLine: 40, language: "markdown" })
   })
 
+  it("renders the -1 view-range sentinel as an open-ended range", () => {
+    const step = describeToolCall(call("view", { input: { path: "README.md", view_range: [40, -1] }, output: "a\nb" }))
+    expect(step.title).toBe("Read README.md:40")
+    expect(step.fields).toContainEqual({ label: "Lines", value: "from 40", mono: true })
+  })
+
   it("understands offset and limit as the same range", () => {
     const step = describeToolCall(call("read", { input: { filePath: "a.ts", offset: 10, limit: 5 }, output: "x" }))
     expect(step.title).toBe("Read a.ts:10-14")
@@ -217,6 +224,24 @@ describe("describeToolCall — edits, delegations, todos", () => {
       kind: "diff",
       rows: [{ sign: "+", text: "export {}" }],
     })
+  })
+
+  it("does not classify non-file create tools as edits", () => {
+    const step = describeToolCall(call("create_issue", { input: { title: "Bug", body: "Details" } }))
+    expect(step.action).toBe("other")
+    expect(step.churn).toBeNull()
+    expect(step.input).toEqual({
+      kind: "text",
+      text: '{\n  "title": "Bug",\n  "body": "Details"\n}',
+    })
+  })
+
+  it("does not derive a diff or churn from clipped create content", () => {
+    const content = "export const value = 1\n… [truncated 40 characters]"
+    const step = describeToolCall(call("create_file", { input: { path: "src/new.ts", content } }))
+    expect(step.churn).toBeNull()
+    expect(step.inputLabel).toBe("Captured content")
+    expect(step.input).toEqual({ kind: "code", text: content, language: "ts", firstLine: 1 })
   })
 
   it("preserves empty and whitespace-only replacement text exactly", () => {
@@ -365,9 +390,24 @@ describe("diffLines", () => {
     ])
     expect(countChurn(rows)).toEqual({ added: 1, removed: 1 })
   })
+
+  it("preserves content that ends with the old internal marker text", () => {
+    const literal = "value\u0000observer:no-newline"
+    expect(diffLines(literal, literal)).toEqual([{ sign: " ", text: literal }])
+    expect(diffLines(literal, `${literal}\n`)).toEqual([
+      { sign: "-", text: literal },
+      { sign: "\\", text: "No newline at end of file" },
+      { sign: "+", text: literal },
+    ])
+  })
 })
 
 describe("formatting", () => {
+  it("removes only the synthetic final split segment", () => {
+    expect(contentLines("one\n\n")).toEqual(["one", ""])
+    expect(contentLines("one\n\n\n")).toEqual(["one", "", ""])
+  })
+
   it("pluralises counts", () => {
     expect(formatCount(1, "line")).toBe("1 line")
     expect(formatCount(0, "match")).toBe("0 matches")
