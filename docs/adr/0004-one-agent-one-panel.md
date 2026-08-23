@@ -34,11 +34,13 @@ check the config", and separately that it read four files, but never that those 
 moment. The ordering key was there — messages carry `createdAt`, calls carry `startedAt` — and the
 interface simply declined to use it.
 
-Tool calls are now interleaved into the transcript by `buildTimeline`, collapsed into one row per
-contiguous run. The merge is stable within each input rather than a plain sort of the union: the two
-streams are stamped by different parts of the host and routinely disagree by a few milliseconds, and
-sorting the union by time alone lets that noise reorder two messages — a visible lie about what the
-agent said first. Timestamps decide only where one stream interleaves with the *other*.
+Tool calls are now interleaved into the transcript by `buildTimeline`. Short contiguous runs show one
+step per call so the useful subjects — usually file names — stay visible. Runs above the transcript's
+disclosure threshold collapse into one summary row and reveal their steps on demand. The merge is
+stable within each input rather than a plain sort of the union: the two streams are stamped by
+different parts of the host and routinely disagree by a few milliseconds, and sorting the union by
+time alone lets that noise reorder two messages — a visible lie about what the agent said first.
+Timestamps decide only where one stream interleaves with the *other*.
 
 This is a deletion, not a move. There is no Tools tab, and no setting to bring it back. A tool call
 read apart from the sentence that explains it is the thing the merge exists to fix, so keeping both

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import type { ToolCallEntity } from "@observer-ai/protocol"
-import { describeToolCall, formatBytes, formatCount, languageForPath, stripGutter } from "../src/chat/toolStep"
+import {
+  countChurn,
+  describeToolCall,
+  diffLines,
+  formatBytes,
+  formatCount,
+  languageForPath,
+  stripGutter,
+} from "../src/chat/toolStep"
 
 /**
  * These cases are written twice on purpose — once in OpenCode's argument
@@ -59,6 +67,17 @@ describe("describeToolCall — commands", () => {
     expect(step.meta).toBe("exit 1")
   })
 
+  it("keeps the exit code while clearly marking a failed command", () => {
+    const step = describeToolCall(
+      call("bash", {
+        status: "error",
+        input: { command: "false" },
+        output: "boom\n<shellId: 3 completed with exit code 1>",
+      }),
+    )
+    expect(step.meta).toBe("failed · exit 1")
+  })
+
   it("falls back to the duration when no exit code was reported", () => {
     expect(describeToolCall(call("bash", { input: { command: "ls" }, output: "a" })).meta).toBe("900ms")
   })
@@ -83,6 +102,12 @@ describe("describeToolCall — searches", () => {
     const step = describeToolCall(call("grep", { input: { pattern: "nope" }, output: "" }))
     expect(step.meta).toBe("0 matches")
     expect(step.output).toEqual({ kind: "text", text: "No matches." })
+    expect(step.stats).toMatchObject({ lines: null, bytes: null })
+  })
+
+  it("does not let captured error output make a failed search look successful", () => {
+    const step = describeToolCall(call("grep", { status: "error", input: { pattern: "x" }, output: "permission denied" }))
+    expect(step.meta).toBe("failed")
   })
 })
 
@@ -104,6 +129,28 @@ describe("describeToolCall — reads", () => {
   it("understands offset and limit as the same range", () => {
     const step = describeToolCall(call("read", { input: { filePath: "a.ts", offset: 10, limit: 5 }, output: "x" }))
     expect(step.title).toBe("Read a.ts:10-14")
+  })
+
+  it("strips a short OpenCode gutter and preserves the final newline", () => {
+    const step = describeToolCall(call("read", { input: { filePath: "a.ts", offset: 12, limit: 2 }, output: "00012| one\n00013| two\n" }))
+    expect(step.output).toMatchObject({ kind: "code", text: "one\ntwo\n", firstLine: 12 })
+    expect(step.meta).toBe("2 lines")
+  })
+
+  it("strips a dotted gutter only for a host tool known to add one", () => {
+    const step = describeToolCall(call("view", { input: { path: "a.md" }, output: "40. first\n41. second" }))
+    expect(step.output).toMatchObject({ kind: "code", text: "first\nsecond", firstLine: 40 })
+  })
+
+  it("preserves a Markdown ordered list returned by a generic read", () => {
+    const text = "1. First\n2. Second\n3. Third"
+    const step = describeToolCall(call("read", { input: { filePath: "list.md" }, output: text }))
+    expect(step.output).toMatchObject({ kind: "code", text })
+  })
+
+  it("marks failed reads as failed instead of reporting captured error lines", () => {
+    const step = describeToolCall(call("read", { status: "error", input: { filePath: "a.ts" }, output: "permission denied" }))
+    expect(step.meta).toBe("failed")
   })
 
   it("keeps a host-supplied title rather than second-guessing it", () => {
@@ -149,18 +196,66 @@ describe("describeToolCall — edits, delegations, todos", () => {
     expect(step.churn).toEqual({ added: 1, removed: 1 })
   })
 
-  it("shows an OpenCode write as a creation, counted from the content", () => {
+  it("shows an OpenCode write neutrally because the input cannot prove creation", () => {
     const step = describeToolCall(call("write", { input: { filePath: "src/new.ts", content: "export {}\nexport {}" } }))
-    expect(step.title).toBe("Create new.ts")
-    expect(step.churn).toEqual({ added: 2, removed: 0 })
+    expect(step.title).toBe("Write new.ts")
+    expect(step.churn).toBeNull()
+    expect(step.inputLabel).toBe("New content")
     expect(step.input).toEqual({
-      kind: "diff",
+      kind: "code",
+      text: "export {}\nexport {}",
       language: "ts",
+      firstLine: 1,
+    })
+  })
+
+  it("preserves empty and whitespace-only replacement text exactly", () => {
+    const whitespace = describeToolCall(call("edit", { input: { path: "a.txt", old_str: " ", new_str: "\t" } }))
+    expect(whitespace.input).toMatchObject({
+      kind: "diff",
       rows: [
-        { sign: "+", text: "export {}" },
-        { sign: "+", text: "export {}" },
+        { sign: "-", text: " " },
+        { sign: "+", text: "\t" },
       ],
     })
+
+    const empty = describeToolCall(call("edit", { input: { path: "a.txt", old_str: "x", new_str: "" } }))
+    expect(empty.input).toMatchObject({ kind: "diff", rows: [{ sign: "-", text: "x" }] })
+    expect(empty.churn).toEqual({ added: 0, removed: 1 })
+  })
+
+  it("keeps patch and multi-edit arguments inspectable", () => {
+    const patch = "*** Begin Patch\n*** Update File: a.ts\n@@\n-old\n+new\n*** End Patch"
+    const patchStep = describeToolCall(call("apply_patch", { input: { patch }, linesAdded: 1, linesRemoved: 1 }))
+    expect(patchStep.inputLabel).toBe("Patch")
+    expect(patchStep.input).toEqual({ kind: "text", text: patch })
+
+    const edits = [
+      { old_string: "a", new_string: "b" },
+      { old_string: "c", new_string: "d" },
+    ]
+    const multiStep = describeToolCall(call("multi_edit", { input: { path: "a.ts", edits } }))
+    expect(multiStep.inputLabel).toBe("Changes")
+    expect(multiStep.input).toEqual({ kind: "text", text: JSON.stringify(edits, null, 2) })
+  })
+
+  it("falls back to formatted input for an unrecognized edit payload", () => {
+    const step = describeToolCall(call("edit_file", { input: { path: "a.ts", operations: [{ insert: "x" }] } }))
+    expect(step.inputLabel).toBe("Input")
+    expect(step.input).toEqual({
+      kind: "text",
+      text: '{\n  "path": "a.ts",\n  "operations": [\n    {\n      "insert": "x"\n    }\n  ]\n}',
+    })
+  })
+
+  it("merges host churn independently with the derived opposite side", () => {
+    const step = describeToolCall(
+      call("edit", {
+        input: { path: "a.ts", old_str: "one\ntwo", new_str: "ONE" },
+        linesAdded: 4,
+      }),
+    )
+    expect(step.churn).toEqual({ added: 4, removed: 2 })
   })
 
   it("names the delegated agent and keeps the prompt as the body", () => {
@@ -195,6 +290,11 @@ describe("describeToolCall — states", () => {
     expect(step.stats.bytes).toBeNull()
   })
 
+  it("treats a captured empty string as no output measurement", () => {
+    const step = describeToolCall(call("bash", { input: { command: "true" }, output: "" }))
+    expect(step.stats).toMatchObject({ lines: null, bytes: null })
+  })
+
   it("keeps the error text for a failed call", () => {
     const step = describeToolCall(call("bash", { status: "error", error: "command not found", input: { command: "nope" } }))
     expect(step.failed).toBe(true)
@@ -217,16 +317,43 @@ describe("stripGutter", () => {
   })
 
   it("recovers a dotted gutter too", () => {
-    expect(stripGutter("1. alpha\n2. beta\n3. gamma")).toEqual({ text: "alpha\nbeta\ngamma", firstLine: 1 })
+    expect(stripGutter("1. alpha\n2. beta\n3. gamma", "dotted")).toEqual({ text: "alpha\nbeta\ngamma", firstLine: 1 })
   })
 
-  it("leaves content alone when the numbers do not ascend", () => {
-    const text = "3 apples\n1 pear\n9 plums"
+  it("leaves content alone when valid gutter numbers descend", () => {
+    const text = "5| alpha\n4| beta\n3| gamma"
     expect(stripGutter(text)).toEqual({ text, firstLine: 1 })
   })
 
-  it("leaves short content alone", () => {
-    expect(stripGutter("1. only")).toEqual({ text: "1. only", firstLine: 1 })
+  it("requires consecutive rather than merely increasing gutter numbers", () => {
+    const text = "5| alpha\n7| beta\n9| gamma"
+    expect(stripGutter(text)).toEqual({ text, firstLine: 1 })
+  })
+
+  it("strips one- and two-line gutters when their format is known", () => {
+    expect(stripGutter("12| only")).toEqual({ text: "only", firstLine: 12 })
+    expect(stripGutter("12. one\n13. two", "dotted")).toEqual({ text: "one\ntwo", firstLine: 12 })
+  })
+
+  it("excludes one trailing split-empty line from detection and preserves it", () => {
+    expect(stripGutter("12| one\n13| two\n")).toEqual({ text: "one\ntwo\n", firstLine: 12 })
+  })
+
+  it("does not infer dotted gutters from arbitrary content", () => {
+    const text = "1. First\n2. Second\n3. Third"
+    expect(stripGutter(text)).toEqual({ text, firstLine: 1 })
+  })
+})
+
+describe("diffLines", () => {
+  it("represents a final-newline-only change explicitly and counts it as a replacement", () => {
+    const rows = diffLines("foo", "foo\n")
+    expect(rows).toEqual([
+      { sign: "-", text: "foo" },
+      { sign: "\\", text: "No newline at end of file" },
+      { sign: "+", text: "foo" },
+    ])
+    expect(countChurn(rows)).toEqual({ added: 1, removed: 1 })
   })
 })
 

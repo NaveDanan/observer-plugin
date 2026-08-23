@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { Highlighter } from "shiki"
 
 /**
@@ -191,15 +191,18 @@ export async function highlight(code: string, language: string): Promise<string>
  */
 export function useHighlighted(code: string, language: string | undefined, streaming: boolean): string | null {
   const key = `${hash(code)}:${code.length}:${language ?? ""}`
-  const [html, setHtml] = useState<string | null>(() => (streaming ? null : (cacheGet(key) ?? null)))
+  const cached = useMemo(() => (streaming ? undefined : cacheGet(key)), [key, streaming])
+  const [result, setResult] = useState<{ key: string; html: string | null }>(() => ({
+    key,
+    html: cached ?? null,
+  }))
   // Survives the code changing under a streaming block: each run invalidates
   // the last, so a slow early chunk cannot land after a fast later one.
   const run = useRef(0)
 
   useEffect(() => {
-    const cached = streaming ? undefined : cacheGet(key)
     if (cached !== undefined) {
-      setHtml(cached)
+      setResult({ key, html: cached })
       return
     }
     const token = ++run.current
@@ -210,17 +213,17 @@ export function useHighlighted(code: string, language: string | undefined, strea
         const rendered = await highlight(code, lang)
         if (cancelled || token !== run.current) return
         if (!streaming) cacheSet(key, rendered)
-        setHtml(rendered)
+        setResult({ key, html: rendered })
       } catch {
         // Colour is an enhancement. The caller's plain `<pre>` is the floor,
         // and reaching it silently is the correct outcome, not an error state.
-        if (!cancelled && token === run.current) setHtml(null)
+        if (!cancelled && token === run.current) setResult({ key, html: null })
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [key, code, language, streaming])
+  }, [key, code, language, streaming, cached])
 
-  return html
+  return result.key === key ? result.html : (cached ?? null)
 }

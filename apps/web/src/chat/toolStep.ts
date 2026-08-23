@@ -40,7 +40,7 @@ export type StepBody =
 
 /** One line of a unified diff: unchanged context, a removal, or an addition. */
 export interface DiffRow {
-  sign: " " | "-" | "+"
+  sign: " " | "-" | "+" | "\\"
   text: string
 }
 
@@ -76,6 +76,8 @@ export interface ToolStep {
   fields: StepField[]
   /** The argument body — an edit's diff, a delegation's prompt. */
   input: StepBody | null
+  /** A more precise heading than the action-derived default, when needed. */
+  inputLabel: string | null
   /** What came back. */
   output: StepBody | null
   error: string | null
@@ -92,7 +94,7 @@ export interface ToolStep {
    * when the host does not report it, because "an edit" with no size is the
    * one thing a reader always wants to know before opening the card.
    */
-  churn: { added: number; removed: number } | null
+  churn: { added: number | null; removed: number | null } | null
   stats: StepStats
   running: boolean
   failed: boolean
@@ -125,6 +127,15 @@ function str(input: Record<string, unknown>, keys: string[]): string | null {
       const joined = value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0).join(", ")
       if (joined.length > 0) return joined
     }
+  }
+  return null
+}
+
+/** Source text is exact: empty and whitespace-only strings are still present. */
+function exactText(input: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = input[key]
+    if (typeof value === "string") return value
   }
   return null
 }
@@ -241,19 +252,24 @@ export function languageForPath(path: string | null): string | undefined {
  * read was ranged. Recovering the first line number instead means the viewer's
  * own gutter can start where the file actually was read.
  *
- * Conservative on purpose. It fires only when nearly every line carries the
- * prefix *and* the numbers ascend, so a log that happens to start with a digit
- * is left alone; and it eats at most one space after the separator, so the
- * file's own indentation survives.
+ * Conservative on purpose. Dotted gutters require an explicit host/tool
+ * signal because they are indistinguishable from Markdown ordered lists.
+ * Every format also requires nearly every line to carry consecutive numbers.
  */
-export function stripGutter(text: string): { text: string; firstLine: number } {
-  const lines = text.split("\n")
-  if (lines.length < 3) return { text, firstLine: 1 }
-  const pattern = /^\s{0,8}(\d{1,6})(?:\.|\||:|\t) ?(.*)$/
+export type GutterFormat = "none" | "dotted" | "unambiguous"
+
+export function stripGutter(text: string, format: GutterFormat = "unambiguous"): { text: string; firstLine: number } {
+  if (format === "none") return { text, firstLine: 1 }
+  const allLines = text.split("\n")
+  const hasFinalNewline = allLines.at(-1) === ""
+  const candidates = hasFinalNewline ? allLines.slice(0, -1) : allLines
+  if (candidates.length === 0) return { text, firstLine: 1 }
+  const pattern =
+    format === "dotted" ? /^\s{0,8}(\d{1,6})\. ?(.*)$/ : /^\s{0,8}(\d{1,6})(?:\||:|\t) ?(.*)$/
   const numbers: number[] = []
   const stripped: string[] = []
   let matched = 0
-  for (const line of lines) {
+  for (const line of candidates) {
     const found = pattern.exec(line)
     if (found?.[1] === undefined) {
       // A blank line inside a listing is legitimately unnumbered in some hosts.
@@ -265,11 +281,12 @@ export function stripGutter(text: string): { text: string; firstLine: number } {
     numbers.push(Number(found[1]))
     stripped.push(found[2] ?? "")
   }
-  if (matched < lines.length * 0.8) return { text, firstLine: 1 }
+  if (matched < candidates.length * 0.8) return { text, firstLine: 1 }
   const real = numbers.filter((value) => !Number.isNaN(value))
-  const ascends = real.every((value, index) => index === 0 || value > (real[index - 1] ?? 0))
-  if (!ascends || real.length === 0) return { text, firstLine: 1 }
-  return { text: stripped.join("\n"), firstLine: real[0] ?? 1 }
+  const consecutive = real.every((value, index) => index === 0 || value === (real[index - 1] as number) + 1)
+  if (!consecutive || real.length === 0) return { text, firstLine: 1 }
+  if (hasFinalNewline) stripped.push("")
+  return { text: stripped.join("\n"), firstLine: real[0] as number }
 }
 
 /** OpenCode wraps read output in `<file>` tags; they are chrome, not content. */
@@ -279,7 +296,8 @@ function unwrapFile(text: string): string {
 }
 
 function lines(text: string): string[] {
-  return text.replace(/\n+$/, "").split("\n")
+  if (text === "") return []
+  return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n")
 }
 
 function nonEmptyLines(text: string): string[] {
@@ -305,8 +323,18 @@ function nonEmptyLines(text: string): string[] {
  * align two thousand lines nobody will read line by line.
  */
 export function diffLines(before: string, after: string): DiffRow[] {
-  const a = splitForDiff(before)
-  const b = splitForDiff(after)
+  const beforeLines = splitForDiff(before)
+  const afterLines = splitForDiff(after)
+  let a = beforeLines.lines
+  let b = afterLines.lines
+  if (beforeLines.endsWithNewline !== afterLines.endsWithNewline) {
+    if (!beforeLines.endsWithNewline && a.length > 0) {
+      a = [...a.slice(0, -1), `${a.at(-1) as string}${NO_NEWLINE_SENTINEL}`]
+    }
+    if (!afterLines.endsWithNewline && b.length > 0) {
+      b = [...b.slice(0, -1), `${b.at(-1) as string}${NO_NEWLINE_SENTINEL}`]
+    }
+  }
 
   let head = 0
   while (head < a.length && head < b.length && a[head] === b[head]) head += 1
@@ -316,18 +344,31 @@ export function diffLines(before: string, after: string): DiffRow[] {
   }
 
   const context = (text: string): DiffRow => ({ sign: " ", text })
-  return [
+  return expandNoNewlineMarkers([
     ...a.slice(0, head).map(context),
     ...alignLines(a.slice(head, a.length - tail), b.slice(head, b.length - tail)),
     ...a.slice(a.length - tail).map(context),
-  ]
+  ])
 }
 
 const DIFF_CELL_LIMIT = 250_000
+const NO_NEWLINE_SENTINEL = "\u0000observer:no-newline"
 
-function splitForDiff(text: string): string[] {
-  if (text === "") return []
-  return text.replace(/\n$/, "").split("\n")
+function splitForDiff(text: string): { lines: string[]; endsWithNewline: boolean } {
+  if (text === "") return { lines: [], endsWithNewline: false }
+  const endsWithNewline = text.endsWith("\n")
+  const body = endsWithNewline ? text.slice(0, -1) : text
+  return { lines: body.split("\n"), endsWithNewline }
+}
+
+function expandNoNewlineMarkers(rows: DiffRow[]): DiffRow[] {
+  return rows.flatMap((row) => {
+    if (!row.text.endsWith(NO_NEWLINE_SENTINEL)) return [row]
+    return [
+      { ...row, text: row.text.slice(0, -NO_NEWLINE_SENTINEL.length) },
+      { sign: "\\", text: "No newline at end of file" },
+    ]
+  })
 }
 
 function alignLines(a: string[], b: string[]): DiffRow[] {
@@ -458,6 +499,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
     meta: null,
     fields: [],
     input: null,
+    inputLabel: null,
     output: null,
     error: call.error,
     subject: path ? { kind: "path", value: path } : null,
@@ -465,8 +507,8 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
     stats: {
       startedAt: call.startedAt,
       durationMs: call.durationMs,
-      lines: output === null ? null : lines(output).length,
-      bytes: output === null ? null : byteLength(output),
+      lines: output === null || output === "" ? null : lines(output).length,
+      bytes: output === null || output === "" ? null : byteLength(output),
     },
     running,
     failed,
@@ -500,7 +542,8 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
         // noun follows the tool: a glob returns files, a grep returns matches.
         const noun = call.tool.toLowerCase().includes("glob") ? "file" : "match"
         step.meta = formatCount(found.length, noun)
-        step.output = found.length > 0 ? { kind: "list", items: found } : { kind: "text", text: "No matches." }
+        if (found.length > 0) step.output = { kind: "list", items: found }
+        else if (!failed) step.output = { kind: "text", text: "No matches." }
       }
       break
     }
@@ -516,7 +559,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
         step.fields.push({ label: "Lines", value: range.to === null ? `from ${range.from}` : `${range.from}–${range.to}`, mono: true })
       }
       if (output !== null) {
-        const body = stripGutter(unwrapFile(output))
+        const body = stripGutter(unwrapFile(output), readGutterFormat(call.tool, input))
         step.meta = formatCount(lines(body.text).length, "line")
         step.output = {
           kind: "code",
@@ -531,20 +574,65 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
     }
 
     case "edit": {
-      const removed = str(input, OLD_KEYS)
-      const added = str(input, NEW_KEYS)
-      // A write with nothing to replace created the file; "Edited" would be a
-      // small lie, and the one that most often sends a reader hunting for a
-      // history that does not exist.
-      const creating = removed === null && added !== null
-      step.title = call.title ?? (path ? `${creating ? "Create" : "Edit"} ${baseName(path)}` : call.tool)
-      if (removed !== null || added !== null) {
-        const rows = diffLines(removed ?? "", added ?? "")
-        step.input = { kind: "diff", rows, language: languageForPath(path) }
-        step.churn = countChurn(rows)
+      const family = editFamily(call.tool)
+      let derivedChurn: ToolStep["churn"] = null
+
+      if (family === "write" || family === "create") {
+        const content = exactText(input, NEW_KEYS)
+        const verb = family === "create" ? "Create" : "Write"
+        step.title = call.title ?? (path ? `${verb} ${baseName(path)}` : prettyTool(call.tool))
+        if (content !== null && family === "create") {
+          const rows = diffLines("", content)
+          step.input = { kind: "diff", rows, language: languageForPath(path) }
+          step.inputLabel = "Change"
+          derivedChurn = countChurn(rows)
+        } else if (content !== null) {
+          step.input = { kind: "code", text: content, language: languageForPath(path), firstLine: 1 }
+          step.inputLabel = "New content"
+        }
+      } else if (family === "patch") {
+        const patch = exactText(input, ["patch", "diff", "content", "input"])
+        step.title = call.title ?? (path ? `Patch ${baseName(path)}` : prettyTool(call.tool))
+        if (patch !== null) {
+          step.input = { kind: "text", text: patch }
+          step.inputLabel = "Patch"
+        }
+      } else if (family === "multiedit") {
+        step.title = call.title ?? (path ? `Edit ${baseName(path)}` : prettyTool(call.tool))
+        const printed = printInput(input["edits"])
+        if (printed !== null) {
+          step.input = { kind: "text", text: printed }
+          step.inputLabel = "Changes"
+        }
+      } else {
+        const removed = exactText(input, OLD_KEYS)
+        const added = exactText(input, NEW_KEYS)
+        step.title = call.title ?? (path ? `Edit ${baseName(path)}` : call.tool)
+        if (removed !== null && added !== null) {
+          const rows = diffLines(removed, added)
+          step.input = { kind: "diff", rows, language: languageForPath(path) }
+          step.inputLabel = "Change"
+          derivedChurn = countChurn(rows)
+        } else if (added !== null) {
+          step.input = { kind: "code", text: added, language: languageForPath(path), firstLine: 1 }
+          step.inputLabel = "New content"
+          derivedChurn = { added: lines(added).length, removed: null }
+        } else if (removed !== null) {
+          step.input = { kind: "code", text: removed, language: languageForPath(path), firstLine: 1 }
+          step.inputLabel = "Previous content"
+          derivedChurn = { added: null, removed: lines(removed).length }
+        }
       }
-      step.churn = reportedChurn(call) ?? step.churn
-      step.meta = step.churn === null ? (failed ? "failed" : durationMeta(call)) : null
+
+      if (step.input === null) {
+        const printed = printInput(call.input)
+        if (printed !== null) {
+          step.input = { kind: "text", text: printed }
+          step.inputLabel = "Input"
+        }
+      }
+      step.churn = mergeChurn(call, derivedChurn)
+      step.meta = step.churn === null ? durationMeta(call) : null
       if (output) step.output = { kind: "text", text: output }
       break
     }
@@ -594,9 +682,10 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
   // A call still in flight has no output *yet*, which is a different claim
   // from having produced none — the row says so instead of showing "0 lines".
   if (running && step.meta === null) step.meta = "running"
-  // A failure must never be reported as a bare duration: "800ms" reads like a
-  // call that went fine and happened to be quick.
-  if (failed && (step.meta === null || step.meta === durationMeta(call))) step.meta = "failed"
+  if (failed) {
+    const code = action === "command" ? exitCode(call) : null
+    step.meta = code === null ? "failed" : `failed · exit ${code}`
+  }
   return step
 }
 
@@ -613,17 +702,37 @@ function durationMeta(call: ToolCallEntity): string | null {
   return call.durationMs === null ? null : formatDuration(call.durationMs)
 }
 
-/** `+12 −3`, from whatever the reducer credited this call with. */
 /**
  * The churn the host measured, which beats anything counted from the
  * arguments: a host watching the file system sees the whole write, where the
  * arguments only show the hunk that was sent.
  */
-function reportedChurn(call: ToolCallEntity): { added: number; removed: number } | null {
-  const added = call.linesAdded
-  const removed = call.linesRemoved
-  if (added === undefined && removed === undefined) return null
-  return { added: added ?? 0, removed: removed ?? 0 }
+function mergeChurn(call: ToolCallEntity, derived: ToolStep["churn"]): ToolStep["churn"] {
+  const added = call.linesAdded ?? derived?.added ?? null
+  const removed = call.linesRemoved ?? derived?.removed ?? null
+  return added === null && removed === null ? null : { added, removed }
+}
+
+function normaliseToolName(tool: string): string {
+  return tool.toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
+function editFamily(tool: string): "create" | "multiedit" | "patch" | "replace" | "write" {
+  const name = normaliseToolName(tool)
+  if (name === "createfile") return "create"
+  if (name === "write" || name === "writefile" || name === "filewrite") return "write"
+  if (name === "multiedit") return "multiedit"
+  if (name === "applypatch" || name === "patch") return "patch"
+  return "replace"
+}
+
+function readGutterFormat(tool: string, input: Record<string, unknown>): GutterFormat {
+  const declared = str(input, ["gutter_format", "gutterFormat", "line_number_format", "lineNumberFormat"])?.toLowerCase()
+  if (declared === "dotted" || declared === "unambiguous" || declared === "none") return declared
+  const name = normaliseToolName(tool)
+  if (name === "view" || name === "viewfile") return "dotted"
+  if (name === "read" || name === "readfile") return "unambiguous"
+  return "none"
 }
 
 function looksLikeJson(text: string): boolean {

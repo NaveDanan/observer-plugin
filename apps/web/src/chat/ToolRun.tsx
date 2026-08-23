@@ -190,7 +190,7 @@ function StepCard({ step, tool }: { step: ToolStep; tool: string }): JSX.Element
         </dl>
       )}
 
-      {step.input && <BodyView body={step.input} label={step.action === "edit" ? "Change" : "Input"} />}
+      {step.input && <BodyView body={step.input} label={step.inputLabel ?? (step.action === "edit" ? "Change" : "Input")} />}
       {step.output && <BodyView body={step.output} label="Output" />}
 
       {step.error && (
@@ -391,6 +391,7 @@ const DIFF_TONE: Record<DiffRow["sign"], string> = {
   " ": "is-context",
   "-": "is-removed",
   "+": "is-added",
+  "\\": "is-marker",
 }
 
 /**
@@ -431,11 +432,11 @@ function usePreview(text: string): { shown: string; hidden: number; expand: () =
 function Churn({ step }: { step: ToolStep }): JSX.Element | null {
   if (step.churn === null) return null
   const { added, removed } = step.churn
-  if (added === 0 && removed === 0) return null
+  if ((added === null || added === 0) && (removed === null || removed === 0)) return null
   return (
     <span className="step-churn">
-      {added > 0 && <span className="churn-add">+{added}</span>}
-      {removed > 0 && <span className="churn-del">−{removed}</span>}
+      {added !== null && added > 0 && <span className="churn-add">+{added}</span>}
+      {removed !== null && removed > 0 && <span className="churn-del">−{removed}</span>}
     </span>
   )
 }
