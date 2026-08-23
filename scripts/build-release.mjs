@@ -153,7 +153,12 @@ async function main() {
   writeFileSync(join(stageDir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
 
   log("Packing")
-  const packed = execFileSync("npm", ["pack", "--pack-destination", releaseDir], {
+  const npmCommand = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm"
+  const npmArgs =
+    process.platform === "win32"
+      ? ["/d", "/s", "/c", "npm", "pack", "--pack-destination", releaseDir]
+      : ["pack", "--pack-destination", releaseDir]
+  const packed = execFileSync(npmCommand, npmArgs, {
     cwd: stageDir,
     encoding: "utf8",
   })
