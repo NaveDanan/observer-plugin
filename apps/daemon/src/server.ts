@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
-import { dirname, extname, join, normalize, resolve } from "node:path"
+import { dirname, extname, join, normalize, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import websocket from "@fastify/websocket"
@@ -747,8 +747,11 @@ function serveStatic(webDir: string, url: string, reply: FastifyReply): FastifyR
   }
   const requested = decodeURIComponent((url.split("?")[0] ?? "/").replace(/^\/+/, ""))
   const candidate = resolve(webDir, normalize(requested))
-  // Path traversal guard: never serve anything outside the built UI.
-  const inside = candidate === resolve(webDir) || candidate.startsWith(`${resolve(webDir)}/`)
+  // Path traversal guard: never serve anything outside the built UI. The
+  // separator must be the platform's — on Windows `resolve` yields backslashes,
+  // so a hardcoded "/" rejects every real asset and falls back to index.html,
+  // which serves HTML in place of the JS bundle and renders a blank canvas.
+  const inside = candidate === resolve(webDir) || candidate.startsWith(`${resolve(webDir)}${sep}`)
   const target = inside && requested.length > 0 && isFile(candidate) ? candidate : join(webDir, "index.html")
   if (!isFile(target)) return reply.code(404).type("text/plain").send("not found")
   const type = MIME[extname(target)] ?? "application/octet-stream"
@@ -784,6 +787,7 @@ function configPayload(config: ObserverConfig) {
     guidance: config.guidance,
     seats: config.seats,
     providers: config.providers,
+    autostart: config.autostart,
     diagnosis: diagnoseSeats(config.seats),
   }
 }
@@ -892,6 +896,7 @@ function hostCatalogue(adapter: HostSeatAdapter, requested: string | undefined) 
       id: model.id,
       label: model.label,
       contextWindow: model.contextWindow,
+      available: model.available,
       options: (model.options ?? []).map((option) => ({
         id: option.id,
         label: option.label,

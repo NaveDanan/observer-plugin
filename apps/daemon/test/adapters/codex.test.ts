@@ -1,3 +1,4 @@
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { CODEX_DEFAULT_PROFILE, codexAdapter, createCodexAdapter, readModel } from "../../src/adapters/codex.js"
 import type { CodexSpawn, CodexSpawnResult } from "../../src/adapters/codex.js"
@@ -76,7 +77,7 @@ describe("codex adapter profiles", () => {
         host: "codex",
         label: "Codex",
         binaryPath: "codex",
-        homePath: "/home/tester/.codex",
+        homePath: join("/home/tester", ".codex"),
       },
     ])
     // Discovery is not a probe. Listing profiles must cost nothing.
@@ -167,7 +168,7 @@ describe("codex adapter catalogue", () => {
       expect(call.input).toContain('"method":"initialize"')
       expect(call.input).toContain('"method":"initialized"')
       expect(call.input).toContain('"method":"model/list"')
-      expect(call.env["CODEX_HOME"]).toBe("/home/tester/.codex")
+      expect(call.env["CODEX_HOME"]).toBe(join("/home/tester", ".codex"))
     }
     expect(calls[0]?.input).not.toContain("cursor")
     expect(calls[1]?.input).toContain('"cursor":"page-2"')

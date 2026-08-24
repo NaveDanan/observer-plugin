@@ -40,6 +40,15 @@ export interface ObserverConfig {
   seats: SeatsConfig
   /** Configured provider instances, keyed by the user's instance id. */
   providers: Record<string, ProviderInstanceConfig>
+  /**
+   * Whether a hook may bring the daemon up when it finds nothing listening.
+   *
+   * On by default, so Observer is something a user installs rather than
+   * something they remember to run. Turning it off does not lose events — the
+   * emitter still spools them, and the next manual `observer start` drains the
+   * spool.
+   */
+  autostart: boolean
 }
 
 export const CaptureConfigSchema = z.object({
@@ -73,6 +82,7 @@ export const DEFAULT_CONFIG: Omit<ObserverConfig, "token"> = {
   guidance: true,
   seats: DEFAULT_SEATS,
   providers: {},
+  autostart: true,
 }
 
 /**
@@ -124,6 +134,7 @@ export const ConfigSchema = z.object({
   guidance: z.boolean().catch(DEFAULT_CONFIG.guidance),
   seats: SeatsConfigSchema,
   providers: ProvidersConfigSchema,
+  autostart: z.boolean().catch(DEFAULT_CONFIG.autostart),
 })
 
 export const ConfigPatchSchema = z
@@ -134,6 +145,7 @@ export const ConfigPatchSchema = z
     guidance: z.boolean().optional(),
     seats: SeatsConfigSchema.optional(),
     providers: ProvidersConfigSchema.optional(),
+    autostart: z.boolean().optional(),
   })
   .strict()
 

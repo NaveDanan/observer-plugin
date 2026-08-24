@@ -127,6 +127,13 @@ function adapterWith(
     env: {},
     homeDir: () => "/home/tester",
     now: () => 1_000,
+    // No snapshot unless a test asks for one: whether this machine happens to
+    // have a models.dev cache is not allowed to decide what a test sees.
+    contextWindows: () => new Map(),
+    contextTiers: () => new Set<string>(),
+    // No ACP, ever. The real probe spawns a child and leaves a session behind
+    // in the developer's own Copilot history; a test run must do neither.
+    entitlement: () => ({ freshness: "unknown" as const }),
     ...overrides,
   })
   return { adapter, calls }
@@ -205,18 +212,104 @@ describe("copilot adapter catalogue", () => {
     expect(effort?.currentValue).toBeUndefined()
   })
 
-  it("never offers a contextTier control, because Copilot will not say which models are tiered", () => {
+  it("offers no contextTier control when no snapshot says which models are tiered", () => {
     const { adapter } = adapterWith(HEALTHY)
     for (const model of adapter.catalogue(COPILOT_DEFAULT_PROFILE).models) {
       expect(model.options.map((option) => option.id)).not.toContain(COPILOT_CONTEXT_TIER_OPTION)
     }
   })
 
-  it("invents no context window, since Copilot publishes none per model", () => {
+  it("offers the contextTier control only on the models the snapshot prices in tiers", () => {
+    const { adapter } = adapterWith(HEALTHY, { contextTiers: () => new Set(["gpt-5.6-sol"]) })
+    const models = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models
+
+    const tiered = models.find((model) => model.id === "gpt-5.6-sol")
+    expect(tiered?.options.map((option) => option.id)).toContain(COPILOT_CONTEXT_TIER_OPTION)
+
+    for (const model of models.filter((entry) => entry.id !== "gpt-5.6-sol")) {
+      expect(model.options.map((option) => option.id)).not.toContain(COPILOT_CONTEXT_TIER_OPTION)
+    }
+  })
+
+  it("takes the tier values from the host's own help rather than from a literal", () => {
+    const { adapter } = adapterWith(HEALTHY, { contextTiers: () => new Set(["gpt-5.6-sol"]) })
+    const model = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.find((entry) => entry.id === "gpt-5.6-sol")
+    const descriptor = model?.options.find((option) => option.id === COPILOT_CONTEXT_TIER_OPTION)
+    expect(descriptor?.choices?.map((choice) => choice.id)).toEqual(["default", "long_context"])
+  })
+
+  it("never offers a tier on auto, which routes to a model this probe cannot name", () => {
+    const { adapter } = adapterWith(HEALTHY, { contextTiers: () => new Set(["auto", "gpt-5.6-sol"]) })
+    const auto = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.find((entry) => entry.id === "auto")
+    expect(auto?.options.map((option) => option.id)).not.toContain(COPILOT_CONTEXT_TIER_OPTION)
+  })
+
+  it("marks a model unavailable when the account's entitlement does not name it", () => {
+    const { adapter } = adapterWith(HEALTHY, {
+      entitlement: () => ({ models: new Set(["claude-opus-5"]), freshness: "cached" as const }),
+    })
+    const models = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models
+
+    expect(models.find((model) => model.id === "claude-opus-5")?.available).toBe(true)
+    expect(models.find((model) => model.id === "gpt-5.6-sol")?.available).toBe(false)
+    // Still listed. The user asked to see them greyed out, not hidden.
+    expect(models.map((model) => model.id)).toContain("gpt-5.6-sol")
+  })
+
+  it("leaves availability unstated when the entitlement question was never answered", () => {
+    const { adapter } = adapterWith(HEALTHY)
+    for (const model of adapter.catalogue(COPILOT_DEFAULT_PROFILE).models) {
+      expect(model.available).toBeUndefined()
+    }
+  })
+
+  it("never marks auto unavailable, because a router is not a model", () => {
+    const { adapter } = adapterWith(HEALTHY, {
+      entitlement: () => ({ models: new Set(["claude-opus-5"]), freshness: "cached" as const }),
+    })
+    const auto = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.find((model) => model.id === "auto")
+    expect(auto?.available).toBeUndefined()
+  })
+
+  it("leaves the context window blank when no catalogue snapshot is on the machine", () => {
     const { adapter } = adapterWith(HEALTHY)
     for (const model of adapter.catalogue(COPILOT_DEFAULT_PROFILE).models) {
       expect(model.contextWindow).toBeUndefined()
     }
+  })
+
+  it("borrows context windows from the catalogue snapshot, which Copilot itself never publishes", () => {
+    const { adapter } = adapterWith(HEALTHY, {
+      contextWindows: () =>
+        new Map([
+          ["claude-opus-5", 1_000_000],
+          ["gpt-5.6-sol", 1_050_000],
+        ]),
+    })
+    const models = new Map(
+      adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.map((model) => [model.id, model.contextWindow]),
+    )
+    expect(models.get("claude-opus-5")).toBe(1_000_000)
+    expect(models.get("gpt-5.6-sol")).toBe(1_050_000)
+    // A model the snapshot has never heard of stays blank rather than
+    // borrowing a sibling's number.
+    expect(models.get("gemini-3.7-flash")).toBeUndefined()
+    // `auto` is not a model, it is a router, so no single size is true of it.
+    expect(models.get("auto")).toBeUndefined()
+  })
+
+  it("uses a base model's context window for Copilot's fast alias", () => {
+    const helpWithFastAlias = HELP_CONFIG.replace(
+      '    - "claude-sonnet-4.5"',
+      '    - "claude-sonnet-4.5"\n    - "claude-opus-4.8-fast"',
+    )
+    const { adapter } = adapterWith(
+      { ...HEALTHY, "help config": ok(helpWithFastAlias) },
+      { contextWindows: () => new Map([["claude-opus-4.8", 200_000]]) },
+    )
+
+    const fast = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.find((model) => model.id === "claude-opus-4.8-fast")
+    expect(fast?.contextWindow).toBe(200_000)
   })
 
   it("omits `auto` when this build's help does not declare it", () => {
@@ -267,10 +360,10 @@ describe("copilot adapter catalogue", () => {
     expect(catalogue.warnings[0]).toContain("Install GitHub Copilot CLI")
   })
 
-  it("does not spawn the second probe once the first has failed", () => {
+  it("does not spawn the option probe when both inventory attempts fail", () => {
     const { adapter, calls } = adapterWith({ "help config": { stdout: "", status: 1 } })
     adapter.catalogue(COPILOT_DEFAULT_PROFILE)
-    expect(calls.map((call) => call.args.join(" "))).toEqual(["help config"])
+    expect(calls.map((call) => call.args.join(" "))).toEqual(["help config", "help config"])
   })
 
   it("survives a launcher that throws instead of reporting", () => {
@@ -285,6 +378,30 @@ describe("copilot adapter catalogue", () => {
     const catalogue = adapter.catalogue(COPILOT_DEFAULT_PROFILE)
     expect(catalogue.models).toEqual([])
     expect(catalogue.warnings.join(" ")).toContain("posix_spawn refused")
+  })
+
+  it("retries a transient model-inventory failure before returning an empty catalogue", () => {
+    let configAttempts = 0
+    const adapter = createCopilotAdapter({
+      env: {},
+      homeDir: () => "/home/tester",
+      now: () => 1_000,
+      contextWindows: () => new Map(),
+      contextTiers: () => new Set<string>(),
+      entitlement: () => ({ freshness: "unknown" as const }),
+      spawn: (_binary, args) => {
+        const command = args.join(" ")
+        if (command === "help config") {
+          configAttempts++
+          return configAttempts === 1 ? { stdout: "", status: 1 } : ok(HELP_CONFIG)
+        }
+        return command === "--help" ? ok(HELP_ROOT) : { stdout: "", status: 1 }
+      },
+    })
+
+    const catalogue = adapter.catalogue(COPILOT_DEFAULT_PROFILE)
+    expect(configAttempts).toBe(2)
+    expect(catalogue.models.map((model) => model.id)).toContain("claude-opus-5")
   })
 
   it("reports a timeout as a timeout, naming the budget", () => {
@@ -343,18 +460,14 @@ describe("copilot adapter catalogue", () => {
     expect(calls).toHaveLength(4)
   })
 
-  it("remembers a failure for far less time than a success", () => {
-    let clock = 1_000
-    const { adapter, calls } = adapterWith({ "help config": { stdout: "", status: 1 } }, { now: () => clock })
+  it("does not cache an empty failure, so the same config session can recover", () => {
+    const { adapter, calls } = adapterWith({ "help config": { stdout: "", status: 1 } })
 
-    adapter.catalogue(COPILOT_DEFAULT_PROFILE)
-    clock += 10_000
-    adapter.catalogue(COPILOT_DEFAULT_PROFILE)
-    expect(calls).toHaveLength(1)
-
-    clock += 25_000
     adapter.catalogue(COPILOT_DEFAULT_PROFILE)
     expect(calls).toHaveLength(2)
+
+    adapter.catalogue(COPILOT_DEFAULT_PROFILE)
+    expect(calls).toHaveLength(4)
   })
 
   it("keys the cache on the home, so two accounts never share an inventory", () => {
@@ -393,7 +506,7 @@ describe("copilot adapter capabilities", () => {
     adapter.catalogue(COPILOT_DEFAULT_PROFILE)
     expect(adapter.capabilities(COPILOT_DEFAULT_PROFILE).discovery).toBe("manual")
     // Reading a capability must never cost a subprocess of its own.
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
   })
 
   it("declares itself a copilot adapter", () => {
@@ -500,7 +613,7 @@ describe("copilot adapter diagnosis", () => {
     expect(issues[0]?.message).toContain("not a switch")
   })
 
-  it("validates a hand-written contextTier even though no control offers one", () => {
+  it("validates a hand-written contextTier even where no model is eligible for the control", () => {
     expect(diagnose(target({ model: "claude-opus-5", options: [{ id: COPILOT_CONTEXT_TIER_OPTION, value: "long_context" }] }))).toEqual([])
 
     const issues = diagnose(

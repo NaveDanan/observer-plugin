@@ -301,6 +301,7 @@ describe("seats survive the config round-trip", () => {
       guidance: true,
       seats: { control: true, employees },
       providers: {},
+      autostart: true,
     }
     const original = `${JSON.stringify(config, null, 2)}\n`
     writeFileSync(join(home, "config.json"), original)

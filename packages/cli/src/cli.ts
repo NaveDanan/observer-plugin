@@ -23,10 +23,7 @@ import { openBrowser, diagnostics, start, status, stop } from "./daemon-control.
 import { runConfig } from "./config-ui.js"
 import { canvasUrl, detectHarness, detectSession } from "./harness.js"
 import { daemonPath, emitterPath, opencodePluginSource } from "./paths.js"
-
-/** Replaced at bundle time by the release build; `typeof` keeps dev builds safe. */
-declare const __OBSERVER_VERSION__: string
-const VERSION = typeof __OBSERVER_VERSION__ === "string" ? __OBSERVER_VERSION__ : "dev"
+import { VERSION } from "./version.js"
 
 const HELP = `Observer ${VERSION} - interactive canvas for running coding agents
 
@@ -182,8 +179,8 @@ async function main(argv: string[]): Promise<number> {
       }
       if (command === "install") {
         print("")
-        print("Start the daemon so hooks have somewhere to report:")
-        print("  observer start && observer open")
+        print("Hooks bring the daemon up on their own the first time an agent runs.")
+        print("To look at the canvas now: observer start && observer open")
       }
       return 0
     }
@@ -241,10 +238,16 @@ async function doctor(): Promise<number> {
   check(existsSync(daemonPath()), `daemon present`, `Missing ${daemonPath()} - reinstall Observer.`)
   check(existsSync(opencodePluginSource()), `OpenCode plugin source present`)
 
-  const daemon = await status()
-  check(daemon.running, `daemon reachable at ${daemon.url}`, "Start it with `observer start`.")
-
   const config = loadConfig()
+  const daemon = await status()
+  check(
+    daemon.running,
+    `daemon reachable at ${daemon.url}`,
+    config.autostart
+      ? "Not an error on its own: a hook starts it the next time an agent runs. To look now, run `observer start`."
+      : "autostart is off, so nothing will start it. Run `observer start`.",
+  )
+
   check(config.token.length >= 20, "auth token configured")
 
   print("")
@@ -273,6 +276,7 @@ async function doctor(): Promise<number> {
   }
   print(`  ${pad("redaction", 20)} ${config.redaction.enabled ? "on" : "off"}`)
   print(`  ${pad("retentionDays", 20)} ${config.retentionDays}`)
+  print(`  ${pad("autostart", 20)} ${config.autostart ? "on" : "off"}`)
 
   // Seats get a section here as well as their own UI because this is where a
   // user looks when an employee is not running the model they configured, and

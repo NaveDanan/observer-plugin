@@ -1,5 +1,6 @@
 import {
   LEGACY_TARGET_ID,
+  type ModelOptionDescriptor,
   type SeatIssue,
   type SeatSpec,
   type SeatTarget,
@@ -27,10 +28,15 @@ import {
   seatOf,
   targetControl,
   targetDescriptors,
+  descriptorValue,
   targetOptionValue,
+  targetPickerDescriptor,
+  targetPickerOptionValue,
   targetRows,
 } from "./config-ui-state.js"
-import { PLAIN_THEME, type Theme, padEnd as pad, truncate } from "./theme.js"
+import { LOGO_ROWS, logo } from "./logo.js"
+import { PLAIN_THEME, type Theme, padEnd as pad, truncate, visibleLength } from "./theme.js"
+import { versionLabel } from "./version.js"
 
 /**
  * Turns state into lines of text. Pure, and colours only what it is given a
@@ -59,6 +65,14 @@ export interface Viewport {
   columns: number
   /** Omitted means plain text: no ANSI at all. */
   theme?: Theme
+  /**
+   * The version the banner reports. Omitted means a dev build.
+   *
+   * Passed in rather than imported so the renderer stays a pure function of
+   * its arguments: a test asserting on the banner states the version it
+   * expects instead of rendering differently under a release bundle.
+   */
+  version?: string
 }
 
 export const DEFAULT_VIEWPORT: Viewport = { rows: 24, columns: 100 }
@@ -74,6 +88,25 @@ const GUTTER = 20
  * arithmetic is unaffected.
  */
 const RULE = "\u2500"
+
+/**
+ * The picker's glyphs.
+ *
+ * A single-angle quote for the cursor rather than `>`: the two read the same
+ * on paper, but `>` is also the breadcrumb separator two lines above it, and
+ * one character meaning two things in one screen is how a list stops looking
+ * like a list. The rail, the stepper arrows and the em dash are likewise
+ * chosen to be one column wide, so none of them disturbs the arithmetic.
+ */
+const CURSOR = "\u203A"
+const TRACK = "\u2502"
+const THUMB = "\u2588"
+const LEFT = "\u2190"
+const RIGHT = "\u2192"
+const DASH = "\u2014"
+
+/** The separator in a dotted hint bar, spaced so the keys stay the loud part. */
+const DOT = " \u00B7 "
 
 /**
  * Everything wrong with a seats config, host-agnostic findings first.
@@ -94,9 +127,9 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
   const theme = viewport.theme ?? PLAIN_THEME
   const diagnosis = diagnoseSeats(state.seats)
   const issues = seatIssues(state.seats)
-  const lines = [...header(state, diagnosis.effective, columns, theme)]
+  const lines = [...header(state, diagnosis.effective, columns, theme, viewport.version)]
 
-  const footer = [...notes(state, issues, columns, theme), "", ...hints(state, theme)]
+  const footer = [...notes(state, issues, columns, theme), "", ...hints(state, columns, theme)]
   const room = Math.max(3, viewport.rows - lines.length - footer.length - 1)
 
   switch (state.view) {
@@ -125,6 +158,39 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
 }
 
 /**
+ * The wordmark: `NJ` in pixels, beside the version and the maker.
+ *
+ * The mark itself lives in `logo.ts`, drawn with half-block characters so that
+ * eight rows of pixels fit into four rows of terminal. Height is worth arguing
+ * over because every row here is a row the model list below does not get on an
+ * 80x24 terminal, which is why the detail was bought with a denser glyph
+ * rather than with more rows.
+ *
+ * The three text lines sit on rows 0-2 of 4. They carry what the old single
+ * title line carried, plus the version — a user reporting a bug should not
+ * have to leave the screen they are on to find out which build drew it.
+ */
+function banner(version: string | undefined, theme: Theme): string[] {
+  const text = [
+    theme.title(`Observer multi-harness ${versionLabel(version ?? "dev")}`),
+    theme.dim("By NJ-Labs"),
+    theme.dim("host targets, model options and skills per employee"),
+  ]
+  return logo(theme.depth).map((glyph, at) => {
+    const beside = text[at] ?? ""
+    return beside.length === 0 ? glyph : `${glyph}   ${beside}`
+  })
+}
+
+/**
+ * How many lines the banner occupies, for callers that need to look past it.
+ *
+ * Exported for the tests, which assert things about the picker below and would
+ * otherwise mistake the mark's solid blocks for the scroll rail's.
+ */
+export const BANNER_ROWS = LOGO_ROWS
+
+/**
  * What is in force, on every screen.
  *
  * A config UI that lets you pick a model without saying that the flag which
@@ -133,10 +199,16 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
  * which host, which delegations — live on the menu row that owns the flag,
  * where there is room to say them in full.
  */
-function header(state: ConfigUIState, effective: boolean, columns: number, theme: Theme): string[] {
+function header(
+  state: ConfigUIState,
+  effective: boolean,
+  columns: number,
+  theme: Theme,
+  version?: string,
+): string[] {
   const control = state.seats.control
   const lines = [
-    theme.heading("Observer config") + theme.dim(" - host targets, model options and skills per employee"),
+    ...banner(version, theme),
     "",
     ...field(
       "Seat control",
@@ -491,36 +563,73 @@ function targetModelPicker(state: ConfigUIState, room: number, columns: number, 
   const employee = currentEmployee(state)
   const row = currentTargetRow(state)
   const entries = pickerEntries(state)
-  const modelWidth = Math.max(28, columns - 14)
-  const lines = [
-    breadcrumb(
-      theme,
-      "Employees",
-      employee?.name ?? state.employeeId ?? "employee",
-      "Targets",
-      `${row?.hostLabel ?? "Host"} model`,
-    ) + (state.filter.length > 0 ? theme.dim("   filter: ") + theme.accent(state.filter) : ""),
+  // The two rightmost columns belong to the scroll rail, so every cell is
+  // measured against what is left rather than against the terminal. Sizing the
+  // table first and hanging the rail off the edge afterwards is how a row ends
+  // up one character too long on exactly the widths nobody tests.
+  const inner = Math.max(40, columns - 2)
+  const widths = targetPickerWidths(inner)
+  const target = isTarget(row?.target) ? row.target : undefined
+  const configuredModel = target?.model
+  const head = [
+    theme.title(`Select model for ${row?.hostLabel ?? "target"} / ${row?.profileLabel ?? "default"}`),
+    theme.dim(
+      `Choose the model to use when ${employee?.name ?? state.employeeId ?? "this employee"} launches matching subagents.`,
+    ),
     "",
-    theme.dim(`  ${pad("Model", modelWidth)}Context`),
   ]
-  const window = windowOf(state.cursor.models, entries.length, Math.max(2, room - 3))
+  // No "Model" above the first column. The rows under it are model names and
+  // nothing else, so the word is a label for something already obvious, and
+  // dropping it lets Context and Reasoning read as the two columns that are
+  // actually controls.
+  const body = [theme.dim(`  ${" ".repeat(widths.model)}${pad("Context", widths.context)}Reasoning`)]
+  const window = windowOf(state.cursor.models, entries.length, Math.max(2, room - 7))
+  let lastGroup = ""
   for (let index = window.start; index < window.end; index++) {
     const entry = entries[index]
     if (entry === undefined) continue
+    if (entry.groupStart && entry.providerLabel !== undefined && entry.providerLabel !== lastGroup) {
+      body.push("", `  ${theme.group(entry.providerLabel)}`)
+      lastGroup = entry.providerLabel
+    }
     const selected = index === state.cursor.models
-    const label = pad(truncate(labelOf(entry), modelWidth - 1), modelWidth)
-    lines.push(
-      marker(selected, false, theme) +
-        (selected ? theme.focus(label) : label) +
-        theme.dim(entry.kind === "inherit" ? "-" : formatContext(entry.model?.contextWindow)),
+    const configured = entry.kind === "model" && entry.model?.id === configuredModel
+    // An explicit `false` only. `undefined` means the host was never asked, and
+    // greying a row out on "we do not know" would disable the whole list on
+    // every host that cannot answer and on the first open of the one that can.
+    const barred = entry.kind === "model" && entry.model?.available === false
+    const place: Row = { selected, configured, target }
+    const modelLabel =
+      entry.kind === "inherit"
+        ? "Auto"
+        : `${entry.model?.label ?? labelOf(entry)}${configured ? " \u2713" : ""}${barred ? " (unavailable)" : ""}`
+    const label = pad(truncate(modelLabel, widths.model - 1), widths.model)
+    const context = pad(truncate(targetContextCell(state, entry, place, barred), widths.context - 1), widths.context)
+    // No reasoning control on a row that cannot be chosen: a stepper the user
+    // can move but never apply is the false control this picker refuses.
+    const reasoning = truncate(barred ? DASH : targetReasoningCell(state, entry, place), widths.reasoning)
+    const content = label + context + reasoning
+    body.push(
+      pickerGutter(selected, barred, theme) +
+        (selected
+          ? theme.selection(fit(content, inner - 2))
+          : barred
+            ? theme.dim(fit(content, inner - 2))
+            : (configured ? theme.good(label) : label) + theme.dim(context + reasoning)),
     )
   }
   if (entries.length === 1 && state.filter.length > 0) {
-    lines.push(theme.dim(`  Nothing matches "${state.filter}". Press / to change the filter, or m to type a model.`))
+    body.push(theme.dim(`  Nothing matches "${state.filter}". Press enter to use it as this target's model id.`))
   }
-  if (state.entry?.field === "filter") {
-    lines.push("", theme.dim(pad("Filter", GUTTER)) + theme.accent(`${state.entry.value}_`))
-  }
+
+  const typed = state.entry?.field === "filter" ? state.entry.value : state.filter
+  const searchText = typed.length > 0 ? `${typed}_` : "Search models..."
+  const lines = [
+    ...head,
+    ...rail(body, window.start, window.end - window.start, entries.length, inner, theme),
+    "",
+    theme.accent(CURSOR) + " " + theme.search(fit(searchText, inner - 2)),
+  ]
   if (state.entry?.field === "model") {
     lines.push(
       "",
@@ -529,6 +638,103 @@ function targetModelPicker(state: ConfigUIState, room: number, columns: number, 
     )
   }
   return lines
+}
+
+/**
+ * The scroll rail down the right edge of the picker's list.
+ *
+ * It replaces the `1-8 of 20` line the picker used to print under the table.
+ * That line answered "is there more" only after the user had read to the
+ * bottom and looked for it; a thumb answers it in peripheral vision, and it
+ * answers "how much more" as well, which the counter never did without
+ * arithmetic.
+ *
+ * Both glyphs are box-drawing characters rather than colour: strip the theme
+ * and the rail is still there, still the right length, still in the right
+ * place. Colour only tells the thumb from the track faster.
+ */
+function rail(
+  lines: string[],
+  start: number,
+  visible: number,
+  total: number,
+  columns: number,
+  theme: Theme,
+): string[] {
+  const height = lines.length
+  if (height === 0) return lines
+  const span = Math.max(1, Math.min(total, visible))
+  // Nothing to scroll: a full-height thumb reads as a control, and a control
+  // that cannot move is a lie. Keep the gutter so the rows do not shift.
+  if (total <= span) return lines.map((line) => `${fit(line, columns)}  `)
+  const size = clamp(Math.round((span / Math.max(1, total)) * height), 1, height)
+  const travel = height - size
+  const offset = clamp(Math.round((start / (total - span)) * travel), 0, travel)
+  return lines.map((line, index) => {
+    const inThumb = index >= offset && index < offset + size
+    return `${fit(line, columns)} ${inThumb ? theme.focus(THUMB) : theme.dim(TRACK)}`
+  })
+}
+
+/**
+ * The Context column.
+ *
+ * One value, the one in force, on every row including the highlighted one.
+ * The column used to fan out into the whole scale under the cursor, which put
+ * a second horizontal control next to the reasoning stepper and made the two
+ * compete for the same glance. `tab` is in the hint bar and the status line
+ * names the window it moved to, so the change is still announced — just not by
+ * permanently widening the table.
+ */
+function targetContextCell(state: ConfigUIState, entry: PickerEntry, row: Row, barred = false): string {
+  if (entry.kind === "inherit") return DASH
+  // A barred row still states its context window, because that is a fact about
+  // the model and stays true whether or not this account may run it. What it
+  // must not show is the *tier*, which is a control.
+  const descriptor = barred ? undefined : targetPickerDescriptor(state, "context", entry)
+  if (descriptor === undefined) return dashed(formatContext(entry.model?.contextWindow))
+  return dashed(choiceLabel(descriptor, cellValue(state, descriptor, row)))
+}
+
+function targetReasoningCell(state: ConfigUIState, entry: PickerEntry, row: Row): string {
+  if (entry.kind === "inherit") return DASH
+  const descriptor = targetPickerDescriptor(state, "reasoning", entry)
+  if (descriptor === undefined) return DASH
+  const label = choiceLabel(descriptor, cellValue(state, descriptor, row)) ?? "default"
+  return row.selected ? `${LEFT} ${label} ${RIGHT}` : label
+}
+
+/** Where a picker row is: under the cursor, already saved, or neither. */
+interface Row {
+  selected: boolean
+  configured: boolean
+  target: SeatTarget | undefined
+}
+
+/**
+ * The value one row should show for one option.
+ *
+ * Three sources, in the order that makes each row answer for itself: the draft
+ * belongs to the highlighted row alone, the saved target belongs to the row
+ * that is configured, and everything else has only what the catalogue says.
+ */
+function cellValue(state: ConfigUIState, descriptor: ModelOptionDescriptor, row: Row): string | undefined {
+  if (row.selected) return targetPickerOptionValue(state, descriptor)
+  if (row.configured) {
+    const saved = targetOptionValue(row.target, descriptor)
+    if (typeof saved === "string") return saved
+  }
+  return descriptorValue(descriptor)
+}
+
+function choiceLabel(descriptor: ModelOptionDescriptor, value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  return descriptor.choices?.find((choice) => choice.id === value)?.label ?? value
+}
+
+/** An em dash for "there is nothing here", never an empty cell. */
+function dashed(value: string | undefined): string {
+  return value === undefined || value.length === 0 || value === "-" ? DASH : value
 }
 
 /**
@@ -613,10 +819,41 @@ function notes(state: ConfigUIState, issues: SeatIssue[], columns: number, theme
 }
 
 /** `key label` pairs for the current mode, keys picked out of the sentence. */
-function hints(state: ConfigUIState, theme: Theme): string[] {
+function hints(state: ConfigUIState, columns: number, theme: Theme): string[] {
   const bar = (...pairs: Array<[string, string]>): string[] => [
     pairs.map(([key, label]) => `${theme.accent(key)} ${theme.dim(label)}`).join("   "),
   ]
+  /**
+   * The model picker's bar, dot-separated and wrapped rather than clipped.
+   *
+   * This is the one hint bar long enough to outrun a narrow terminal, and it
+   * is also the one carrying `esc to cancel`. Truncating it would take the way
+   * out first, which is exactly backwards; wrapping costs a row of body and
+   * keeps every key on screen.
+   */
+  const dotted = (...pairs: Array<[string, string]>): string[] => {
+    const cells = pairs.map(([key, label]) => ({ text: `${theme.accent(key)} ${theme.dim(label)}`, width: key.length + 1 + label.length }))
+    const rows: string[] = []
+    let line = ""
+    let used = 0
+    for (const cell of cells) {
+      if (line.length === 0) {
+        line = cell.text
+        used = cell.width
+        continue
+      }
+      if (used + DOT.length + cell.width > columns) {
+        rows.push(line)
+        line = cell.text
+        used = cell.width
+        continue
+      }
+      line += theme.dim(DOT) + cell.text
+      used += DOT.length + cell.width
+    }
+    if (line.length > 0) rows.push(line)
+    return rows
+  }
 
   if (state.confirmQuit) {
     return [
@@ -652,12 +889,13 @@ function hints(state: ConfigUIState, theme: Theme): string[] {
             ["enter", "select"],
             ["esc", "back"],
           )
-        : bar(
-            ["up/down", "move"],
-            ["/", "filter"],
-            ["m", "type a model"],
-            ["enter", "select"],
-            ["esc", "back"],
+        : dotted(
+            ["\u2191/\u2193", "to navigate"],
+            ["\u2190/\u2192", "reasoning effort"],
+            ["tab", "context window"],
+            ["shift+tab", groupHint(state)],
+            ["enter", "to select"],
+            ["esc", "to cancel"],
           )
     case "options":
       return bar(["up/down", "move"], ["left/right", "change select"], ["enter", "toggle/change"], ["esc", "back"])
@@ -757,6 +995,20 @@ function reportTargetSeat(
   return lines
 }
 
+/**
+ * What `shift+tab` will move away from, named.
+ *
+ * "group" alone is a verb with no object: it says a key exists without saying
+ * what pressing it does to this screen. Naming the section the cursor is in
+ * turns the hint into a readout as well as an instruction, which is the same
+ * job the value column does on the main menu.
+ */
+function groupHint(state: ConfigUIState): string {
+  const label = pickerEntries(state)[state.cursor.models]?.providerLabel
+  const word = label?.split(" ")[0]?.toLowerCase()
+  return word === undefined ? "group" : `group: ${word}`
+}
+
 /** `Employees > Arjun Mehta > Model`, with the leaf picked out. */
 function breadcrumb(theme: Theme, ...parts: string[]): string {
   const trail = parts.slice(0, -1)
@@ -804,12 +1056,56 @@ function pickerWidths(columns: number): { model: number; context: number } {
   return { model: clamp(columns - 2 - context - reasoning, 20, 40), context }
 }
 
+function targetPickerWidths(columns: number): { model: number; context: number; reasoning: number } {
+  const context = clamp(Math.round(columns * 0.18), 12, 24)
+  const reasoning = 18
+  return { model: Math.max(24, columns - 2 - context - reasoning), context, reasoning }
+}
+
 /**
  * `>` for the cursor, `!` for a seat `diagnoseSeats` has something to say
  * about. Colour repeats what the character already says; it never replaces it.
  */
 function marker(selected: boolean, flagged: boolean, theme: Theme): string {
   return `${selected ? theme.accent(">") : " "}${flagged ? theme.alert("!") : " "}`
+}
+
+/** The picker's own two-column gutter: `> ` is for lists that also flag rows. */
+function cursor(selected: boolean, theme: Theme): string {
+  return selected ? `${theme.accent(CURSOR)} ` : "  "
+}
+
+/**
+ * The model picker's gutter, which also has to say "you cannot pick this".
+ *
+ * `x` in the second column, on the same principle as `marker`'s `!`: the
+ * character carries the meaning and the colour only repeats it. That matters
+ * twice over here. Strip the theme — a pipe, a dumb terminal, `NO_COLOR` — and
+ * a dimmed row is indistinguishable from an enabled one, so dimming alone would
+ * make the whole feature vanish for the users most likely to be scripting
+ * against it. And the gutter is the one part of a row `truncate` can never
+ * eat, so the `(unavailable)` suffix beside the model name can be clipped on a
+ * narrow terminal without the row losing its meaning.
+ */
+function pickerGutter(selected: boolean, barred: boolean, theme: Theme): string {
+  const head = selected ? theme.accent(CURSOR) : " "
+  return barred ? `${head}${theme.dim("x")}` : `${head} `
+}
+
+/**
+ * Exactly `width` visible characters, padded or clipped.
+ *
+ * `padEnd` deliberately adds a separating space when a cell has outgrown its
+ * column, which is right for a table and wrong for a full-bleed row: a
+ * highlighted band or a scroll rail has to land on a known column, and one
+ * stray space pushes it off the edge on precisely the widths where the content
+ * only just fits.
+ */
+function fit(text: string, width: number): string {
+  if (width <= 0) return ""
+  const clipped = truncate(text, width)
+  const gap = width - visibleLength(clipped)
+  return gap > 0 ? clipped + " ".repeat(gap) : clipped
 }
 
 /**

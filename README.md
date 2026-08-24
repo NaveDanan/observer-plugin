@@ -56,12 +56,18 @@ This is how you install Observer on a machine that does not have the source.
 npm install -g observer-ai-0.1.0.tgz
 
 observer install all      # or: observer install claude codex
-observer start
 observer open
 ```
 
 Restart any running agent session so the host picks up the new hooks. Codex
 additionally requires you to approve new hooks with `/hooks` inside Codex.
+
+You do **not** need to start the daemon yourself. The first hook that fires
+spools its event and brings the daemon up in the background, so Observer starts
+serving the moment you use an agent. `observer start` is only there for when you
+want the canvas open before running anything. To opt out, set `autostart` to
+`false` in `~/.observer/config.json`; events are still spooled and replayed the
+next time the daemon runs, so nothing is lost either way.
 
 ### Install into the GitHub Copilot desktop app (Copilot plugin)
 
@@ -382,6 +388,15 @@ The UI shows the same thing as a banner, so an empty canvas is never silent.
 If `accepted` is `0` and there are no faults either, nothing is reaching the
 daemon at all: check that the host was restarted after `observer install`, and
 for Codex that you trusted the hooks with `/hooks`.
+
+**The daemon is not running and does not come back.**
+
+Normally the first hook of a session starts it. If it does not, check
+`~/.observer/daemon.log` for a startup error, and confirm `autostart` has not
+been set to `false` in `~/.observer/config.json` (`observer doctor` reports the
+current value). Autostart is rate-limited to one attempt per 30 seconds via
+`~/.observer/autostart.stamp`, so a single prompt firing several hooks at once
+only ever launches one daemon.
 
 ## Privacy
 

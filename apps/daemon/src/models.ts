@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { SEAT_VARIANTS } from "./seats.js"
 
 /**
@@ -64,6 +64,22 @@ export interface ModelInfo {
   providerLabel: string
   label: string
   contextWindow?: number
+  /**
+   * False when the host lists the model but this account may not run it.
+   *
+   * Three states, and `undefined` carries most of the weight: it means nobody
+   * asked, not that the model is confirmed usable. Only Copilot can answer at
+   * all, and even there the answer arrives from a cache filled in the
+   * background, so the first open of a picker leaves every row `undefined`.
+   * A picker must therefore treat `undefined` exactly as it treated a model
+   * before this field existed — enabled, undimmed, selectable — and disable a
+   * row only on an explicit `false`.
+   *
+   * Not to be confused with `known`, which is about whether models.dev carries
+   * an entry. A model can be unknown to the snapshot and perfectly runnable, or
+   * well known and forbidden to this seat.
+   */
+  available?: boolean
   /** The reasoning efforts this model accepts, or why we cannot say. */
   variants: ModelVariants
   /** ISO date, used only to sort newest-first within a provider. */
@@ -274,6 +290,195 @@ export function authCachePath(): string {
   return join(base, "opencode", "auth.json")
 }
 
+const COPILOT_MODEL_METADATA_PROVIDER = "github-copilot"
+const MODELS_DEV_URL = "https://models.dev/api.json"
+const MODEL_METADATA_TTL_MS = 12 * 60 * 60_000
+const MODEL_METADATA_TIMEOUT_MS = 5_000
+
+interface CachedModelMetadata {
+  at: number
+  catalogue: Record<string, unknown>
+}
+
+let inMemoryModelMetadata: { path: string; value: CachedModelMetadata } | undefined
+
+export interface RefreshCopilotModelMetadataOptions {
+  cachePath?: string
+  fetch?: typeof globalThis.fetch
+  now?: () => number
+  timeoutMs?: number
+}
+
+export type ModelMetadataFreshness = "live" | "cached" | "stale" | "unavailable"
+
+/** Observer's own models.dev cache, independent of whether OpenCode is installed. */
+export function copilotModelMetadataCachePath(): string {
+  const base =
+    process.env["XDG_CACHE_HOME"] && process.env["XDG_CACHE_HOME"].length > 0
+      ? process.env["XDG_CACHE_HOME"]
+      : join(homedir(), ".cache")
+  return join(base, "observer", "copilot-models.json")
+}
+
+/**
+ * Refreshes the Copilot slice of models.dev before the config TUI opens.
+ *
+ * Copilot's help lists model ids but no context sizes. Reading only OpenCode's
+ * models.dev cache made those sizes depend on an unrelated host having run on
+ * the same machine. Observer keeps the small provider slice it needs instead.
+ * A failed refresh leaves a stale cache intact and never blocks model listing.
+ */
+export async function refreshCopilotModelMetadata(
+  options: RefreshCopilotModelMetadataOptions = {},
+): Promise<ModelMetadataFreshness> {
+  const path = options.cachePath ?? copilotModelMetadataCachePath()
+  const now = options.now ?? Date.now
+  const cached = readModelMetadataCache(path)
+  if (cached !== undefined) inMemoryModelMetadata = { path, value: cached }
+  if (cached !== undefined && now() - cached.at < MODEL_METADATA_TTL_MS) return "cached"
+
+  const fetcher = options.fetch ?? globalThis.fetch
+  if (typeof fetcher !== "function") return cached === undefined ? "unavailable" : "stale"
+
+  try {
+    const response = await fetcher(MODELS_DEV_URL, {
+      signal: AbortSignal.timeout(options.timeoutMs ?? MODEL_METADATA_TIMEOUT_MS),
+    })
+    if (!response.ok) return cached === undefined ? "unavailable" : "stale"
+    const body: unknown = await response.json()
+    if (!isRecord(body)) return cached === undefined ? "unavailable" : "stale"
+    const provider = body[COPILOT_MODEL_METADATA_PROVIDER]
+    if (!isRecord(provider) || !isRecord(provider["models"]) || Object.keys(provider["models"]).length === 0) {
+      return cached === undefined ? "unavailable" : "stale"
+    }
+
+    const value: CachedModelMetadata = {
+      at: now(),
+      catalogue: { [COPILOT_MODEL_METADATA_PROVIDER]: provider },
+    }
+    inMemoryModelMetadata = { path, value }
+    writeModelMetadataCache(path, value)
+    return "live"
+  } catch {
+    return cached === undefined ? "unavailable" : "stale"
+  }
+}
+
+/**
+ * Context windows models.dev publishes for one provider, by bare model id.
+ *
+ * For hosts that list model ids but no sizes. Copilot CLI is the case this
+ * exists for: `copilot help config` names every model it accepts and says
+ * nothing about how much context any of them holds, so its Context column was
+ * permanently blank while the same snapshot that fills OpenCode's column
+ * carried the answer under its own `github-copilot` provider — the same
+ * models.dev entry GitHub's own numbers are published as.
+ *
+ * This is a lookup, not a guess. A model the snapshot has never heard of is
+ * absent from the map. A host adapter may resolve an alias it owns, but this
+ * shared lookup never infers one model from another.
+ *
+ * Never throws. A missing, unreadable or malformed snapshot yields an empty
+ * map, which puts the column back exactly where it was.
+ */
+export function contextWindowsFor(provider: string, raw?: string): Map<string, number> {
+  const windows = new Map<string, number>()
+  const prefix = `${provider}/`
+  try {
+    const text = raw ?? cachedProviderCatalogue(provider) ?? readFileOrUndefined(catalogueCachePath())
+    const entry = parseCatalogue(text).get(provider)
+    if (entry === undefined) return windows
+    for (const [id, model] of entry.models) {
+      if (model.contextWindow === undefined) continue
+      // The catalogue keys models by their qualified id; hosts name them bare.
+      windows.set(id.startsWith(prefix) ? id.slice(prefix.length) : id, model.contextWindow)
+    }
+  } catch {
+    return new Map()
+  }
+  return windows
+}
+
+/**
+ * The models one provider prices in context tiers, by bare model id.
+ *
+ * Copilot's `help config` calls its `--context` flag a setting "for
+ * tiered-pricing models" and then names none of them, which is why Observer
+ * withheld the control: offering `long_context` on a model that ignores it
+ * tells the user they bought context they are not getting. models.dev answers
+ * exactly that question, in the same snapshot the Context column already reads.
+ *
+ * A tiered model carries a `cost.tiers[]` entry whose `tier.type` is
+ * `"context"`, alongside a second price sheet for the larger window:
+ *
+ * ```json
+ * "cost": {
+ *   "input": 2.5,
+ *   "tiers": [{ "input": 5, "tier": { "type": "context", "size": 272000 } }],
+ *   "context_over_200k": { "input": 5 }
+ * }
+ * ```
+ *
+ * That is not a proxy for tiering, it *is* the tiered price — which makes it
+ * the same fact Copilot's own wording points at. Measured against the
+ * `github-copilot` provider of the current snapshot: 8 of 33 models declare
+ * one, and the 25 that do not include every Claude and every `-mini`/`-nano`.
+ *
+ * Absence is the honest answer for a model the snapshot has never heard of, and
+ * the caller must treat it as such — no tier control rather than a guessed one.
+ * Never throws; a missing or malformed snapshot yields an empty set, which
+ * leaves the control withheld exactly as it was before this existed.
+ */
+export function contextTiersFor(provider: string, raw?: string): Set<string> {
+  const tiered = new Set<string>()
+  const prefix = `${provider}/`
+  try {
+    const text = raw ?? cachedProviderCatalogue(provider) ?? readFileOrUndefined(catalogueCachePath())
+    const entry = parseCatalogue(text).get(provider)
+    if (entry === undefined) return tiered
+    for (const [id, model] of entry.models) {
+      if (!model.contextTiered) continue
+      // The catalogue keys models by their qualified id; hosts name them bare.
+      tiered.add(id.startsWith(prefix) ? id.slice(prefix.length) : id)
+    }
+  } catch {
+    return new Set()
+  }
+  return tiered
+}
+
+function cachedProviderCatalogue(provider: string): string | undefined {
+  if (provider !== COPILOT_MODEL_METADATA_PROVIDER) return undefined
+  const path = copilotModelMetadataCachePath()
+  const cached =
+    inMemoryModelMetadata?.path === path ? inMemoryModelMetadata.value : readModelMetadataCache(path)
+  if (cached === undefined || !isRecord(cached.catalogue[provider])) return undefined
+  return JSON.stringify(cached.catalogue)
+}
+
+function readModelMetadataCache(path: string): CachedModelMetadata | undefined {
+  const raw = readFileOrUndefined(path)
+  if (raw === undefined) return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed) || typeof parsed["at"] !== "number" || !isRecord(parsed["catalogue"])) return undefined
+    return { at: parsed["at"], catalogue: parsed["catalogue"] }
+  } catch {
+    return undefined
+  }
+}
+
+function writeModelMetadataCache(path: string, value: CachedModelMetadata): void {
+  const temp = `${path}.${process.pid}.tmp`
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(temp, JSON.stringify(value), "utf8")
+    renameSync(temp, path)
+  } catch {
+    rmSync(temp, { force: true })
+  }
+}
+
 /**
  * `1048576` -> `1M`, `200000` -> `200K`.
  *
@@ -297,6 +502,8 @@ interface CatalogueProvider {
 interface CatalogueModel {
   label: string
   contextWindow?: number
+  /** True when `cost.tiers[]` prices a larger context window separately. */
+  contextTiered?: boolean
   variants: ModelVariants
   releaseDate?: string
   usable: boolean
@@ -340,8 +547,21 @@ function readModel(model: Record<string, unknown>): CatalogueModel {
     usable: model["tool_call"] !== false && (context === undefined || context > 0),
   }
   if (context !== undefined && context > 0) result.contextWindow = context
+  if (declaresContextTier(model["cost"])) result.contextTiered = true
   if (typeof model["release_date"] === "string") result.releaseDate = model["release_date"]
   return result
+}
+
+/**
+ * Whether a `cost` block prices a second, larger context window.
+ *
+ * Only `tier.type === "context"` counts. The same `tiers[]` array carries other
+ * kinds of tiering elsewhere in the catalogue, and treating any tier as a
+ * context tier would offer `long_context` on a model tiered by something else.
+ */
+function declaresContextTier(cost: unknown): boolean {
+  if (!isRecord(cost) || !Array.isArray(cost["tiers"])) return false
+  return cost["tiers"].some((entry) => isRecord(entry) && isRecord(entry["tier"]) && entry["tier"]["type"] === "context")
 }
 
 /**

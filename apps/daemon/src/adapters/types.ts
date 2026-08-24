@@ -92,6 +92,16 @@ export interface CatalogueModel {
   id: string
   label: string
   contextWindow?: number
+  /**
+   * False when the host lists the model but this account may not run it.
+   *
+   * Three states on purpose, and `undefined` is the important one: it means
+   * nobody asked, not that the model is confirmed usable. A host with no way to
+   * report entitlement leaves it absent and every model renders normally, which
+   * is what every host except Copilot does today. Only an explicit `false` may
+   * grey a row out, so a failed or unsupported check can never disable a list.
+   */
+  available?: boolean
   options: ModelOptionDescriptor[]
 }
 

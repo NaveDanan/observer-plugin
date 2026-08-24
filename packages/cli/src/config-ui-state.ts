@@ -114,7 +114,7 @@ export interface ConfigUIState {
   models: ModelInfo[]
   /** Spawn-free host/profile directory. Empty keeps the legacy OpenCode-only flow. */
   profiles: TargetProfile[]
-  /** Loaded only after the user opens one target. */
+  /** Preloaded for Copilot at launch; other targets load when opened. */
   catalogues: Record<string, ModelCatalogue>
   /** One cursor per view, so backing out and re-entering keeps your place. */
   cursor: Record<ConfigView, number>
@@ -130,6 +130,8 @@ export interface ConfigUIState {
    * "effort without a model" unreachable through this UI.
    */
   draftVariant?: string
+  /** Target options chosen in the model picker, committed together on enter. */
+  draftTargetOptions: SeatTargetOption[]
   entry?: EntryState
   /** Substring filter over the model picker. */
   filter: string
@@ -171,6 +173,7 @@ export function initialState(input: InitialInput): ConfigUIState {
     profiles: input.profiles ?? [],
     catalogues: input.catalogues ?? {},
     cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0 },
+    draftTargetOptions: [],
     filter: "",
     confirmQuit: false,
     quitAfterSave: false,
@@ -219,7 +222,24 @@ export function pickerEntries(state: ConfigUIState): PickerEntry[] {
       entries.push({ kind: "model", model, groupStart: index === 0, providerLabel: group.label })
     })
   }
-  return entries
+  if (state.targetId === undefined) return entries
+
+  const configuredIndex = entries.findIndex(
+    (entry) => entry.kind === "model" && entry.model?.id === configured,
+  )
+  const configuredEntry = configuredIndex > 0 ? entries[configuredIndex] : undefined
+  const others = entries.filter((_, index) => index > 0 && index !== configuredIndex)
+  return [
+    { kind: "inherit", groupStart: true, providerLabel: "Recommended models" },
+    ...(configuredEntry === undefined
+      ? []
+      : [{ ...configuredEntry, groupStart: false, providerLabel: "Recommended models" }]),
+    ...others.map((entry, index) => ({
+      ...entry,
+      groupStart: index === 0,
+      providerLabel: "Other models",
+    })),
+  ]
 }
 
 function hits(model: ModelInfo, needle: string): boolean {
@@ -345,7 +365,73 @@ export function targetDescriptors(state: ConfigUIState): ModelOptionDescriptor[]
   const model = targetModel(target)
   if (model === undefined || state.targetId === undefined) return []
   const catalogue = state.catalogues[state.targetId]
-  return catalogue?.models.find((entry) => entry.id === model)?.options ?? []
+  return (catalogue?.models.find((entry) => entry.id === model)?.options ?? []).filter(
+    (descriptor) => inlineTargetOption(descriptor) === undefined,
+  )
+}
+
+export type InlineTargetOption = "reasoning" | "context"
+
+export function inlineTargetOption(descriptor: ModelOptionDescriptor): InlineTargetOption | undefined {
+  if (descriptor.type !== "select") return undefined
+  const name = `${descriptor.id} ${descriptor.label}`.toLowerCase()
+  if (name.includes("context")) return "context"
+  if (name.includes("reasoning") || name.includes("effort") || descriptor.id === OPENCODE_VARIANT_OPTION) {
+    return "reasoning"
+  }
+  return undefined
+}
+
+/**
+ * Whether the highlighted row names a model this account may not run.
+ *
+ * An explicit `false` only. `undefined` means nobody asked — no host but
+ * Copilot can answer, and even Copilot answers from a cache that a background
+ * refresh fills — so treating it as "barred" would disable every picker in the
+ * product until that cache warmed.
+ */
+export function barredEntry(entry: PickerEntry | undefined): boolean {
+  return entry?.kind === "model" && entry.model?.available === false
+}
+
+/** Why a row is refused, named so the user knows it is not a bug. */
+export function barredStatus(entry: PickerEntry | undefined): string {
+  const model = entry?.model?.label ?? entry?.model?.id ?? "That model"
+  return `${model} is not available to your account, so it cannot be selected. The host lists it, but your plan or your organisation's policy does not grant it.`
+}
+
+export function targetPickerDescriptor(
+  state: ConfigUIState,
+  kind: InlineTargetOption,
+  entry: PickerEntry | undefined = pickerEntries(state)[state.cursor.models],
+): ModelOptionDescriptor | undefined {
+  if (entry?.kind !== "model" || state.targetId === undefined) return undefined
+  const model = state.catalogues[state.targetId]?.models.find((candidate) => candidate.id === entry.model?.id)
+  return model?.options.find((descriptor) => inlineTargetOption(descriptor) === kind)
+}
+
+export function targetPickerOptionValue(
+  state: ConfigUIState,
+  descriptor: ModelOptionDescriptor,
+): string | undefined {
+  const explicit = state.draftTargetOptions.find((option) => option.id === descriptor.id)?.value
+  if (typeof explicit === "string") return explicit
+  return descriptorValue(descriptor)
+}
+
+/**
+ * What a descriptor says about itself, with no draft laid over it.
+ *
+ * The draft is keyed by option id, and a host reuses one id across its whole
+ * model list — `effortLevel` is the same string on every Copilot model. Read
+ * on a row the cursor is not sitting on, the draft therefore answers for the
+ * wrong model: arming `high` on one row used to paint `high` down the entire
+ * Reasoning column. Rows that are not the cursor's read the catalogue, and the
+ * configured row reads what is actually saved for it.
+ */
+export function descriptorValue(descriptor: ModelOptionDescriptor): string | undefined {
+  if (typeof descriptor.currentValue === "string") return descriptor.currentValue
+  return descriptor.choices?.find((choice) => choice.isDefault === true)?.id
 }
 
 export function targetOptionValue(
@@ -568,18 +654,46 @@ function reduceTargets(state: ConfigUIState, key: Key): ConfigUIState {
 
 function reduceTargetModels(state: ConfigUIState, key: Key): ConfigUIState {
   const entries = pickerEntries(state)
-  if (isUp(key)) return moveCursor(state, "models", -1, entries.length)
-  if (isDown(key)) return moveCursor(state, "models", 1, entries.length)
-  if (key.name === "tab") return jumpGroup(state, entries, key.shift === true ? -1 : 1)
+  if (isUp(key)) return moveTargetModelCursor(state, entries, -1)
+  if (isDown(key)) return moveTargetModelCursor(state, entries, 1)
+  if (key.name === "left") return cycleTargetPickerOption(state, "reasoning", -1)
+  if (key.name === "right") return cycleTargetPickerOption(state, "reasoning", 1)
+  if (key.name === "tab" && key.shift === true) return moveTargetGroup(state, entries)
+  if (key.name === "tab") return cycleTargetPickerOption(state, "context", 1)
   if (key.name === "/") return { ...state, entry: { field: "filter", value: state.filter } }
-  if (key.name === "m") {
-    return { ...state, entry: { field: "model", value: targetModel(currentTarget(state)) ?? "" } }
+  if (key.name === "backspace") {
+    return {
+      ...state,
+      filter: state.filter.slice(0, -1),
+      cursor: { ...state.cursor, models: 0 },
+      draftTargetOptions: [],
+    }
   }
   if (isEscape(key)) return { ...state, view: "targets" }
   if (isEnter(key)) {
     const entry = entries[state.cursor.models]
     if (entry === undefined) return state
-    return assignTargetModel(state, entry.kind === "inherit" ? undefined : entry.model?.id)
+    if (entries.length === 1 && state.filter.trim().length > 0) {
+      return assignTargetModel(state, state.filter.trim(), state.draftTargetOptions)
+    }
+    // A model the host lists but this account may not run. Refused here rather
+    // than only greyed in the renderer, so the block survives a theme that
+    // cannot dim and a user who typed their way onto the row.
+    if (barredEntry(entry)) return { ...state, status: barredStatus(entry) }
+    return assignTargetModel(
+      state,
+      entry.kind === "inherit" ? undefined : entry.model?.id,
+      state.draftTargetOptions,
+    )
+  }
+  const char = printable(key)
+  if (char !== undefined) {
+    return {
+      ...state,
+      filter: state.filter + char,
+      cursor: { ...state.cursor, models: 0 },
+      draftTargetOptions: [],
+    }
   }
   return state
 }
@@ -622,7 +736,12 @@ function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
     if (entry.field === "filter") {
       // The filter changes which row index means what, so the cursor goes
       // back to the top rather than landing somewhere arbitrary.
-      return { ...next, filter: entry.value, cursor: { ...next.cursor, models: 0 } }
+      return {
+        ...next,
+        filter: entry.value,
+        cursor: { ...next.cursor, models: 0 },
+        ...(next.targetId === undefined ? {} : { draftTargetOptions: [] }),
+      }
     }
     if (entry.field === "skills") return setSkills(next, entry.value)
     const typed = entry.value.trim()
@@ -665,6 +784,7 @@ function openTargetPicker(state: ConfigUIState, row: TargetRow): ConfigUIState {
     view: "models",
     targetId: row.id,
     models: catalogue === undefined ? [] : catalogueModels(state, row.id, catalogue.models),
+    draftTargetOptions: currentTargetOptions(state, row.id),
     filter: "",
   }
   delete next.draftVariant
@@ -677,6 +797,13 @@ function positionTargetPicker(state: ConfigUIState): ConfigUIState {
   const entries = pickerEntries(state)
   const index = model === undefined ? 0 : entries.findIndex((entry) => entry.model?.id === model)
   return { ...state, cursor: { ...state.cursor, models: index >= 0 ? index : 0 } }
+}
+
+function currentTargetOptions(state: ConfigUIState, targetId: string): SeatTargetOption[] {
+  const target = seatTargets(seatOf(state, state.employeeId))[targetId]
+  return target && typeof target === "object" && !Array.isArray(target) && Array.isArray(target.options)
+    ? target.options.map((option) => ({ ...option }))
+    : []
 }
 
 function catalogueModels(
@@ -693,6 +820,7 @@ function catalogueModels(
     providerLabel,
     label: model.label,
     ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+    ...(model.available === undefined ? {} : { available: model.available }),
     variants: { kind: "unknown" },
     known: true,
   }))
@@ -734,7 +862,11 @@ function assignModel(state: ConfigUIState, model: string | undefined, variant: s
   }
 }
 
-function assignTargetModel(state: ConfigUIState, model: string | undefined): ConfigUIState {
+function assignTargetModel(
+  state: ConfigUIState,
+  model: string | undefined,
+  draftOptions: SeatTargetOption[] = state.draftTargetOptions,
+): ConfigUIState {
   const id = state.employeeId
   const row = currentTargetRow(state)
   if (id === undefined || row === undefined) return state
@@ -745,6 +877,7 @@ function assignTargetModel(state: ConfigUIState, model: string | undefined): Con
   const catalogue = state.catalogues[row.id]
   const catalogueModel = catalogue?.models.find((candidate) => candidate.id === model)
   const descriptors = catalogueModel?.options ?? []
+  const auxiliary = descriptors.filter((descriptor) => inlineTargetOption(descriptor) === undefined)
   const next = updateSeat(state, id, (seat) => {
     const targets = seatTargets(seat)
     if (model === undefined) {
@@ -756,12 +889,11 @@ function assignTargetModel(state: ConfigUIState, model: string | undefined): Con
       existing && typeof existing === "object" && !Array.isArray(existing)
         ? { ...existing, host: row.host, model }
         : { host: row.host, model }
+    const sourceOptions = model === targetModel(existing) ? mergeTargetOptions(target.options, draftOptions) : draftOptions
     const options =
       catalogueModel === undefined
-        ? Array.isArray(target.options)
-          ? target.options
-          : []
-        : clampTargetOptions(target.options, descriptors)
+        ? sourceOptions
+        : clampTargetOptions(sourceOptions, descriptors)
     if (options.length === 0) delete target.options
     else target.options = options
     targets[row.id] = target
@@ -769,13 +901,112 @@ function assignTargetModel(state: ConfigUIState, model: string | undefined): Con
   })
   return {
     ...next,
-    view: model !== undefined && descriptors.length > 0 ? "options" : "targets",
+    view: model !== undefined && auxiliary.length > 0 ? "options" : "targets",
     cursor: { ...next.cursor, options: 0 },
     status:
       model === undefined
         ? `${row.hostLabel} target removed.`
-        : `${row.hostLabel} model set to ${model}.${descriptors.length > 0 ? " Configure its options below." : ""}`,
+        : `${row.hostLabel} model set to ${model}.${auxiliary.length > 0 ? " Configure its other options below." : ""}`,
   }
+}
+
+function mergeTargetOptions(
+  existing: SeatTargetOption[] | undefined,
+  draft: SeatTargetOption[],
+): SeatTargetOption[] {
+  let merged = Array.isArray(existing) ? existing.map((option) => ({ ...option })) : []
+  for (const option of draft) merged = setTargetOption(merged, option.id, option.value)
+  return merged
+}
+
+function moveTargetModelCursor(
+  state: ConfigUIState,
+  entries: PickerEntry[],
+  direction: number,
+): ConfigUIState {
+  const moved = moveCursor(state, "models", direction, entries.length)
+  const entry = pickerEntries(moved)[moved.cursor.models]
+  const configured = targetModel(currentTarget(moved))
+  return {
+    ...moved,
+    // The status line is feedback about the row it was written on, so it goes
+    // when the row does. A confirmation still sitting there under a different
+    // model reads as a claim about that model.
+    status: "",
+    draftTargetOptions:
+      entry?.kind === "model" && entry.model?.id === configured && moved.targetId !== undefined
+        ? currentTargetOptions(moved, moved.targetId)
+        : [],
+  }
+}
+
+function moveTargetGroup(state: ConfigUIState, entries: PickerEntry[]): ConfigUIState {
+  const moved = jumpGroup(state, entries, 1)
+  const entry = pickerEntries(moved)[moved.cursor.models]
+  const configured = targetModel(currentTarget(moved))
+  return {
+    ...moved,
+    status: "",
+    draftTargetOptions:
+      entry?.kind === "model" && entry.model?.id === configured && moved.targetId !== undefined
+        ? currentTargetOptions(moved, moved.targetId)
+        : [],
+  }
+}
+
+function cycleTargetPickerOption(
+  state: ConfigUIState,
+  kind: InlineTargetOption,
+  direction: number,
+): ConfigUIState {
+  // Nothing to arm on a row that cannot be chosen. Cycling here would leave a
+  // draft effort or tier attached to a model the user will never be allowed to
+  // save, and the stepper moving at all would suggest the row is live.
+  const entry = pickerEntries(state)[state.cursor.models]
+  if (barredEntry(entry)) return { ...state, status: barredStatus(entry) }
+  const descriptor = targetPickerDescriptor(state, kind)
+  const choices = descriptor?.choices ?? []
+  if (descriptor === undefined || choices.length === 0) {
+    const label = kind === "context" ? "Context window" : "Reasoning effort"
+    return { ...state, status: `${label} has no choices to cycle through for this model.` }
+  }
+  const defaultChoice =
+    choices.find((choice) => choice.isDefault === true)?.id ??
+    (typeof descriptor.currentValue === "string" ? descriptor.currentValue : undefined)
+  const values: Array<string | undefined> =
+    defaultChoice === undefined
+      ? [undefined, ...choices.map((choice) => choice.id)]
+      : choices.map((choice) => (choice.id === defaultChoice ? undefined : choice.id))
+  const explicit = state.draftTargetOptions.find((option) => option.id === descriptor.id)?.value
+  const current = typeof explicit === "string" ? explicit : undefined
+  const at = values.indexOf(current)
+  const chosen = values[wrap(at + direction, values.length)]
+  return {
+    ...state,
+    draftTargetOptions: setTargetOption(state.draftTargetOptions, descriptor.id, chosen),
+    status: cycledStatus(state, descriptor, chosen),
+  }
+}
+
+/**
+ * What the row now says, said out loud.
+ *
+ * The Context column shows one value rather than its whole scale, so `tab`
+ * moving through that scale is a change the user could otherwise only detect
+ * by watching one cell. The status line is where every other confirmation in
+ * this UI lands, and it names the model as well as the value because the key
+ * acts on the highlighted row and nothing else.
+ */
+function cycledStatus(
+  state: ConfigUIState,
+  descriptor: ModelOptionDescriptor,
+  chosen: string | undefined,
+): string {
+  const entry = pickerEntries(state)[state.cursor.models]
+  const model = entry?.model?.label ?? entry?.model?.id ?? "This model"
+  if (chosen === undefined) return `${model}: ${descriptor.label.toLowerCase()} left at the host's default.`
+  const label = descriptor.choices?.find((choice) => choice.id === chosen)?.label ?? chosen
+  return `${model}: ${descriptor.label.toLowerCase()} set to ${label}.`
 }
 
 function removeTargetAtCursor(state: ConfigUIState, rows: TargetRow[]): ConfigUIState {

@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { contextTiersFor, contextWindowsFor } from "../models.js"
+import { probeCopilotEntitlement, type CopilotEntitlementProbe } from "./copilot-entitlement.js"
 import type { HostKind } from "../providers.js"
 import type { SeatIssue, SeatIssueSeverity, SeatTarget } from "../seats.js"
 import type {
@@ -9,7 +11,6 @@ import type {
   HostProfile,
   HostSeatAdapter,
   ModelCatalogue,
-  ModelOptionChoice,
   ModelOptionDescriptor,
 } from "./types.js"
 
@@ -118,8 +119,9 @@ export const COPILOT_REASONING_OPTION = "effortLevel"
  * shape and nothing else, and merging them would put `long_context` in a
  * reasoning menu.
  *
- * Note that this id is *recognised* but no descriptor is ever emitted for it —
- * see `descriptorsFor` for why.
+ * Note that a descriptor is emitted for this id only on models a snapshot says
+ * are priced in context tiers — see `descriptorsFor` for why the eligibility
+ * question has to be answered before the control can be offered at all.
  */
 export const COPILOT_CONTEXT_TIER_OPTION = "contextTier"
 
@@ -183,6 +185,18 @@ const DEFAULT_BINARY = "copilot"
 const AUTO_MODEL = "auto"
 
 /**
+ * The models.dev provider whose model ids are Copilot CLI's model ids.
+ *
+ * They are the same strings — `claude-opus-5`, `gpt-5.6-sol`, `kimi-k3` — and
+ * that is not a coincidence: the snapshot's `github-copilot` entry is the
+ * published record of what this host serves. It is consulted for context
+ * windows only, never for the model list itself: the binary in front of the
+ * user decides what exists, and a snapshot that has gone stale must not be
+ * able to add or remove a model from the picker.
+ */
+const COPILOT_CATALOGUE_PROVIDER = "github-copilot"
+
+/**
  * Whole-probe budget, spent across both help topics.
  *
  * Six seconds because this sits behind a TUI keystroke, not a build step, and
@@ -209,16 +223,6 @@ const MIN_PROBE_TIMEOUT_MS = 1_500
  * Codex adapter.
  */
 const SUCCESS_TTL_MS = 10 * 60_000
-
-/**
- * How long a *failed* probe is remembered.
- *
- * Failures are cached deliberately. Without this, a machine with no `copilot`
- * on `PATH` pays a process spawn for every repaint of a picker that will never
- * have anything to show. Thirty seconds is short enough that installing Copilot
- * and coming back works without a restart.
- */
-const FAILURE_TTL_MS = 30_000
 
 /* -------------------------------------------------------------------------- */
 /* The spawn seam                                                             */
@@ -268,6 +272,32 @@ export interface CopilotAdapterOptions {
   now?: () => number
   /** Process launcher. Injected by tests; never a real Copilot in a test run. */
   spawn?: CopilotSpawn
+  /**
+   * Context windows by bare model id, for the Context column.
+   *
+   * Injected so a test can state the sizes it expects instead of depending on
+   * whatever models.dev snapshot the machine running it happens to hold.
+   * Defaults to the `github-copilot` provider of OpenCode's snapshot.
+   */
+  contextWindows?: () => Map<string, number>
+  /**
+   * Bare model ids that Copilot prices in context tiers.
+   *
+   * Injected for the same reason as `contextWindows`: which models are tiered
+   * is a fact about a snapshot on disk, and a test must be able to state it.
+   * Defaults to the `github-copilot` provider of OpenCode's snapshot.
+   */
+  contextTiers?: () => Set<string>
+  /**
+   * Which models this account may actually run.
+   *
+   * Injected so a test never speaks ACP to a real Copilot, and so the default —
+   * which spawns a child and leaves a session behind — is opt-outable by any
+   * caller that would rather offer everything than pay for the answer. Defaults
+   * to the real probe. See `copilot-entitlement.ts` for why it is not a
+   * `CopilotSpawn`.
+   */
+  entitlement?: CopilotEntitlementProbe
 }
 
 interface CacheEntry {
@@ -437,23 +467,56 @@ function optionRow(help: string | undefined, flag: string): string | undefined {
  *     inventing a per-model subset would be Observer asserting something no
  *     source supports.
  *
- *  2. **`contextTier` is recognised but never rendered as a control.**
- *     `copilot help config` says the tier is "for tiered-pricing models", and
- *     gives no machine-readable way to say which models those are. A picker
- *     that offers `long_context` on a model that silently ignores it is exactly
- *     the false control this codebase refuses — the user believes they bought
- *     context they are not getting, and may believe they are being billed for
- *     it. `diagnose` still validates the value when a config sets it by hand,
- *     so nothing is lost except a promise Observer cannot keep.
+ *  2. **`contextTier` is emitted only for models a snapshot says are tiered.**
+ *     `copilot help config` calls the tier a setting "for tiered-pricing
+ *     models" and names none of them, and for as long as that was the only
+ *     source the control was withheld outright — a picker that offers
+ *     `long_context` on a model which silently ignores it is exactly the false
+ *     control this codebase refuses, because the user believes they bought
+ *     context they are not getting and may believe they are being billed for
+ *     it.
+ *
+ *     models.dev closes that gap. Its `github-copilot` entries carry
+ *     `cost.tiers[].tier.type === "context"` with the over-200K price beside
+ *     it, which is not a proxy for "tiered-pricing model" but the tiered price
+ *     itself. So the tier is offered where that says so, withheld everywhere
+ *     else, and withheld for every model when the snapshot is missing — the
+ *     control fails closed, back to the behaviour it replaced. The values come
+ *     from `--help`'s own `(choices: ...)` list, never from a literal here, so
+ *     a build that renames a tier stops offering the old name.
+ *
+ *     Not to be confused with the `contextWindow` the catalogue carries. That
+ *     is a *fact about the model* — how much context it holds — rendered as
+ *     text in a column. The tier is a *control*: a value Observer writes to
+ *     `subagents.agents.<agent>.contextTier` to change what the host does.
  */
-function descriptorsFor(efforts: readonly string[]): ModelOptionDescriptor[] {
-  if (efforts.length === 0) return []
-  const choices: ModelOptionChoice[] = efforts.map((value) => ({ id: value, label: value }))
-  // No `isDefault` and no `currentValue`: Copilot's help declares the ladder
-  // but never says which rung it stands on when the flag is omitted. Marking a
-  // guess as the default would put a checkmark next to a level the host may not
-  // be using.
-  return [{ id: COPILOT_REASONING_OPTION, label: "Reasoning effort", type: "select", choices }]
+function descriptorsFor(
+  efforts: readonly string[],
+  tiers: readonly string[],
+  tiered: boolean,
+): ModelOptionDescriptor[] {
+  const descriptors: ModelOptionDescriptor[] = []
+  // No `isDefault` and no `currentValue` on either: Copilot's help declares
+  // both ladders but never says which rung it stands on when the flag is
+  // omitted. Marking a guess as the default would put a checkmark next to a
+  // level the host may not be using.
+  if (efforts.length > 0) {
+    descriptors.push({
+      id: COPILOT_REASONING_OPTION,
+      label: "Reasoning effort",
+      type: "select",
+      choices: efforts.map((value) => ({ id: value, label: value })),
+    })
+  }
+  if (tiered && tiers.length > 0) {
+    descriptors.push({
+      id: COPILOT_CONTEXT_TIER_OPTION,
+      label: "Context tier",
+      type: "select",
+      choices: tiers.map((value) => ({ id: value, label: value })),
+    })
+  }
+  return descriptors
 }
 
 /* -------------------------------------------------------------------------- */
@@ -475,7 +538,29 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
   const budgetMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_TIMEOUT_MS
   const now = options.now ?? Date.now
   const spawn = options.spawn ?? defaultSpawn
+  const readContextWindows = options.contextWindows ?? (() => contextWindowsFor(COPILOT_CATALOGUE_PROVIDER))
+  const readContextTiers = options.contextTiers ?? (() => contextTiersFor(COPILOT_CATALOGUE_PROVIDER))
+  const readEntitlement: CopilotEntitlementProbe =
+    options.entitlement ??
+    ((probeBinary, probeOptions) =>
+      probeCopilotEntitlement(probeBinary, probeOptions, {
+        invocation: (value) => {
+          const built = copilotSpawnInvocation(value, ["--acp", "--disable-builtin-mcps"])
+          return { command: built.command, args: built.args, verbatim: built.windowsVerbatimArguments === true }
+        },
+      }))
   const cache = new Map<string, CacheEntry>()
+  const failed = new Set<string>()
+  /**
+   * The `--context` ladder each profile's last probe read, whatever it found.
+   *
+   * Separate from the catalogue because the two answer different questions.
+   * The descriptors say which models *may* be tiered, which depends on a
+   * models.dev snapshot; this says which tier *names* the installed CLI
+   * accepts, which does not. `diagnose` needs the second to judge a
+   * hand-written value on a machine where the first is unavailable.
+   */
+  const tierLadders = new Map<string, string[]>()
 
   /**
    * Where this install keeps its config, its MCP definitions and its GitHub
@@ -549,7 +634,13 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
 
     // Probe one: the model inventory. This is the probe that decides whether
     // there is a catalogue at all, so it runs first and gets the fresh budget.
-    const config = run(spawn, binary, ["help", "config"], probeEnv(home), remainingFor())
+    let config = run(spawn, binary, ["help", "config"], probeEnv(home), remainingFor())
+    // A cold Copilot process can exit before Commander prints the topic. Retry
+    // once while the launch budget remains instead of turning that one miss into
+    // an empty picker for the rest of this config session.
+    if (config.kind === "failure" && deadline - now() > 0) {
+      config = run(spawn, binary, ["help", "config"], probeEnv(home), remainingFor())
+    }
     if (config.kind === "failure") {
       warnings.push(describeFailure(config, binary, budgetMs, "help config"))
       return manualCatalogue(source, warnings)
@@ -567,6 +658,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
     // model list with no effort control is far more useful than no list at all,
     // and the warning says which half is missing.
     let efforts: string[] = []
+    let tiers: string[] = []
     let auto = false
     if (deadline - now() <= 0) {
       warnings.push(
@@ -580,6 +672,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
         )
       } else {
         efforts = parseCopilotChoices(help.stdout, "--effort")
+        tiers = parseCopilotChoices(help.stdout, "--context")
         auto = helpDeclaresAutoModel(help.stdout)
         if (efforts.length === 0) {
           warnings.push(
@@ -589,17 +682,45 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
       }
     }
 
-    const options = descriptorsFor(efforts)
+    // Copilot's own help publishes no per-model context size. models.dev does,
+    // under the `github-copilot` provider — the same snapshot that fills the
+    // column for OpenCode — so the number is looked up rather than invented,
+    // and a model the snapshot has never heard of keeps an empty cell unless it
+    // is Copilot's explicit `-fast` alias for a published base model.
+    const contexts = readContextWindows()
+    // The same snapshot says which models are priced in context tiers, which is
+    // the only machine-readable answer to `help config`'s "for tiered-pricing
+    // models". A model it does not list gets no tier control.
+    const tiered = readContextTiers()
+    // Which of those models this account may actually run. `help config` names
+    // the product's whole inventory; entitlement is a property of the seat, and
+    // the gap between the two is what makes a picker offer models that fail at
+    // use time. The answer arrives from a cache a background refresh fills, so
+    // the first open of a picker greys nothing out and says nothing about it —
+    // see `CatalogueModel.available` for why the third state is not a warning.
+    const entitled = readEntitlement(binary, { env: probeEnv(home), timeoutMs: budgetMs }).models
+    // Remembered whole, not read back off the descriptors: the descriptor is
+    // emitted only on tiered models, so a machine with no snapshot would carry
+    // the ladder nowhere and `diagnose` would fall silent on a typo'd tier.
+    tierLadders.set(cacheKey(profile), tiers)
+    const plain = descriptorsFor(efforts, tiers, false)
     const models: CatalogueModel[] = []
     // `auto` first, because it is the choice a user who does not want to think
     // about model ids is looking for, and because Copilot's own help leads with
     // it. Only present when this build's help actually declared it.
-    if (auto) models.push({ id: AUTO_MODEL, label: "Auto (Copilot picks)", options: [...options] })
+    // No context window on `auto`: it routes to a model chosen per request, so
+    // there is no one size to state. No tier either, for the same reason — the
+    // model that ends up serving the request is not known here. It is never
+    // greyed out: `auto` is a router, not a model, so an account that can run
+    // anything at all can run it.
+    if (auto) models.push({ id: AUTO_MODEL, label: "Auto (Copilot picks)", options: [...plain] })
     for (const id of ids) {
       if (id === AUTO_MODEL && auto) continue
-      // No `contextWindow`: Copilot's help publishes no per-model context size,
-      // and a number invented here would be rendered to the user as fact.
-      models.push({ id, label: id, options: [...options] })
+      const model: CatalogueModel = { id, label: id, options: descriptorsFor(efforts, tiers, tiered.has(id)) }
+      const context = contextWindowFor(contexts, id)
+      if (context !== undefined && context > 0) model.contextWindow = context
+      if (entitled !== undefined) model.available = entitled.has(id)
+      models.push(model)
     }
 
     return { models, source, freshness: "live", warnings }
@@ -645,14 +766,16 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
       }
 
       const fresh = probe(profile)
-      cache.set(key, {
-        at: now(),
-        // A failure is remembered for far less time than a success: it is much
-        // more likely to be fixed in the next thirty seconds than a model list
-        // is to change.
-        ttl: fresh.models.length > 0 ? SUCCESS_TTL_MS : FAILURE_TTL_MS,
-        catalogue: fresh,
-      })
+      // Never pin an empty transient answer. The config TUI probes once during
+      // launch and can ask again when the picker opens, which is how a host that
+      // finishes warming up recovers without making the user restart Observer.
+      if (fresh.models.length > 0) {
+        failed.delete(key)
+        cache.set(key, { at: now(), ttl: SUCCESS_TTL_MS, catalogue: fresh })
+      } else {
+        cache.delete(key)
+        failed.add(key)
+      }
       return fresh
     } catch (error) {
       return {
@@ -682,6 +805,9 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
    * Never probes. Diagnosis runs on half-typed input in a TUI, and a config
    * keystroke must not cost a subprocess. With no cached inventory there is no
    * warning at all — silence beats inventing an authority we do not have.
+   *
+   * Copilot's effort ladder is global, so the first model carrying the
+   * descriptor speaks for all of them.
    */
   function cachedEfforts(profileId: string): string[] {
     const entry = cached(profileId)
@@ -689,11 +815,25 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
     for (const model of entry.models) {
       const descriptor = model.options.find((option) => option.id === COPILOT_REASONING_OPTION)
       const choices = descriptor?.choices ?? []
-      // The ladder is global, so the first model that carries it speaks for all
-      // of them.
       if (choices.length > 0) return choices.map((choice) => choice.id)
     }
     return []
+  }
+
+  /**
+   * The `--context` ladder this install advertised, from the memoised probe.
+   *
+   * Read out of `tierLadders` rather than off a descriptor, because a machine
+   * with no models.dev snapshot emits no tier descriptor at all yet still has
+   * a perfectly good published ladder to judge a hand-written value against.
+   *
+   * Empty when nothing has been probed yet, which `diagnose` reads as "no
+   * grounds to complain" rather than as "no valid values".
+   */
+  function cachedTiers(profileId: string): string[] {
+    const profile = resolveProfile()
+    if (profileId !== profile.id) return []
+    return tierLadders.get(cacheKey(profile)) ?? []
   }
 
   /**
@@ -777,7 +917,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
         }
 
         if (id === COPILOT_REASONING_OPTION) diagnoseEffort(option.value, efforts, add)
-        else diagnoseContextTier(option.value, add)
+        else diagnoseContextTier(option.value, cachedTiers(profileId), add)
       }
 
       return issues
@@ -867,6 +1007,8 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
     capabilities(profileId: string): HostCapabilities {
       let discovery: HostCapabilities["discovery"] = "live"
       try {
+        const profile = resolveProfile()
+        if (profileId === profile.id && failed.has(cacheKey(profile))) discovery = "manual"
         const entry = cached(profileId)
         if (entry !== undefined && entry.models.length === 0) discovery = "manual"
       } catch {
@@ -877,6 +1019,16 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
       return { discovery, childModel: "supported", childReasoning: "supported", requiresReload: true }
     },
   }
+}
+
+function contextWindowFor(contexts: Map<string, number>, modelId: string): number | undefined {
+  const direct = contexts.get(modelId)
+  if (direct !== undefined) return direct
+  // Copilot exposes `claude-opus-4.8-fast` as the low-latency alias of
+  // `claude-opus-4.8`; models.dev publishes the base entry only. The alias does
+  // not change how many tokens the underlying model accepts.
+  if (modelId.endsWith("-fast")) return contexts.get(modelId.slice(0, -"-fast".length))
+  return undefined
 }
 
 /** The adapter over the real environment. Constructing it spawns nothing. */
@@ -930,34 +1082,34 @@ function diagnoseEffort(value: unknown, efforts: readonly string[], add: AddIssu
 /**
  * The `contextTier` value's findings.
  *
- * Checked against the two tiers `copilot help config` names in prose rather
- * than against a parsed set, because — unlike the effort ladder — this one is
- * not published as a machine-readable `(choices: ...)` list anywhere the probe
- * reads. Two tiers, both warnings, and no descriptor is ever offered for this
- * option: see `descriptorsFor`.
+ * Judged against the tiers this Copilot's `--help` actually declared, the same
+ * way an effort is. When nothing has been probed yet the list is empty, and an
+ * empty list means silence rather than a complaint against every value — a
+ * target written before the first probe is not evidence of a mistake.
  */
-function diagnoseContextTier(value: unknown, add: AddIssue): void {
+function diagnoseContextTier(value: unknown, tiers: readonly string[], add: AddIssue): void {
   const suffix = `options.${COPILOT_CONTEXT_TIER_OPTION}`
+  const named = tiers.length > 0 ? tiers.map((tier) => `"${tier}"`).join(", ") : `"default", "long_context"`
 
   if (typeof value !== "string") {
     add(
       "unrecognised-variant",
       "warning",
       suffix,
-      `"${COPILOT_CONTEXT_TIER_OPTION}" takes a named tier ("default" or "long_context"), not ${typeof value === "boolean" ? "a switch" : "this value"}.`,
+      `"${COPILOT_CONTEXT_TIER_OPTION}" takes a named tier (${named}), not ${typeof value === "boolean" ? "a switch" : "this value"}.`,
     )
     return
   }
 
   const trimmed = value.trim()
   if (trimmed.length === 0) return
-  if (trimmed === "default" || trimmed === "long_context") return
+  if (tiers.length === 0 || tiers.includes(trimmed)) return
 
   add(
     "unrecognised-variant",
     "warning",
     suffix,
-    `"${trimmed}" is not a context tier Copilot documents ("default", "long_context"). It applies only to tiered-pricing models in any case, so it may have no effect.`,
+    `"${trimmed}" is not a context tier this Copilot advertises (${named}). It applies only to tiered-pricing models in any case, so it may have no effect.`,
   )
 }
 

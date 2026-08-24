@@ -13,6 +13,7 @@ import {
   seatTargets,
 } from "@observer-ai/daemon"
 import { ROSTER } from "@observer-ai/roster"
+import { loadTargetCatalogue, preloadCopilotCatalogues } from "./config-ui-catalogues.js"
 import { type Viewport, render, renderReport } from "./config-ui-render.js"
 import {
   type ConfigUIState,
@@ -24,10 +25,11 @@ import {
   initialState,
   reduce,
 } from "./config-ui-state.js"
-import { listModels } from "./models.js"
+import { listModels, refreshCopilotModelMetadata } from "./models.js"
 import { syncSeatControl } from "./seat-control.js"
 import { seatAgentDir } from "./seat-agents.js"
 import { type Theme, buildTheme, colorSupport } from "./theme.js"
+import { VERSION } from "./version.js"
 
 /**
  * The terminal shell for `observer config`.
@@ -102,11 +104,21 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
     return 0
   }
 
+  const metadata = await refreshCopilotModelMetadata()
+  const catalogues = preloadCopilotCatalogues(adapters, profiles)
+  const welcome =
+    metadata === "unavailable"
+      ? "Copilot model context metadata could not be refreshed; model ids still come from Copilot."
+      : metadata === "stale"
+        ? "Using cached Copilot model context metadata because models.dev could not be refreshed."
+        : undefined
   const state = initialState({
     seats: config.seats,
     roster,
     models: [],
     profiles,
+    catalogues,
+    ...(welcome === undefined ? {} : { welcome }),
   })
 
   return drive(
@@ -162,7 +174,12 @@ function drive(
   })
 
   const paint = (): void => {
-    const viewport: Viewport = { rows: stdout.rows ?? 24, columns: stdout.columns ?? 100, theme }
+    const viewport: Viewport = {
+      rows: stdout.rows ?? 24,
+      columns: stdout.columns ?? 100,
+      theme,
+      version: VERSION,
+    }
     stdout.write(`${HOME_AND_CLEAR}${render(state, viewport).join("\n")}\n`)
   }
 
@@ -231,32 +248,6 @@ function targetProfiles(adapters: HostSeatAdapter[]): TargetProfile[] {
       capabilities: adapter.capabilities(profile.id),
     })),
   )
-}
-
-function loadTargetCatalogue(
-  adapters: HostSeatAdapter[],
-  profiles: TargetProfile[],
-  targetId: string,
-): ModelCatalogue {
-  const profile = profiles.find((entry) => entry.id === targetId)
-  if (profile === undefined) {
-    return {
-      models: [],
-      source: targetId,
-      freshness: "unknown",
-      warnings: [`No adapter profile claims "${targetId}". Type a model id or remove this target.`],
-    }
-  }
-  const adapter = adapters.find((entry) => entry.kind === profile.host)
-  if (adapter === undefined) {
-    return {
-      models: [],
-      source: targetId,
-      freshness: "unknown",
-      warnings: [`No adapter in this build claims "${profile.host}".`],
-    }
-  }
-  return adapter.catalogue(profile.id)
 }
 
 /**

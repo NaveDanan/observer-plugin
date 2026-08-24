@@ -1,3 +1,4 @@
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 // Straight from source, not the package barrel: `apps/daemon` resolves to
 // `dist`, and `src/adapters/index.ts` is ticket 02's file. Importing the built
@@ -111,7 +112,7 @@ describe("profiles", () => {
         host: "claude",
         label: "Claude Code",
         binaryPath: CLAUDE_DEFAULT_BINARY,
-        homePath: "/home/real/.claude",
+        homePath: join("/home/real", ".claude"),
       },
     ])
   })
@@ -128,7 +129,7 @@ describe("profiles", () => {
     expect(adapter.profiles()[0]).toMatchObject({ binaryPath: "/opt/claude", homePath: "/work/.claude" })
     // An instance with no `homePath` still falls back, so two profiles are
     // never silently pointed at nothing.
-    expect(adapter.profiles()[1]).toMatchObject({ label: "Personal Claude", homePath: "/home/real/.claude" })
+    expect(adapter.profiles()[1]).toMatchObject({ label: "Personal Claude", homePath: join("/home/real", ".claude") })
   })
 })
 
@@ -463,8 +464,8 @@ describe("capabilities", () => {
 describe("config directory resolution", () => {
   it("prefers CLAUDE_CONFIG_DIR, then ~/.claude", () => {
     expect(claudeConfigDir({ CLAUDE_CONFIG_DIR: "/work/.claude" }, "/home/real")).toBe("/work/.claude")
-    expect(claudeConfigDir({ CLAUDE_CONFIG_DIR: "" }, "/home/real")).toBe("/home/real/.claude")
-    expect(claudeConfigDir({}, "/home/real")).toBe("/home/real/.claude")
+    expect(claudeConfigDir({ CLAUDE_CONFIG_DIR: "" }, "/home/real")).toBe(join("/home/real", ".claude"))
+    expect(claudeConfigDir({}, "/home/real")).toBe(join("/home/real", ".claude"))
   })
 })
 

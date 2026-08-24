@@ -52,10 +52,35 @@ function truecolorCapable(env: NodeJS.ProcessEnv): boolean {
 }
 
 export interface Theme {
+  /**
+   * How much colour the terminal accepts, for callers that mix their own ink.
+   *
+   * Every other member here is a finished style, which is the right shape for
+   * text in a palette role. The wordmark is not in a palette role: it is a
+   * bitmap whose inks are its own, and it has to resolve them itself. Handing
+   * it the depth keeps the one decision about colour capability in this file
+   * rather than letting a second module sniff the environment again.
+   */
+  depth: ColorMode
   /** Titles and section labels. Electric Violet, bold. */
   heading(text: string): string
+  /**
+   * The one sentence naming the screen you are on. Platinum Mist, bold.
+   *
+   * Brighter than `dim` and than `group`, which is the whole point: a picker
+   * has three tiers of text above its rows — what this screen is, what the
+   * section is, and what the columns are — and drawing all three in the same
+   * ink makes the user read the table to find out where the table starts.
+   */
+  title(text: string): string
+  /** A section heading inside a list. Platinum Mist, unattenuated. */
+  group(text: string): string
   /** The row under the cursor. Cobalt Pulse, bold. */
   focus(text: string): string
+  /** Full-width selected row, matching the host model picker. */
+  selection(text: string): string
+  /** Search field at the foot of the model picker. */
+  search(text: string): string
   /** Key names in the hint bar, the cursor marker, the armed effort. Ion Cyan. */
   accent(text: string): string
   /** Seat control on, a save that worked, a config in force. Emerald Volt. */
@@ -70,8 +95,13 @@ export interface Theme {
 
 /** The identity theme: every style returns its input unchanged. */
 export const PLAIN_THEME: Theme = {
+  depth: "plain",
   heading: (text) => text,
+  title: (text) => text,
+  group: (text) => text,
   focus: (text) => text,
+  selection: (text) => text,
+  search: (text) => text,
   accent: (text) => text,
   good: (text) => text,
   warn: (text) => text,
@@ -122,6 +152,16 @@ function indexedStyle(swatch: Swatch, ...attributes: string[]): (text: string) =
   return (text) => `${prefix}${text}${RESET}`
 }
 
+function truePanel(foreground: Swatch, background: [number, number, number]): (text: string) => string {
+  return (text) =>
+    `\u001B[38;2;${foreground.hex[0]};${foreground.hex[1]};${foreground.hex[2]}m` +
+    `\u001B[48;2;${background[0]};${background[1]};${background[2]}m${text}${RESET}`
+}
+
+function indexedPanel(foreground: Swatch, background: number): (text: string) => string {
+  return (text) => `\u001B[38;5;${foreground.xterm}m\u001B[48;5;${background}m${text}${RESET}`
+}
+
 const BOLD = "\u001B[1m"
 const DIM = "\u001B[2m"
 
@@ -136,9 +176,16 @@ const DIM = "\u001B[2m"
 export function buildTheme(mode: ColorMode): Theme {
   if (mode === "plain") return PLAIN_THEME
   const style = mode === "truecolor" ? trueStyle : indexedStyle
+  const panel = mode === "truecolor" ? truePanel(SWATCHES.platinum, [20, 27, 38]) : indexedPanel(SWATCHES.platinum, 234)
+  const search = mode === "truecolor" ? truePanel(SWATCHES.platinum, [19, 28, 40]) : indexedPanel(SWATCHES.platinum, 235)
   return {
+    depth: mode,
     heading: style(SWATCHES.violet, BOLD),
+    title: style(SWATCHES.platinum, BOLD),
+    group: style(SWATCHES.platinum),
     focus: style(SWATCHES.cobalt, BOLD),
+    selection: panel,
+    search,
     accent: style(SWATCHES.cyan),
     good: style(SWATCHES.volt),
     warn: style(SWATCHES.amber),
@@ -150,6 +197,49 @@ export function buildTheme(mode: ColorMode): Theme {
 /** Matches SGR sequences only; any other escape code stays measurable noise. */
 const SGR = /\u001B\[[0-9;]*m/g
 const HAS_SGR = /\u001B\[[0-9;]*m/
+
+/** An ink the palette does not name, as the terminal would be told it. */
+export type RGB = readonly [number, number, number]
+
+/** The six levels the xterm-256 colour cube is built from. */
+const CUBE_LEVELS = [0, 95, 135, 175, 215, 255]
+
+/**
+ * The closest xterm-256 slot to an arbitrary colour.
+ *
+ * The palette above picks its slots by eye, which is right for seven swatches
+ * a human has looked at. A bitmap's inks are a gradient, and eyeballing a
+ * gradient one entry at a time is how you get banding; this searches the whole
+ * cube and the grey ramp by squared distance instead.
+ *
+ * Slots 0-15 are skipped on purpose: they are whatever the user's terminal
+ * theme has redefined them to be, so matching against their nominal values
+ * would pick a colour the screen does not actually show.
+ */
+export function xtermSlot([red, green, blue]: RGB): number {
+  let best = 16
+  let bestDistance = Number.POSITIVE_INFINITY
+  const consider = (slot: number, candidate: RGB): void => {
+    const distance =
+      (candidate[0] - red) ** 2 + (candidate[1] - green) ** 2 + (candidate[2] - blue) ** 2
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = slot
+    }
+  }
+  for (let r = 0; r < 6; r += 1) {
+    for (let g = 0; g < 6; g += 1) {
+      for (let b = 0; b < 6; b += 1) {
+        consider(16 + 36 * r + 6 * g + b, [CUBE_LEVELS[r]!, CUBE_LEVELS[g]!, CUBE_LEVELS[b]!])
+      }
+    }
+  }
+  for (let step = 0; step < 24; step += 1) {
+    const level = 8 + step * 10
+    consider(232 + step, [level, level, level])
+  }
+  return best
+}
 
 /** Width of `text` as the terminal will draw it, ignoring colour codes. */
 export function visibleLength(text: string): number {

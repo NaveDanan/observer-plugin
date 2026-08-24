@@ -7,6 +7,14 @@ export {
   groupByProvider,
   listModels,
   parseHostModels,
+  refreshCopilotModelMetadata,
   variantsFor,
 } from "@observer-ai/daemon"
-export type { CatalogueSources, ListModelsOptions, ModelInfo, ModelVariants } from "@observer-ai/daemon"
+export type {
+  CatalogueSources,
+  ListModelsOptions,
+  ModelInfo,
+  ModelMetadataFreshness,
+  ModelVariants,
+  RefreshCopilotModelMetadataOptions,
+} from "@observer-ai/daemon"

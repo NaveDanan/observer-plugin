@@ -26,9 +26,10 @@ beforeEach(() => {
   delete process.env["XDG_CONFIG_HOME"]
   // The variant check reads OpenCode's model catalogue and auth file, both of
   // which resolve under XDG before HOME. Redirecting HOME alone would leave a
-  // developer's real 7,000-model catalogue deciding what these tests assert.
-  delete process.env["XDG_CACHE_HOME"]
-  delete process.env["XDG_DATA_HOME"]
+  // developer's real 7,000-model catalogue deciding what these tests assert on
+  // Windows, where `homedir()` does not follow the `HOME` environment variable.
+  process.env["XDG_CACHE_HOME"] = join(home, ".cache")
+  process.env["XDG_DATA_HOME"] = join(home, ".local", "share")
 })
 
 afterEach(() => {

@@ -156,11 +156,13 @@ describe("config is written atomically", () => {
     expect(readRaw()["token"]).toBe("tok")
   })
 
-  it("keeps the private directory and file modes", () => {
+  it("keeps the private directory and file modes where the platform supports them", () => {
     const config: ObserverConfig = { ...DEFAULT_CONFIG, token: "tok" }
     saveConfig(config)
-    expect(statSync(home).mode & 0o777).toBe(0o700)
-    expect(statSync(join(home, "config.json")).mode & 0o777).toBe(0o600)
+    if (process.platform !== "win32") {
+      expect(statSync(home).mode & 0o777).toBe(0o700)
+      expect(statSync(join(home, "config.json")).mode & 0o777).toBe(0o600)
+    }
   })
 
   it("creates the file on first run and reads back the same token", () => {

@@ -12,6 +12,7 @@ import {
   type SeatsConfig,
   type TargetProfile,
   applied,
+  BANNER_ROWS,
   buildCatalogue,
   buildTheme,
   colorSupport,
@@ -19,6 +20,10 @@ import {
   diagnoseOpencodeSeats,
   effortCycle,
   initialState,
+  LOGO_COLUMNS,
+  LOGO_ROWS,
+  logo,
+  logoInkIsRowConstant,
   menuRows,
   pickerEntries,
   reduce,
@@ -149,6 +154,15 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
               { id: "high", label: "high" },
             ],
           },
+          {
+            id: "contextWindow",
+            label: "Context window",
+            type: "select",
+            choices: [
+              { id: "default", label: "264K", isDefault: true },
+              { id: "1m", label: "1M" },
+            ],
+          },
         ],
       },
     ],
@@ -169,6 +183,15 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
             choices: [
               { id: "low", label: "low" },
               { id: "high", label: "high" },
+            ],
+          },
+          {
+            id: "serviceTier",
+            label: "Service tier",
+            type: "select",
+            choices: [
+              { id: "default", label: "default", isDefault: true },
+              { id: "flex", label: "flex" },
             ],
           },
         ],
@@ -208,6 +231,26 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
           },
         ],
       },
+    ],
+  },
+}
+
+/**
+ * The same Copilot target, but with the host's verdict on each model attached.
+ *
+ * Three states on purpose: entitled, refused, and never asked. The last is not
+ * a synonym for refused — a picker that greyed out `undefined` would grey the
+ * entire list on the first open, before the entitlement probe has answered.
+ */
+const BARRED_CATALOGUES: Record<string, ModelCatalogue> = {
+  ...TARGET_CATALOGUES,
+  "copilot:default": {
+    source: "fixture",
+    freshness: "live",
+    warnings: [],
+    models: [
+      { ...TARGET_CATALOGUES["copilot:default"]!.models[0]!, available: true },
+      { ...TARGET_CATALOGUES["copilot:default"]!.models[1]!, available: false },
     ],
   },
 }
@@ -431,18 +474,14 @@ describe("host targets", () => {
     let state = press(targets(seats), "down", "down")
     expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("empty - choose a model or remove")
 
-    state = press(state, "return", "down", "return")
-    expect(state.view).toBe("options")
+    state = press(state, "return", "down", "right", "return")
+    expect(state.view).toBe("targets")
     expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
       host: "copilot",
       model: "claude-opus-5",
+      options: [{ id: "effortLevel", value: "low" }],
     })
-    state = press(state, "right")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.options).toEqual([
-      { id: "effortLevel", value: "low" },
-    ])
     expect(diagnoseSeats(state.seats).issues.map((issue) => issue.code)).not.toContain("empty-target")
-    state = press(state, "escape", "escape")
     expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("applied")
   })
 
@@ -525,6 +564,141 @@ describe("host targets", () => {
     expect(state.view).toBe("employee")
   })
 
+  it("selects reasoning and context in every target model picker", () => {
+    let state = press(targets(), "return")
+    const text = render(state, { rows: 40, columns: 120 }).join("\n")
+    expect(text).toContain("Select model for OpenCode / default")
+    expect(text).toContain("Choose the model to use when Arjun Mehta launches matching subagents.")
+    expect(text).toContain("Context")
+    expect(text).toContain("Reasoning")
+    expect(text).toContain("Recommended models")
+    expect(text).toContain("Other models")
+    expect(text).toContain("\u203A Search models...")
+    expect(text).toContain("\u2190/\u2192 reasoning effort")
+    expect(text).toContain("tab context window")
+    expect(text).toContain("shift+tab group")
+
+    state = press(state, "down", "right", "tab")
+    expect(state.draftTargetOptions).toEqual([
+      { id: "variant", value: "low" },
+      { id: "contextWindow", value: "1m" },
+    ])
+    expect(state.seats.employees["arjun-mehta"]).toBeUndefined()
+
+    state = press(state, "return")
+    expect(state.view).toBe("targets")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]).toEqual({
+      host: "opencode",
+      model: "github-copilot/claude-opus-5",
+      options: [
+        { id: "variant", value: "low" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    })
+  })
+
+  it("drops the Model column label and points with a single angle quote", () => {
+    const lines = render(press(targets(), "return"), { rows: 40, columns: 120 })
+    const head = lines.find((line) => line.includes("Context") && line.includes("Reasoning"))!
+    expect(head.trimStart().startsWith("Context")).toBe(true)
+    expect(head).not.toContain("Model")
+    expect(lines.some((line) => line.startsWith("\u203A Auto"))).toBe(true)
+  })
+
+  it("draws a scroll rail beside the list and keeps every row inside the terminal", () => {
+    const state = press(targets(), "down", "down", "return")
+    for (const columns of [80, 100, 120]) {
+      const lines = render(state, { rows: 18, columns }).slice(BANNER_ROWS)
+      expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(columns)
+      const rail = lines.filter((line) => line.endsWith("\u2588") || line.endsWith("\u2502"))
+      expect(rail.length).toBeGreaterThan(0)
+      for (const line of rail) expect(line.length).toBe(columns)
+    }
+  })
+
+  it("leaves the rail off when the whole list already fits", () => {
+    const lines = render(press(targets(), "down", "down", "return"), { rows: 40, columns: 100 }).slice(BANNER_ROWS)
+    expect(lines.some((line) => line.endsWith("\u2588") || line.endsWith("\u2502"))).toBe(false)
+    expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(100)
+  })
+
+  it("shows one context window on the highlighted row rather than the whole scale", () => {
+    const state = press(targets(), "return", "down")
+    const row = (current: ConfigUIState): string =>
+      render(current, { rows: 40, columns: 120 }).find((line) => line.includes("Claude Opus 5"))!
+    expect(row(state)).toContain("264K")
+    expect(row(state)).not.toContain("[264K]")
+    expect(row(state)).not.toContain("1M")
+    const tabbed = press(state, "tab")
+    expect(row(tabbed)).toContain("1M")
+    // The scale left the table, so the change says itself on the status line.
+    expect(tabbed.status).toBe("Claude Opus 5: context window set to 1M.")
+    expect(press(tabbed, "down").status).toBe("")
+  })
+
+  it("keeps an armed option on its own row instead of painting the column", () => {
+    const state = press(targets(), "down", "down", "return", "down", "right")
+    expect(state.draftTargetOptions).toEqual([{ id: "effortLevel", value: "low" }])
+    const lines = render(state, { rows: 40, columns: 120 })
+    // Both models share the `effortLevel` id, so a draft read on the wrong row
+    // used to paint `low` down the whole column.
+    expect(lines.find((line) => line.includes("Claude Opus 5"))).toContain("low")
+    expect(lines.find((line) => line.includes("Claude Haiku 4.5"))).toContain("default")
+    expect(lines.find((line) => line.includes("Claude Haiku 4.5"))).not.toContain("low")
+  })
+
+  it("names the group the cursor is in beside shift+tab", () => {
+    const picker = press(targets(), "return")
+    expect(render(picker, { rows: 40, columns: 200 }).join("\n")).toContain("shift+tab group: recommended")
+    const other = press(picker, { name: "tab", shift: true })
+    expect(render(other, { rows: 40, columns: 200 }).join("\n")).toContain("shift+tab group: other")
+  })
+
+  it("wraps the picker hints instead of clipping the way out", () => {
+    const lines = render(press(targets(), "return"), { rows: 40, columns: 80 })
+    expect(lines.at(-1)).toContain("esc to cancel")
+    expect(lines.at(-2)).toContain("\u2191/\u2193 to navigate")
+    expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(80)
+  })
+
+  it("says everything in the picker in words as well as in colour", () => {
+    const picker = press(targets(), "return", "down")
+    const viewport = { rows: 40, columns: 120 }
+    expect(strip(render(picker, { ...viewport, theme: buildTheme("truecolor") }).join("\n"))).toBe(
+      render(picker, viewport).join("\n"),
+    )
+  })
+
+  it("types directly into the persistent search field and accepts an unmatched id", () => {
+    let state = press(targets(), "down", "return")
+    state = type(state, "future-model")
+    expect(state.filter).toBe("future-model")
+    expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("\u203A future-model_")
+
+    state = press(state, "backspace")
+    expect(state.filter).toBe("future-mode")
+    state = press(state, "l", "return")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["codex:default"]?.model).toBe("future-model")
+  })
+
+  it("selects and clears a target reasoning effort, including a one-choice scale", () => {
+    let state = press(targets(), "down", "down", "return", "down", "down")
+    expect(pickerEntries(state)[state.cursor.models]?.model?.id).toBe("claude-haiku-4.5")
+
+    state = press(state, "right")
+    expect(state.draftTargetOptions).toEqual([{ id: "effortLevel", value: "low" }])
+    state = press(state, "right")
+    expect(state.draftTargetOptions).toEqual([])
+  })
+
+  it("jumps between recommended and other target models with shift+tab", () => {
+    const picker = press(targets(), "return")
+    const other = press(picker, { name: "tab", shift: true })
+    expect(pickerEntries(other)[other.cursor.models]?.providerLabel).toBe("Other models")
+    const recommended = press(other, { name: "tab", shift: true })
+    expect(pickerEntries(recommended)[recommended.cursor.models]?.providerLabel).toBe("Recommended models")
+  })
+
   it("removes an empty target and the warning reported for it", () => {
     const seats: SeatsConfig = {
       control: true,
@@ -570,6 +744,57 @@ describe("host targets", () => {
     expect(report).toContain("arjun-metha (not on the roster)")
     expect(report).toContain("codex:default")
     expect(report).toContain("gpt-5.6-sol")
+  })
+})
+
+describe("models the host will not run", () => {
+  /** The Copilot picker, cursor on the model this account may not use. */
+  function barred(): ConfigUIState {
+    return press(targets({}, BARRED_CATALOGUES), "down", "down", "return", "down", "down")
+  }
+
+  function lines(state: ConfigUIState): string[] {
+    return render(state, { rows: 40, columns: 120 }).map(strip)
+  }
+
+  it("says a model is unavailable in words, not only by dimming it", () => {
+    // Stripped of ANSI, because dim is an overlay: a pipe, a screen reader and
+    // a 16-colour terminal all have to get the same answer.
+    const row = lines(barred()).find((line) => line.includes("Claude Haiku 4.5"))!
+    expect(row).toContain("(unavailable)")
+    expect(row).toContain("x")
+  })
+
+  it("leaves an entitled model unmarked", () => {
+    const row = lines(barred()).find((line) => line.includes("Claude Opus 5"))!
+    expect(row).not.toContain("(unavailable)")
+  })
+
+  it("refuses to select it, and says why rather than doing nothing", () => {
+    const state = press(barred(), "return")
+    // Still in the picker, and the seat is untouched.
+    expect(state.view).toBe("models")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.model).toBeUndefined()
+    expect(state.status).toContain("Claude Haiku 4.5")
+  })
+
+  it("refuses its options too, so nothing can be armed on a row that cannot be chosen", () => {
+    const state = press(barred(), "right", "tab")
+    expect(state.draftTargetOptions ?? []).toEqual([])
+  })
+
+  it("shows no reasoning scale on it, because none of it is on offer", () => {
+    const row = lines(barred()).find((line) => line.includes("Claude Haiku 4.5"))!
+    expect(row).not.toContain("low")
+  })
+
+  it("treats a model nobody has asked about exactly as before", () => {
+    // `available: undefined` is the state on the very first open, before the
+    // entitlement probe has answered. Greying there would grey everything.
+    const state = press(targets(), "down", "down", "return", "down", "down", "return")
+    expect(state.view).not.toBe("models")
+    expect(state.status).not.toContain("unavailable")
+    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.model).toBe("claude-haiku-4.5")
   })
 })
 
@@ -1018,6 +1243,55 @@ describe("saving and quitting", () => {
   it("returns the same state object for a key that does nothing", () => {
     const state = start()
     expect(reduce(state, { name: "z", sequence: "z" })).toBe(state)
+  })
+})
+
+describe("the banner", () => {
+  const viewport = { rows: 30, columns: 100 }
+
+  it("draws the pixel NJ above everything else", () => {
+    const lines = render(start(), viewport).slice(0, BANNER_ROWS)
+    // An N whose diagonal descends in half-rows and closes against its right
+    // pillar, then a J whose hook turns back up on the left so it cannot be
+    // read as an L.
+    expect(lines.map((line) => line.slice(0, LOGO_COLUMNS))).toEqual([
+      "\u2588\u2588\u2580\u2588\u2584      \u2588\u2588       \u2588\u2588",
+      "\u2588\u2588  \u2580\u2588\u2584    \u2588\u2588       \u2588\u2588",
+      "\u2588\u2588    \u2580\u2588\u2584  \u2588\u2588  \u2584    \u2588\u2588",
+      "\u2588\u2588      \u2580\u2588\u2584\u2588\u2588  \u2580\u2588\u2584\u2584\u2584\u2588\u2588",
+    ])
+  })
+
+  it("stays four rows tall, because every row costs the model list one", () => {
+    expect(BANNER_ROWS).toBe(4)
+  })
+
+  it("fits beside the longest line of banner text at 80 columns", () => {
+    const tagline = "host targets, model options and skills per employee"
+    expect(LOGO_COLUMNS + 3 + tagline.length).toBeLessThanOrEqual(80)
+    for (const line of render(start(), { rows: 30, columns: 80 }).slice(0, BANNER_ROWS)) {
+      expect(line.length).toBeLessThanOrEqual(80)
+    }
+  })
+
+  it("names the build beside the mark, so nobody has to quit to find the version", () => {
+    const lines = render(start(), { ...viewport, version: "0.9.6" }).slice(0, BANNER_ROWS)
+    expect(lines[0]).toContain("Observer multi-harness v0.9.6")
+    expect(lines[1]).toContain("By NJ-Labs")
+    expect(lines[2]).toContain("host targets, model options and skills per employee")
+  })
+
+  it("says so plainly when it is not a released build", () => {
+    const lines = render(start(), viewport).slice(0, BANNER_ROWS)
+    // A version-shaped lie would be worse than an admission.
+    expect(lines[0]).toContain("Observer multi-harness (dev build)")
+    expect(lines[0]).not.toMatch(/v\d/)
+  })
+
+  it("carries the same words with colour on as with colour off", () => {
+    const themed = render(start(), { ...viewport, version: "0.9.6", theme: buildTheme("truecolor") })
+    const plain = render(start(), { ...viewport, version: "0.9.6" })
+    expect(themed.slice(0, BANNER_ROWS).map(strip)).toEqual(plain.slice(0, BANNER_ROWS))
   })
 })
 
