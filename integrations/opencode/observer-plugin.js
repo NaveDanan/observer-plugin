@@ -20,6 +20,10 @@
  *    `tool.execute.before`, and joined to the child session the task spawns by
  *    the task description — which the host then decorates into the session
  *    title, so the join has to normalise before it compares.
+ *  - Autostart: when the daemon is not listening, the plugin spawns it in the
+ *    background the same way the hook emitter does for the other hosts, so
+ *    OpenCode alone is enough to bring Observer up and `observer start` never
+ *    has to be typed by hand.
  *  - Manual activation: typing `@observer` in a message turns staffing on for
  *    the session (`@observer off` turns it off), overriding the `"guidance"`
  *    setting in ~/.observer/config.json for that session in either direction.
@@ -38,13 +42,23 @@
  *    other agent carries a prompt or a tool restriction that is not Observer's
  *    to discard.
  */
+import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { readFileSync } from "node:fs"
+import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
 const FLUSH_INTERVAL_MS = 120
 const MAX_BATCH = 200
+
+/**
+ * How long one autostart attempt suppresses the next.
+ *
+ * Copied from the hook emitter, which uses the same `autostart.stamp` file:
+ * sharing the stamp means whichever of the two notices a dead daemon first
+ * claims the start and the other stands down, instead of both spawning one.
+ */
+const AUTOSTART_COOLDOWN_MS = 30_000
 
 /** Delegations waiting for their child session. Bounded so a missed join cannot leak. */
 const MAX_PENDING_TASKS = 256
@@ -174,6 +188,78 @@ function readConfig() {
 }
 
 /**
+ * Locates the daemon entry point and the Node that should run it.
+ *
+ * The plugin lives as a plain-JS copy inside OpenCode's config directory, so —
+ * unlike the hook emitter, which sits next to `daemon.js` in the published
+ * package — it has no sibling to probe. The installer therefore writes
+ * ~/.observer/install.json naming what it installed; an explicit
+ * OBSERVER_DAEMON override wins for development setups where no installer ran.
+ */
+function daemonLocation() {
+  const override = process.env.OBSERVER_DAEMON
+  if (override && existsSync(override)) return { node: process.execPath, daemon: override }
+  try {
+    const raw = JSON.parse(readFileSync(join(dataDir(), "install.json"), "utf8"))
+    const daemon = typeof raw.daemon === "string" ? raw.daemon : undefined
+    if (!daemon || !existsSync(daemon)) return undefined
+    // Prefer the Node binary the installer recorded: OpenCode may run on an
+    // embedded runtime whose spawn would not honour the daemon's shebang.
+    const node = typeof raw.node === "string" && existsSync(raw.node) ? raw.node : process.execPath
+    return { node, daemon }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Claims the right to start the daemon, at most once per cooldown.
+ *
+ * The same stamp file the hook emitter uses, so a hook and this plugin cannot
+ * both decide the daemon needs starting within the same half minute. Written
+ * before spawning rather than after, so a spawn that dies on boot still costs
+ * one attempt instead of retrying on every event batch.
+ */
+function claimAutostart() {
+  const stamp = join(dataDir(), "autostart.stamp")
+  try {
+    if (Date.now() - statSync(stamp).mtimeMs < AUTOSTART_COOLDOWN_MS) return false
+  } catch {
+    // No stamp yet: the first failure through claims it.
+  }
+  try {
+    mkdirSync(dataDir(), { recursive: true })
+    writeFileSync(stamp, `${Date.now()}\n`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Brings the daemon up detached, logging where every other launcher logs. */
+function spawnDaemon() {
+  const location = daemonLocation()
+  if (!location) return false
+  if (!claimAutostart()) return false
+  try {
+    mkdirSync(dataDir(), { recursive: true })
+    const log = openSync(join(dataDir(), "daemon.log"), "a")
+    const child = spawn(location.node, [location.daemon], {
+      detached: true,
+      stdio: ["ignore", log, log],
+      windowsHide: true,
+    })
+    // A spawn that fails asynchronously (missing binary, bad path) must not
+    // become an uncaught exception inside the host's plugin process.
+    child.on("error", () => {})
+    child.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Renders the roster section appended to the root agent's system prompt.
  *
  * This is the offer: it tells the model subagents are available and names the
@@ -227,6 +313,25 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
    * break the session it is advising.
    */
   const guidanceEnabled = config.guidance !== false
+  /**
+   * Autostart is opt-out, like the hook emitter reads it: a config written
+   * before the setting existed should still bring the daemon up rather than
+   * silently dropping every delivery on an unreachable port.
+   */
+  const autostartEnabled = config.autostart !== false
+
+  /**
+   * Records that the daemon could not be reached and starts it if allowed to.
+   *
+   * Fire-and-forget: the delivery in flight is dropped either way — this file
+   * deliberately keeps no spool, because the hosts' own hooks spool the same
+   * events through the emitter — so waiting here would only delay the session
+   * the daemon is being started for.
+   */
+  const noteDaemonUnreachable = () => {
+    if (!autostartEnabled) return
+    spawnDaemon()
+  }
   const pluginStartedAt = Date.now()
   let briefing = undefined
 
@@ -360,19 +465,31 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
   }
 
   const apiGet = async (path) => {
-    const response = await fetch(`http://127.0.0.1:${config.port}${path}`, {
-      headers: { authorization: `Bearer ${config.token}` },
-    })
+    let response
+    try {
+      response = await fetch(`http://127.0.0.1:${config.port}${path}`, {
+        headers: { authorization: `Bearer ${config.token}` },
+      })
+    } catch (error) {
+      noteDaemonUnreachable()
+      throw error
+    }
     if (!response.ok) throw new Error(`${path}: ${response.status}`)
     return response.json()
   }
 
   const apiPost = async (path, body) => {
-    const response = await fetch(`http://127.0.0.1:${config.port}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    })
+    let response
+    try {
+      response = await fetch(`http://127.0.0.1:${config.port}${path}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      })
+    } catch (error) {
+      noteDaemonUnreachable()
+      throw error
+    }
     if (!response.ok) throw new Error(`${path}: ${response.status}`)
     return response.json()
   }
@@ -396,11 +513,17 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
    * the delegation as a "subcontractor".
    */
   const seatFor = async (task) => {
-    const response = await fetch(`http://127.0.0.1:${config.port}/v1/roster/match`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ task, limit: 1 }),
-    })
+    let response
+    try {
+      response = await fetch(`http://127.0.0.1:${config.port}/v1/roster/match`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ task, limit: 1 }),
+      })
+    } catch (error) {
+      noteDaemonUnreachable()
+      return undefined
+    }
     if (!response.ok) return undefined
     const data = await response.json()
     const match = Array.isArray(data.matches) ? data.matches[0] : undefined
@@ -575,7 +698,10 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
     try {
       await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ deliveries }) })
     } catch {
-      // Dropping telemetry is always preferable to disturbing the session.
+      // Dropping telemetry is always preferable to disturbing the session —
+      // but an unreachable daemon is the normal cold-start case, not just a
+      // fault, so bring it up rather than staying down for the whole session.
+      noteDaemonUnreachable()
     }
     if (queue.length > 0) schedule()
   }
@@ -1494,6 +1620,46 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           if (!identity) return "This tool is available only inside an assigned subagent session."
           if (!(await coordinationAllowedFor(context.agent, context.sessionID, "agent_send"))) return "Agent policy denies direct messaging."
           if (args.to === identity.target.root) return "The root session is not a peer address."
+          let recipient
+          try {
+            recipient = (
+              await apiGet(
+                `/v1/coordination/assignments?${new URLSearchParams({ host: "opencode", runtimeId: args.to })}`,
+              )
+            )?.assignment
+          } catch {
+            // A child session can exist even when its best-effort assignment
+            // write was missed. Rebuild only from OpenCode's authoritative
+            // same-root session tree; arbitrary and cross-root IDs stay invalid.
+            let info
+            let target
+            try {
+              info = await sessionGet(args.to)
+              target = await resolve(args.to)
+            } catch {
+              return `Subagent ${args.to} is not a peer in this Observer session.`
+            }
+            if (!info?.id || target?.root !== identity.target.root || target.agentKey === MAIN_AGENT_KEY) {
+              return `Subagent ${args.to} is not a peer in this Observer session.`
+            }
+            const claim = staffedSessions.get(args.to)
+            recipient = await putAssignment(
+              claim ?? {
+                assignmentId: randomUUID(),
+                runtimeId: args.to,
+                rootSessionKey: identity.target.root,
+                parentRuntimeId: info.parentID === identity.target.root ? null : info.parentID,
+                agentType: "subcontractor",
+                hostAgentType: info.agent ?? "general",
+                description: info.title,
+                at: Date.now(),
+              },
+              "running",
+            )
+          }
+          if (!recipient || recipient.rootSessionKey !== identity.target.root) {
+            return `Subagent ${args.to} is not a peer in this Observer session.`
+          }
           const id = randomUUID()
           const queued = await apiPost("/v1/coordination/mail", {
             id,
@@ -1507,11 +1673,6 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           // closing tag. The mailbox retains the original text.
           args.message = JSON.stringify({ id, sender: context.sessionID, message: args.message }).replaceAll("<", "\\u003c")
           try {
-            const recipient = (
-              await apiGet(
-                `/v1/coordination/assignments?${new URLSearchParams({ host: "opencode", runtimeId: args.to })}`,
-              )
-            )?.assignment
             const info = await sessionGet(args.to)
             const model = info?.model
               ? { providerID: info.model.providerID, modelID: info.model.id ?? info.model.modelID }

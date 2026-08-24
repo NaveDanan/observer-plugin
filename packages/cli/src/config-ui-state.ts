@@ -39,10 +39,20 @@ import { type ModelInfo, groupByProvider, variantsFor } from "./models.js"
  * Every deeper screen unwinds one level per esc, so navigation has one rule:
  * esc takes you back exactly one step, and only the menu can end the session.
  */
-export type ConfigView = "menu" | "employees" | "employee" | "targets" | "models" | "options"
+export type ConfigView =
+  | "menu"
+  | "employees"
+  | "employee"
+  | "targets"
+  | "models"
+  | "options"
+  /** The default-model picker. Same table as `models`, scoped to nobody. */
+  | "default"
+  /** Who receives the pick made in `default`. */
+  | "apply"
 
 /** One actionable row of the main menu, in display order. */
-export type MenuRowKind = "control" | "employees" | "save" | "exit"
+export type MenuRowKind = "control" | "employees" | "default-model" | "save" | "exit"
 
 /**
  * The menu's rows for the current state.
@@ -54,7 +64,7 @@ export type MenuRowKind = "control" | "employees" | "save" | "exit"
  * always re-reads this list rather than trusting the remembered cursor.
  */
 export function menuRows(state: ConfigUIState): MenuRowKind[] {
-  const rows: MenuRowKind[] = ["control", "employees"]
+  const rows: MenuRowKind[] = ["control", "employees", "default-model"]
   if (state.dirty) rows.push("save")
   rows.push("exit")
   return rows
@@ -106,6 +116,23 @@ export interface TargetControl {
   effective: boolean
 }
 
+/**
+ * A committed default-model pick, waiting on the answer to "who gets it".
+ *
+ * Held apart from `seats` because nothing has been edited yet: the choice
+ * becomes seat targets only when an `apply` row is activated, and esc throws
+ * it away without marking anything dirty.
+ */
+export interface DefaultChoice {
+  model: string
+  /** The reasoning effort armed in the picker, applied alongside the model. */
+  variant?: string
+}
+
+/** The two scopes the apply view offers, in display order. */
+export const DEFAULT_APPLY_ROWS = ["unseated", "all"] as const
+export type DefaultApplyRowKind = (typeof DEFAULT_APPLY_ROWS)[number]
+
 export interface ConfigUIState {
   view: ConfigView
   /** The working copy. Never written to disk until the user asks. */
@@ -132,6 +159,8 @@ export interface ConfigUIState {
   draftVariant?: string
   /** Target options chosen in the model picker, committed together on enter. */
   draftTargetOptions: SeatTargetOption[]
+  /** The pick made in the `default` view, applied by an `apply` view row. */
+  defaultChoice?: DefaultChoice
   entry?: EntryState
   /** Substring filter over the model picker. */
   filter: string
@@ -172,7 +201,7 @@ export function initialState(input: InitialInput): ConfigUIState {
     models: input.models,
     profiles: input.profiles ?? [],
     catalogues: input.catalogues ?? {},
-    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0 },
+    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, default: 0, apply: 0 },
     draftTargetOptions: [],
     filter: "",
     confirmQuit: false,
@@ -469,6 +498,10 @@ export function reduce(state: ConfigUIState, key: Key): ConfigUIState {
       return reduceModels(base, key)
     case "options":
       return reduceOptions(base, key)
+    case "default":
+      return reduceDefault(base, key)
+    case "apply":
+      return reduceApply(base, key)
   }
 }
 
@@ -501,6 +534,8 @@ function reduceMenu(state: ConfigUIState, key: Key): ConfigUIState {
         return toggleSeatControl(clamped)
       case "employees":
         return { ...clamped, view: "employees", cursor: { ...clamped.cursor, employees: 0 } }
+      case "default-model":
+        return openDefaultPicker(clamped)
       case "save": {
         // The row says "Save & exit", so it does both: the shell performs the
         // save and `applied` turns the pending quit into a request, which is
@@ -716,6 +751,122 @@ function reduceOptions(state: ConfigUIState, key: Key): ConfigUIState {
   return state
 }
 
+/**
+ * The default-model picker: the employee picker's table, scoped to nobody.
+ *
+ * It reuses `cursor.models`, `draftVariant` and every helper behind them on
+ * purpose — one model table in this UI, with one effort control and one
+ * filter, whatever it is choosing for. The only difference is what enter
+ * does: here it commits a `DefaultChoice` and moves to the apply view rather
+ * than editing any seat.
+ */
+function reduceDefault(state: ConfigUIState, key: Key): ConfigUIState {
+  const entries = pickerEntries(state)
+
+  if (isUp(key)) return clampVariant({ ...state, cursor: step(state.cursor, "models", -1, entries.length) }, entries)
+  if (isDown(key)) return clampVariant({ ...state, cursor: step(state.cursor, "models", 1, entries.length) }, entries)
+  if (key.name === "left") return cycleEffort(state, -1)
+  if (key.name === "right") return cycleEffort(state, 1)
+  if (key.name === "tab") return jumpGroup(state, entries, key.shift === true ? -1 : 1)
+  if (key.name === "/") return { ...state, entry: { field: "filter", value: state.filter } }
+  if (key.name === "m") return { ...state, entry: { field: "model", value: "" } }
+  if (isEscape(key)) return { ...state, view: "menu" }
+
+  if (isEnter(key)) {
+    const entry = entries[state.cursor.models]
+    if (!entry) return state
+    // Inherit is not a default: an employee with no seat already inherits the
+    // session's model, so offering that row here would dress a no-op up as a
+    // choice.
+    if (entry.kind === "inherit") {
+      return {
+        ...state,
+        status:
+          "Inherit cannot be the default: an employee with no seat already inherits the session's model. Pick a model.",
+      }
+    }
+    if (barredEntry(entry)) return { ...state, status: barredStatus(entry) }
+    return chooseDefault(state, entry.model?.id ?? "", state.draftVariant)
+  }
+  return state
+}
+
+function chooseDefault(state: ConfigUIState, model: string, variant: string | undefined): ConfigUIState {
+  return {
+    ...state,
+    view: "apply",
+    cursor: { ...state.cursor, apply: 0 },
+    ...(variant === undefined ? { defaultChoice: { model } } : { defaultChoice: { model, variant } }),
+    status: "",
+  }
+}
+
+function reduceApply(state: ConfigUIState, key: Key): ConfigUIState {
+  if (isUp(key)) return moveCursor(state, "apply", -1, DEFAULT_APPLY_ROWS.length)
+  if (isDown(key)) return moveCursor(state, "apply", 1, DEFAULT_APPLY_ROWS.length)
+  if (isEscape(key)) {
+    const next: ConfigUIState = { ...state, view: "menu" }
+    delete next.defaultChoice
+    return next
+  }
+  if (!isEnter(key) && !isSpace(key)) return state
+  const scope = DEFAULT_APPLY_ROWS[state.cursor.apply]
+  if (scope === undefined || state.defaultChoice === undefined) return state
+  return applyDefault(state, scope)
+}
+
+/**
+ * Writes the committed default onto every employee the scope names.
+ *
+ * Pure, like everything else in this file: it edits the working copy of
+ * `seats` and marks it dirty; the ordinary save path writes the file and
+ * regenerates agent definitions. Existing seats are edited, not replaced, so
+ * an employee's skills — and any hand-written field Observer does not render —
+ * survive even under the overwrite-everything scope.
+ */
+export function applyDefault(state: ConfigUIState, scope: DefaultApplyRowKind): ConfigUIState {
+  const choice = state.defaultChoice
+  if (choice === undefined) return state
+  const description = `${choice.model}${choice.variant === undefined ? "" : ` at ${choice.variant} effort`}`
+  const ids = scope === "unseated" ? unseatedIds(state) : state.roster.map((row) => row.id)
+
+  if (ids.length === 0) {
+    return {
+      ...state,
+      status:
+        scope === "unseated"
+          ? `Every employee already has a seat, so there is nobody unseated to give ${description} to.`
+          : "The roster is empty, so there is nobody to apply this to.",
+    }
+  }
+
+  let next = state
+  for (const id of ids) {
+    next = updateSeat(next, id, (seat) => seatWithOpencodeTarget(seat, choice.model, choice.variant))
+  }
+  const count = `${ids.length} employee${ids.length === 1 ? "" : "s"}`
+  return {
+    ...next,
+    view: "menu",
+    status:
+      scope === "unseated"
+        ? `${description} set for ${count} that had no seat. Press s to save.`
+        : `${description} set for all ${count}, replacing any model they had. Press s to save.`,
+  }
+}
+
+/** Roster employees with no seat at all — the "unseated" scope. */
+export function unseatedIds(state: ConfigUIState): string[] {
+  return state.roster.filter((row) => state.seats.employees[row.id] === undefined).map((row) => row.id)
+}
+
+function openDefaultPicker(state: ConfigUIState): ConfigUIState {
+  const next: ConfigUIState = { ...state, view: "default", filter: "", status: "" }
+  delete next.draftVariant
+  next.cursor = { ...state.cursor, models: 0, apply: 0 }
+  return next
+}
+
 function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
   const entry = state.entry
   if (entry === undefined) return state
@@ -744,6 +895,13 @@ function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
       }
     }
     if (entry.field === "skills") return setSkills(next, entry.value)
+    if (next.view === "default") {
+      // A typed default takes the same apply step as a picked one. Empty is
+      // not inherit here — inherit was refused one screen earlier — so an
+      // empty field changes nothing.
+      const typed = entry.value.trim()
+      return typed.length === 0 ? state : chooseDefault(next, typed, next.draftVariant)
+    }
     const typed = entry.value.trim()
     if (next.targetId !== undefined) return assignTargetModel(next, typed.length === 0 ? undefined : typed)
     if (typed.length === 0) return assignModel(next, undefined, undefined)
@@ -836,22 +994,8 @@ function catalogueModels(
 function assignModel(state: ConfigUIState, model: string | undefined, variant: string | undefined): ConfigUIState {
   const id = state.employeeId
   if (id === undefined) return state
-  const next = updateSeat(state, id, (seat) => {
-    const targets = seatTargets(seat)
-    if (model === undefined) {
-      delete targets[LEGACY_TARGET_ID]
-    } else {
-      const current = targets[LEGACY_TARGET_ID]
-      const target: SeatTarget =
-        current && typeof current === "object" && !Array.isArray(current)
-          ? { ...current, host: "opencode", model }
-          : { host: "opencode", model }
-      target.options = setTargetOption(target.options, OPENCODE_VARIANT_OPTION, variant)
-      if (target.options.length === 0) delete target.options
-      targets[LEGACY_TARGET_ID] = target
-    }
-    return seatWithTargets(seat, targets)
-  })
+  const next =
+    model === undefined ? updateSeat(state, id, clearOpencodeTarget) : updateSeat(state, id, (seat) => seatWithOpencodeTarget(seat, model, variant))
   return {
     ...next,
     view: "employee",
@@ -860,6 +1004,33 @@ function assignModel(state: ConfigUIState, model: string | undefined, variant: s
         ? "Model cleared. This employee inherits the session's model, and the effort was dropped with it."
         : `Model set to ${model}${variant === undefined ? "" : ` at ${variant} effort`}.`,
   }
+}
+
+/**
+ * Writes one employee's OpenCode target as `model` plus an optional effort.
+ *
+ * Shared by the per-employee picker and the default-model apply step so both
+ * produce byte-identical targets. Existing target fields are kept — only the
+ * two this UI owns are rewritten — and a variant of undefined removes the
+ * option rather than storing an empty value.
+ */
+function seatWithOpencodeTarget(seat: SeatSpec, model: string, variant: string | undefined): SeatSpec {
+  const targets = seatTargets(seat)
+  const current = targets[LEGACY_TARGET_ID]
+  const target: SeatTarget =
+    current && typeof current === "object" && !Array.isArray(current)
+      ? { ...current, host: "opencode", model }
+      : { host: "opencode", model }
+  target.options = setTargetOption(target.options, OPENCODE_VARIANT_OPTION, variant)
+  if (target.options.length === 0) delete target.options
+  targets[LEGACY_TARGET_ID] = target
+  return seatWithTargets(seat, targets)
+}
+
+function clearOpencodeTarget(seat: SeatSpec): SeatSpec {
+  const targets = seatTargets(seat)
+  delete targets[LEGACY_TARGET_ID]
+  return seatWithTargets(seat, targets)
 }
 
 function assignTargetModel(

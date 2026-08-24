@@ -134,8 +134,18 @@ async function harness(
     if (new URL(href).pathname.endsWith("/v1/coordination/mail")) {
       if (String(init?.method ?? "GET").toUpperCase() === "POST") {
         const message = JSON.parse(String(init?.body ?? "{}"))
+        const sender = [...assignments.values()].find((entry) => entry.runtimeId === message.fromRuntimeId)
+        const recipient = [...assignments.values()].find((entry) => entry.runtimeId === message.toRuntimeId)
+        if (
+          !sender ||
+          !recipient ||
+          sender.rootSessionKey !== message.rootSessionKey ||
+          recipient.rootSessionKey !== message.rootSessionKey
+        ) {
+          return Response.json({ error: "agent address not found in this session" }, { status: 404 })
+        }
         mail.push(message)
-        return Response.json({ mail: message })
+        return Response.json({ mail: message, retained: true })
       }
       const query = new URL(href).searchParams
       return Response.json({ messages: mail.filter((entry) => entry.toRuntimeId === query.get("runtimeId")) })
@@ -830,6 +840,77 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     )
     expect(result).toContain("Delivered directly")
     expect(h.mail[0]).toMatchObject({ fromRuntimeId: "a", toRuntimeId: "b", text: "Please verify the migration" })
+  })
+
+  it("recovers a same-session peer whose assignment was not persisted", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        a: { id: "a", parentID: "root" },
+        b: { id: "b", parentID: "root" },
+      },
+    })
+    h.assignments.set("assignment-a", {
+      id: "assignment-a",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "a",
+      parentRuntimeId: null,
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const result = await h.hooks.tool.agent_send.execute(
+      { to: "b", message: "Please verify the migration" },
+      { sessionID: "a", agent: "general" },
+    )
+
+    expect(result).toContain("Delivered directly")
+    expect([...h.assignments.values()].find((entry) => entry.runtimeId === "b")).toMatchObject({
+      rootSessionKey: "root",
+      runtimeId: "b",
+      parentRuntimeId: null,
+      agentType: "subcontractor",
+      hostAgentType: "general",
+    })
+    expect(h.mail[0]).toMatchObject({ fromRuntimeId: "a", toRuntimeId: "b", text: "Please verify the migration" })
+  })
+
+  it("does not send to an assignment from another root session", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        a: { id: "a", parentID: "root" },
+        foreign: { id: "foreign" },
+        b: { id: "b", parentID: "foreign" },
+      },
+    })
+    for (const [id, rootSessionKey] of [
+      ["a", "root"],
+      ["b", "foreign"],
+    ]) {
+      h.assignments.set(`assignment-${id}`, {
+        id: `assignment-${id}`,
+        host: "opencode",
+        rootSessionKey,
+        runtimeId: id,
+        parentRuntimeId: null,
+        agentType: "malik-johnson",
+        hostAgentType: "general",
+        status: "running",
+        createdAt: 1,
+      })
+    }
+
+    const result = await h.hooks.tool.agent_send.execute(
+      { to: "b", message: "Do not deliver this" },
+      { sessionID: "a", agent: "general" },
+    )
+
+    expect(result).toBe("Subagent b is not a peer in this Observer session.")
+    expect(h.mail).toHaveLength(0)
   })
 
   it("spawns a nested child with its own persisted stable id", async () => {

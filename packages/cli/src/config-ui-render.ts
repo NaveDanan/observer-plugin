@@ -13,6 +13,7 @@ import { formatContext } from "./models.js"
 import { diagnoseOpencodeSeats } from "./seat-agents.js"
 import {
   type ConfigUIState,
+  DEFAULT_APPLY_ROWS,
   type EmployeeRow,
   type MenuRowKind,
   type PickerEntry,
@@ -33,6 +34,7 @@ import {
   targetPickerDescriptor,
   targetPickerOptionValue,
   targetRows,
+  unseatedIds,
 } from "./config-ui-state.js"
 import { LOGO_ROWS, logo } from "./logo.js"
 import { PLAIN_THEME, type Theme, padEnd as pad, truncate, visibleLength } from "./theme.js"
@@ -146,7 +148,11 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
       lines.push(...targetList(state, room, columns, theme))
       break
     case "models":
+    case "default":
       lines.push(...modelPicker(state, room, columns, theme))
+      break
+    case "apply":
+      lines.push(...applyScopeChooser(state, columns, theme))
       break
     case "options":
       lines.push(...optionEditor(state, columns, theme))
@@ -273,14 +279,17 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
   const labels: Record<MenuRowKind, string> = {
     control: "Seat control",
     employees: "Employees",
+    "default-model": "Default model",
     save: "Save & exit",
     exit: "Exit",
   }
+  const unseated = unseatedIds(state).length
   const values: Record<MenuRowKind, string> = {
     control: state.seats.control ? theme.good("on") : theme.warn("off"),
     employees: `${state.roster.length} people, ${seated === 0 ? "none seated" : `${seated} seated`}${
       errors > 0 ? theme.alert(`, ${errors} to fix`) : ""
     }`,
+    "default-model": theme.dim(`hand one model to ${unseated === state.roster.length ? "everyone" : `${unseated} unseated`} at once`),
     save: theme.warn("write these seats to config.json"),
     exit: theme.dim("leave observer config"),
   }
@@ -297,6 +306,9 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
             "Only neutral delegations are redirected - specialist agents keep their prompt, tools and model",
           ],
     employees: ["Give a person one target per host/profile, plus shared skills."],
+    "default-model": [
+      `Pick a model and reasoning effort once, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no seat, or move all ${state.roster.length} onto it.`,
+    ],
     save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],
     exit: [],
   }
@@ -504,14 +516,20 @@ function optionEditor(state: ConfigUIState, columns: number, theme: Theme): stri
 
 function modelPicker(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
   if (state.targetId !== undefined) return targetModelPicker(state, room, columns, theme)
+  // The default-model flow draws the same table for the same reason the
+  // employee picker does — one model list, one effort control, one filter —
+  // and differs only in whose choice it is and what enter will do with it.
+  const choosingDefault = state.view === "default"
   const employee = currentEmployee(state)
   const entries = pickerEntries(state)
   const cycle = effortCycle(state)
   const width = pickerWidths(columns)
 
+  const title = choosingDefault
+    ? theme.heading("Default model")
+    : breadcrumb(theme, "Employees", employee?.name ?? state.employeeId ?? "employee", "Model")
   const lines = [
-    breadcrumb(theme, "Employees", employee?.name ?? state.employeeId ?? "employee", "Model") +
-      (state.filter.length > 0 ? theme.dim("   filter: ") + theme.accent(state.filter) : ""),
+    title + (state.filter.length > 0 ? theme.dim("   filter: ") + theme.accent(state.filter) : ""),
     "",
   ]
 
@@ -545,6 +563,9 @@ function modelPicker(state: ConfigUIState, room: number, columns: number, theme:
   if (window.end < entries.length || window.start > 0) {
     lines.push(theme.dim(`  ${window.start + 1}-${window.end} of ${entries.length}`))
   }
+  if (choosingDefault) {
+    lines.push(theme.dim("  Enter arms this model; the next screen asks who receives it."))
+  }
 
   if (state.entry?.field === "filter") {
     lines.push("", theme.dim(pad("Filter", GUTTER)) + theme.accent(`${state.entry.value}_`))
@@ -553,9 +574,56 @@ function modelPicker(state: ConfigUIState, room: number, columns: number, theme:
     lines.push(
       "",
       theme.dim(pad("Model", GUTTER)) + theme.accent(`${state.entry.value}_`),
-      " ".repeat(GUTTER) + theme.dim("written provider/model, e.g. anthropic/claude-opus-4-5; empty to inherit"),
+      " ".repeat(GUTTER) +
+        theme.dim(
+          choosingDefault
+            ? "written provider/model, e.g. anthropic/claude-opus-4-5"
+            : "written provider/model, e.g. anthropic/claude-opus-4-5; empty to inherit",
+        ),
     )
   }
+  return lines
+}
+
+/**
+ * Who receives the default model, and what each answer costs.
+ *
+ * The two scopes are named rows rather than a follow-up prompt so the choice
+ * is the same shape as every other decision in this UI: visible, cursorable,
+ * and expandable into the sentence that says exactly what it will overwrite.
+ * The counts come from the working copy of `seats`, so they are true for the
+ * config as edited, not as saved.
+ */
+function applyScopeChooser(state: ConfigUIState, columns: number, theme: Theme): string[] {
+  const choice = state.defaultChoice
+  const described =
+    choice === undefined ? "" : `${choice.model}${choice.variant === undefined ? "" : ` at ${choice.variant} effort`}`
+  const unseated = unseatedIds(state).length
+  const total = state.roster.length
+
+  const lines = [
+    breadcrumb(theme, "Default model", described, "Who gets it"),
+    "",
+    theme.dim(`  ${pad("Scope", GUTTER)}Effect`),
+  ]
+  DEFAULT_APPLY_ROWS.forEach((row, index) => {
+    const selected = index === state.cursor.apply
+    const label = pad(row === "unseated" ? "Unseated only" : "All employees", GUTTER)
+    const value =
+      row === "unseated"
+        ? theme.accent(`${unseated} of ${total} have no seat yet`)
+        : theme.warn(`overwrites all ${total}`)
+    lines.push(marker(selected, false, theme) + (selected ? theme.focus(label) : label) + value)
+    if (!selected) return
+    const detail =
+      row === "unseated"
+        ? `Only employees without a seat receive this model. Seated employees keep theirs.`
+        : `Every employee on the roster moves onto this model, including ones you configured one by one.`
+    for (const line of wrapAt(detail, Math.max(24, columns - GUTTER - 2), "").split("\n")) {
+      lines.push(" ".repeat(GUTTER + 2) + theme.dim(line))
+    }
+  })
+  lines.push("", theme.dim("  esc cancels: nothing has been changed yet."))
   return lines
 }
 
@@ -899,6 +967,18 @@ function hints(state: ConfigUIState, columns: number, theme: Theme): string[] {
           )
     case "options":
       return bar(["up/down", "move"], ["left/right", "change select"], ["enter", "toggle/change"], ["esc", "back"])
+    case "default":
+      return bar(
+        ["up/down", "move"],
+        ["left/right", "effort"],
+        ["tab", "vendor"],
+        ["/", "filter"],
+        ["m", "type a model"],
+        ["enter", "choose who gets it"],
+        ["esc", "back"],
+      )
+    case "apply":
+      return bar(["up/down", "move"], ["enter", "apply"], ["esc", "cancel"])
   }
 }
 

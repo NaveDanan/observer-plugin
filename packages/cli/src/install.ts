@@ -12,6 +12,7 @@ import {
   opencodeAgentSource,
   opencodeConfigBase,
   opencodePluginSource,
+  recordInstallPaths,
 } from "./paths.js"
 import { removeSeatAgents, syncSeatAgents } from "./seat-agents.js"
 
@@ -253,6 +254,9 @@ function installOpencode(): InstallResult {
   const existed = existsSync(path)
   mkdirSync(dirname(path), { recursive: true })
   copyFileSync(source, path)
+  // The copied plugin cannot find the daemon by probing its own neighbourhood,
+  // so record where the build lives for its autostart to read.
+  recordInstallPaths()
 
   // The agent definition is what makes @observer appear in OpenCode's @ menu;
   // the plugin alone cannot add entries there.

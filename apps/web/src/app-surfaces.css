@@ -2050,6 +2050,35 @@
 .step.status-running > .step-row .step-title {
   color: var(--foreground);
 }
+.patch-files {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 13px;
+  padding: 5px 0 2px 20px;
+  border-left: 1px solid var(--app-hairline);
+}
+.patch-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 25px;
+  padding-right: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.patch-file-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.patch-file-title .mono {
+  color: var(--foreground);
+}
 
 /* ------------------------------------------------------------- tool card */
 .tool-card {
@@ -2230,23 +2259,32 @@
 }
 
 /* --------------------------------------------------------------- terminal */
-/* Command output keeps its own darker floor and its whitespace, because column
-   alignment is load-bearing in half the things a command prints. */
+/* Command output uses the terminal palette and configured code typography.
+   Whitespace stays intact because column alignment is load-bearing in half the
+   things a command prints. */
 .terminal-view {
   margin: 0;
   padding: 9px 11px;
   max-height: 300px;
   overflow: auto;
   scrollbar-width: thin;
-  background: var(--code-background);
+  background: var(--terminal-background);
   border: 1px solid var(--app-hairline);
   border-radius: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-code);
   line-height: 1.5;
   white-space: pre;
   tab-size: 4;
-  color: var(--foreground);
+  color: var(--terminal-foreground);
+  font-variant-ligatures: none;
+}
+.terminal-view::selection,
+.terminal-view *::selection {
+  background: var(--terminal-selection-background);
+}
+.terminal-line {
+  display: inline;
 }
 .output-list {
   list-style: none;
@@ -2364,6 +2402,27 @@
   font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+.churn-window {
+  display: inline-flex;
+  overflow: hidden;
+  line-height: 1.2;
+}
+.step-churn.is-live .churn-add,
+.patch-file.is-running .churn-add {
+  animation: churn-spin-up 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.step-churn.is-live .churn-del,
+.patch-file.is-running .churn-del {
+  animation: churn-spin-down 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes churn-spin-up {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes churn-spin-down {
+  from { opacity: 0; transform: translateY(-100%); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .churn-add {
   color: var(--success-foreground);
@@ -2513,5 +2572,11 @@
   .panel,
   .step-chevron {
     transition: none !important;
+  }
+  .step-churn.is-live .churn-add,
+  .step-churn.is-live .churn-del,
+  .patch-file.is-running .churn-add,
+  .patch-file.is-running .churn-del {
+    animation: none !important;
   }
 }

@@ -345,12 +345,12 @@ describe("the main menu", () => {
   })
 
   it("offers Save & exit only when there is something to save", () => {
-    expect(menuRows(start())).toEqual(["control", "employees", "exit"])
-    expect(menuRows(press(start(), "c"))).toEqual(["control", "employees", "save", "exit"])
+    expect(menuRows(start())).toEqual(["control", "employees", "default-model", "exit"])
+    expect(menuRows(press(start(), "c"))).toEqual(["control", "employees", "default-model", "save", "exit"])
   })
 
   it("saves and then leaves from the Save & exit row, because that is what it says", () => {
-    const onSave = press(start(), "c", "down", "down")
+    const onSave = press(start(), "c", "down", "down", "down")
     expect(menuRows(onSave)[onSave.cursor.menu]).toBe("save")
     const saving = press(onSave, "return")
     expect(saving.request).toBe("save")
@@ -359,7 +359,7 @@ describe("the main menu", () => {
   })
 
   it("keeps the user on screen when that save fails", () => {
-    const saving = press(press(start(), "c", "down", "down"), "return")
+    const saving = press(press(start(), "c", "down", "down", "down"), "return")
     const failed = applied(saving, { saved: false, status: "Could not save: disk full" })
     expect(failed.request).toBeUndefined()
     expect(failed.dirty).toBe(true)
@@ -368,10 +368,10 @@ describe("the main menu", () => {
   it("acts on the row that is on screen after a save removes one", () => {
     // The cursor is remembered per view, so a save that drops `Save & exit`
     // would otherwise leave it pointing one row past the end.
-    const onSave = press(start(), "c", "down", "down")
+    const onSave = press(start(), "c", "down", "down", "down")
     const saved = { ...applied(press(onSave, "return"), { saved: true, status: "Saved." }), quitAfterSave: false }
     delete saved.request
-    expect(menuRows(saved)).toEqual(["control", "employees", "exit"])
+    expect(menuRows(saved)).toEqual(["control", "employees", "default-model", "exit"])
     expect(press(saved, "return").request).toBe("quit")
   })
 
@@ -1093,6 +1093,141 @@ describe("assigning a model", () => {
     state = type(state, "abc")
     state = press(state, "backspace")
     expect(state.entry?.value).toBe("ab")
+  })
+})
+
+describe("the default model", () => {
+  /**
+   * The menu walk to the default-model picker: Employees sits under Seat
+   * control, Default model under that. Every flow here passes through it
+   * once, so it is said once, here.
+   */
+  function defaultPicker(seats: Partial<SeatsConfig> = {}): ConfigUIState {
+    return press(start(seats), "down", "down", "return")
+  }
+
+  /** Arm Opus at low effort and land on the apply view. */
+  function applying(seats: Partial<SeatsConfig> = {}): ConfigUIState {
+    return press(defaultPicker(seats), ...Array<string>(OPUS).fill("down"), "right", "return")
+  }
+
+  it("opens its own picker from a named menu row, scoped to nobody", () => {
+    const picker = defaultPicker()
+    expect(picker.view).toBe("default")
+    expect(picker.employeeId).toBeUndefined()
+
+    const armed = press(picker, ...Array<string>(OPUS).fill("down"), "right")
+    expect(armed.draftVariant).toBe("low")
+    // Choosing is not editing: no seat exists yet and nothing is dirty.
+    expect(armed.seats.employees).toEqual({})
+    expect(armed.dirty).toBe(false)
+  })
+
+  it("refuses inherit as a default, because an unseated employee already inherits", () => {
+    const refused = press(defaultPicker(), "return")
+    expect(refused.view).toBe("default")
+    expect(refused.status).toContain("Inherit cannot be the default")
+    expect(refused.defaultChoice).toBeUndefined()
+  })
+
+  it("commits the model and effort together, then asks who receives them", () => {
+    const state = applying()
+    expect(state.view).toBe("apply")
+    expect(state.defaultChoice).toEqual({ model: "anthropic/claude-opus-4-8", variant: "low" })
+    expect(state.seats.employees).toEqual({})
+  })
+
+  it("applies to unseated employees only, leaving seated ones alone", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: { "opencode:default": { host: "opencode", model: "openai/gpt-4o" } },
+          skills: [{ name: "react", description: "" }],
+        },
+      },
+    }
+    const applied = press(applying(seats), "return")
+    expect(applied.view).toBe("menu")
+    // Arjun was seated, so neither his model nor his skills moved.
+    expect(applied.seats.employees["arjun-mehta"]).toEqual({
+      targets: { "opencode:default": { host: "opencode", model: "openai/gpt-4o" } },
+      skills: [{ name: "react", description: "" }],
+    })
+    // Malik and Elias were unseated; they got the pick, effort included.
+    expect(applied.seats.employees["malik-johnson"]).toEqual({
+      targets: {
+        "opencode:default": {
+          host: "opencode",
+          model: "anthropic/claude-opus-4-8",
+          options: [{ id: "variant", value: "low" }],
+        },
+      },
+    })
+    expect(applied.seats.employees["elias-mercer"]?.targets?.["opencode:default"]?.model).toBe(
+      "anthropic/claude-opus-4-8",
+    )
+    expect(applied.dirty).toBe(true)
+    expect(applied.status).toContain("2 employees that had no seat")
+  })
+
+  it("applies to everyone, overwriting models but keeping skills", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "opencode:default": { host: "opencode", model: "openai/gpt-4o", options: [{ id: "variant", value: "high" }] },
+          },
+          skills: [{ name: "react", description: "" }],
+        },
+      },
+    }
+    const applied = press(applying(seats), "down", "return")
+    for (const id of ROSTER.map((row) => row.id)) {
+      expect(applied.seats.employees[id]!.targets!["opencode:default"].model).toBe("anthropic/claude-opus-4-8")
+      expect(applied.seats.employees[id]!.targets!["opencode:default"].options).toEqual([
+        { id: "variant", value: "low" },
+      ])
+    }
+    expect(applied.seats.employees["arjun-mehta"]?.skills).toEqual([{ name: "react", description: "" }])
+    expect(applied.status).toContain("replacing any model they had")
+  })
+
+  it("says so and changes nothing when nobody is unseated", () => {
+    const everyoneSeated = Object.fromEntries(ROSTER.map((row) => [row.id, {}]))
+    const refused = press(applying({ employees: everyoneSeated }), "return")
+    // Staying put is the point: the user asked for something impossible, and
+    // silently falling back to another scope would be worse than refusing.
+    expect(refused.view).toBe("apply")
+    expect(refused.status).toContain("nobody unseated")
+    for (const row of ROSTER) expect(refused.seats.employees[row.id]).toEqual({})
+    expect(refused.dirty).toBe(false)
+  })
+
+  it("cancels from the apply view without touching anything", () => {
+    const cancelled = press(applying(), "escape")
+    expect(cancelled.view).toBe("menu")
+    expect(cancelled.defaultChoice).toBeUndefined()
+    expect(cancelled.seats.employees).toEqual({})
+    expect(cancelled.dirty).toBe(false)
+  })
+
+  it("takes a hand-typed model through the same apply step", () => {
+    let state = press(defaultPicker(), "m")
+    state = type(state, "bedrock/some-model")
+    state = press(state, "return")
+    expect(state.view).toBe("apply")
+    expect(state.defaultChoice).toEqual({ model: "bedrock/some-model" })
+    expect(state.seats.employees).toEqual({})
+  })
+
+  it("renders both scopes with their counts, and describes the pick in the breadcrumb", () => {
+    const text = render(applying(), { rows: 30, columns: 100 }).join("\n")
+    expect(text).toContain("Default model > anthropic/claude-opus-4-8 at low effort > Who gets it")
+    expect(text).toContain("Unseated only")
+    expect(text).toContain("3 of 3 have no seat yet")
+    expect(text).toContain("overwrites all 3")
   })
 })
 

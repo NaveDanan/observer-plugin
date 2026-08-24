@@ -281,11 +281,20 @@ describe("describeToolCall — edits, delegations, todos", () => {
     expect(empty.churn).toEqual({ added: 0, removed: 1 })
   })
 
-  it("keeps patch and multi-edit arguments inspectable", () => {
-    const patch = "*** Begin Patch\n*** Update File: a.ts\n@@\n-old\n+new\n*** End Patch"
-    const patchStep = describeToolCall(call("apply_patch", { input: { patch }, linesAdded: 1, linesRemoved: 1 }))
-    expect(patchStep.inputLabel).toBe("Patch")
-    expect(patchStep.input).toEqual({ kind: "text", text: patch })
+  it("turns a patch envelope into per-file changes", () => {
+    const patch = "*** Begin Patch\n*** Update File: src/old.ts\n*** Move to: src/a.ts\n@@\n-old\n+new\n*** Add File: src/b.ts\n+one\n+two\n*** End Patch"
+    const patchStep = describeToolCall(call("apply_patch", { input: { patch } }))
+    expect(patchStep.title).toBe("2 files edited")
+    expect(patchStep.input).toBeNull()
+    expect(patchStep.patchFiles).toEqual([
+      { path: "src/a.ts", operation: "edit", added: 1, removed: 1 },
+      { path: "src/b.ts", operation: "add", added: 2, removed: 0 },
+    ])
+    expect(patchStep.churn).toEqual({ added: 3, removed: 1 })
+
+    expect(describeToolCall(call("apply_patch", { title: "Updated the renderer", input: { patch } })).title).toBe(
+      "Updated the renderer",
+    )
 
     const edits = [
       { old_string: "a", new_string: "b" },

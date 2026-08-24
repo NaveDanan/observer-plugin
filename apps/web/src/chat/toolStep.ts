@@ -29,7 +29,7 @@ import { isFileCreationTool, toolAction, type ToolAction } from "./timeline"
 export type StepBody =
   /** File-ish content: line numbers down the side, syntax highlighted. */
   | { kind: "code"; text: string; language: string | undefined; firstLine: number }
-  /** Command output: a terminal, monospaced and uncoloured. */
+  /** Command output: a terminal that preserves ANSI colour and text styles. */
   | { kind: "terminal"; text: string }
   /** One thing per line — paths, matches, todos. */
   | { kind: "list"; items: string[] }
@@ -95,9 +95,18 @@ export interface ToolStep {
    * one thing a reader always wants to know before opening the card.
    */
   churn: { added: number | null; removed: number | null } | null
+  /** Per-file changes carried by a patch envelope, in envelope order. */
+  patchFiles: PatchFileChange[] | null
   stats: StepStats
   running: boolean
   failed: boolean
+}
+
+export interface PatchFileChange {
+  path: string
+  operation: "add" | "delete" | "edit"
+  added: number
+  removed: number
 }
 
 // ------------------------------------------------------------------ lookups
@@ -536,6 +545,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
     error: call.error,
     subject: path ? { kind: "path", value: path } : null,
     churn: null,
+    patchFiles: null,
     stats: {
       startedAt: call.startedAt,
       durationMs: call.durationMs,
@@ -629,8 +639,18 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
         const patch = exactText(input, ["patch", "diff", "content", "input"])
         step.title = call.title ?? (path ? `Patch ${baseName(path)}` : prettyTool(call.tool))
         if (patch !== null) {
-          step.input = { kind: "text", text: patch }
-          step.inputLabel = "Patch"
+          const files = parsePatchFiles(patch)
+          if (files.length > 0) {
+            step.patchFiles = files
+            derivedChurn = files.reduce(
+              (total, file) => ({ added: total.added + file.added, removed: total.removed + file.removed }),
+              { added: 0, removed: 0 },
+            )
+            step.title = call.title ?? `${formatCount(files.length, "file")} edited`
+          } else {
+            step.input = { kind: "text", text: patch }
+            step.inputLabel = "Patch"
+          }
         }
       } else if (family === "multiedit") {
         step.title = call.title ?? (path ? `Edit ${baseName(path)}` : prettyTool(call.tool))
@@ -659,7 +679,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
         }
       }
 
-      if (step.input === null) {
+      if (step.input === null && step.patchFiles === null) {
         const printed = printInput(call.input)
         if (printed !== null) {
           step.input = { kind: "text", text: printed }
@@ -722,6 +742,36 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
     step.meta = code === null ? "failed" : `failed · exit ${code}`
   }
   return step
+}
+
+/** Parses apply_patch's file directives without treating its envelope as tool chrome. */
+export function parsePatchFiles(patch: string): PatchFileChange[] {
+  const files: PatchFileChange[] = []
+  let current: PatchFileChange | null = null
+
+  for (const line of patch.split("\n")) {
+    const directive = /^\*\*\* (Add|Delete|Update) File: (.+)$/.exec(line)
+    if (directive) {
+      const operation = directive[1] === "Add" ? "add" : directive[1] === "Delete" ? "delete" : "edit"
+      current = { path: (directive[2] as string).trimEnd(), operation, added: 0, removed: 0 }
+      files.push(current)
+      continue
+    }
+    const move = /^\*\*\* Move to: (.+)$/.exec(line)
+    if (move && current) {
+      current.path = (move[1] as string).trimEnd()
+      continue
+    }
+    if (line.startsWith("*** ")) {
+      current = null
+      continue
+    }
+    if (!current) continue
+    if (line.startsWith("+") && !line.startsWith("+++")) current.added += 1
+    else if (line.startsWith("-") && !line.startsWith("---")) current.removed += 1
+  }
+
+  return files
 }
 
 const MARKER: Record<string, string> = {

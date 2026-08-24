@@ -1,7 +1,8 @@
 import { createRequire } from "node:module"
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { dataDir } from "@observer-ai/storage"
 
 const require = createRequire(import.meta.url)
 
@@ -94,6 +95,42 @@ export function opencodeAgentSource(): string {
 /** The Node binary the hooks should run. */
 export function nodePath(): string {
   return process.execPath
+}
+
+/**
+ * The pointer file that tells the installed OpenCode plugin where the daemon
+ * lives.
+ *
+ * The plugin is copied verbatim into OpenCode's config directory, so unlike the
+ * hook emitter it cannot find the daemon by probing its own neighbourhood. The
+ * installer writes this record and the plugin reads it back when the daemon is
+ * not listening.
+ */
+export function installPathsPath(): string {
+  return join(dataDir(), "install.json")
+}
+
+/**
+ * Records where Observer's executables are, for the plugin to autostart from.
+ *
+ * Best-effort: a read-only data directory must not fail an install, because the
+ * pointer only saves the plugin one fallback (the OBSERVER_DAEMON environment
+ * variable), never gates the rest of Observer.
+ */
+export function recordInstallPaths(): void {
+  try {
+    mkdirSync(dataDir(), { recursive: true })
+    writeFileSync(
+      installPathsPath(),
+      `${JSON.stringify(
+        { node: nodePath(), daemon: daemonPath(), emitter: emitterPath(), recordedAt: new Date().toISOString() },
+        null,
+        2,
+      )}\n`,
+    )
+  } catch {
+    // Nothing depends on this succeeding.
+  }
 }
 
 /** Quotes a path for hosts whose hook format only accepts a shell string. */

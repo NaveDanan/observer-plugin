@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type CSSProperties } from "react"
 import {
   BotIcon,
   ChevronDownIcon,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import type { ToolCallEntity } from "@observer-ai/protocol"
 import { CopyButton } from "./CodeBlock"
+import { parseAnsiLines, type AnsiSegment } from "./ansi"
 import { FileIcon } from "./FileIcon"
 import { useHighlighted } from "./highlighter"
 import { toolAction, type ToolAction } from "./timeline"
@@ -25,6 +26,7 @@ import {
   formatDuration,
   formatStarted,
   type StepBody,
+  type PatchFileChange,
   type ToolStep,
 } from "./toolStep"
 
@@ -134,6 +136,8 @@ function Step({ call }: { call: ToolCallEntity }): JSX.Element {
   const [open, setOpen] = useState(false)
   const step = useMemo(() => describeToolCall(call), [call])
 
+  if (step.patchFiles) return <PatchStep call={call} step={step} />
+
   return (
     <li className={`step status-${call.status}${open ? " is-expanded" : ""}`}>
       <button type="button" className="step-row" aria-expanded={open} onClick={() => setOpen(!open)} title={step.title}>
@@ -150,6 +154,46 @@ function Step({ call }: { call: ToolCallEntity }): JSX.Element {
         {step.running && <span className="pulse-dot" aria-label="still running" />}
       </button>
       {open && <StepCard step={step} tool={call.tool} />}
+    </li>
+  )
+}
+
+/** A patch is a file operation, not an input/output exchange. */
+function PatchStep({ call, step }: { call: ToolCallEntity; step: ToolStep }): JSX.Element {
+  const [open, setOpen] = useState(step.running)
+  const files = step.patchFiles ?? []
+
+  return (
+    <li className={`step patch-step status-${call.status}${open ? " is-expanded" : ""}`}>
+      <button type="button" className="step-row patch-summary" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="step-icon-slot">
+          <SquarePenIcon size={14} className="step-icon" aria-hidden="true" />
+          <ChevronDownIcon size={14} className="step-chevron" aria-hidden="true" />
+        </span>
+        <span className="step-title">{step.title}</span>
+        <Churn step={step} animated />
+        {step.running && <span className="pulse-dot" aria-label="still running" />}
+      </button>
+      {open && (
+        <ol className="patch-files">
+          {files.map((file) => (
+            <PatchFile key={`${file.operation}:${file.path}`} file={file} running={step.running} />
+          ))}
+        </ol>
+      )}
+    </li>
+  )
+}
+
+function PatchFile({ file, running }: { file: PatchFileChange; running: boolean }): JSX.Element {
+  const verb = file.operation === "add" ? "Add" : file.operation === "delete" ? "Delete" : "Edit"
+  return (
+    <li className={`patch-file${running ? " is-running" : ""}`} title={file.path}>
+      <FileIcon path={file.path} className="file-icon" fallback={<FileTextIcon size={13} aria-hidden="true" />} />
+      <span className="patch-file-title">
+        {verb} <span className="mono">{baseName(file.path)}</span>
+      </span>
+      <PatchChurn added={file.added} removed={file.removed} animated={running} />
     </li>
   )
 }
@@ -318,15 +362,39 @@ function CodeView({
  */
 function TerminalView({ text }: { text: string }): JSX.Element {
   const [full, setFull] = useState(false)
-  const all = text.replace(/\n+$/, "").split("\n")
+  const all = useMemo(() => parseAnsiLines(text.replace(/\n+$/, "")), [text])
   const hidden = full ? 0 : Math.max(0, all.length - PREVIEW_LINES)
   const shown = hidden > 0 ? all.slice(all.length - PREVIEW_LINES) : all
   return (
     <>
       {hidden > 0 && <ShowMore hidden={hidden} noun="earlier line" onClick={() => setFull(true)} />}
-      <pre className="terminal-view">{shown.join("\n")}</pre>
+      <pre className="terminal-view">
+        {shown.map((line, lineIndex) => (
+          <span className="terminal-line" key={lineIndex}>
+            {line.map((part, partIndex) => (
+              <AnsiText key={partIndex} segment={part} />
+            ))}
+            {lineIndex < shown.length - 1 ? "\n" : null}
+          </span>
+        ))}
+      </pre>
     </>
   )
+}
+
+function AnsiText({ segment }: { segment: AnsiSegment }): JSX.Element {
+  const decoration = [segment.underline ? "underline" : "", segment.strike ? "line-through" : ""]
+    .filter(Boolean)
+    .join(" ")
+  const style: CSSProperties = {
+    color: segment.foreground,
+    backgroundColor: segment.background,
+    fontWeight: segment.bold ? 700 : undefined,
+    fontStyle: segment.italic ? "italic" : undefined,
+    opacity: segment.dim ? 0.65 : undefined,
+    textDecoration: decoration || undefined,
+  }
+  return <span style={style}>{segment.text}</span>
 }
 
 function ListView({ items }: { items: string[] }): JSX.Element {
@@ -430,14 +498,26 @@ function usePreview(text: string): { shown: string; hidden: number; expand: () =
 }
 
 /** `+7 −6`, in the only two colours this surface spends on anything. */
-function Churn({ step }: { step: ToolStep }): JSX.Element | null {
+function Churn({ step, animated = false }: { step: ToolStep; animated?: boolean }): JSX.Element | null {
   if (step.churn === null) return null
   const { added, removed } = step.churn
   if ((added === null || added === 0) && (removed === null || removed === 0)) return null
+  return <PatchChurn added={added} removed={removed} animated={animated && step.running} />
+}
+
+function PatchChurn({ added, removed, animated }: { added: number | null; removed: number | null; animated: boolean }): JSX.Element {
   return (
-    <span className="step-churn">
-      {added !== null && added > 0 && <span className="churn-add">+{added}</span>}
-      {removed !== null && removed > 0 && <span className="churn-del">−{removed}</span>}
+    <span className={`step-churn${animated ? " is-live" : ""}`}>
+      {added !== null && added > 0 && (
+        <span className="churn-window">
+          <span key={added} className="churn-add">+{added}</span>
+        </span>
+      )}
+      {removed !== null && removed > 0 && (
+        <span className="churn-window">
+          <span key={removed} className="churn-del">-{removed}</span>
+        </span>
+      )}
     </span>
   )
 }
