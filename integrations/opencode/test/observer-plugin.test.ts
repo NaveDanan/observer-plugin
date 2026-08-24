@@ -105,7 +105,9 @@ async function harness(
       return Response.json({ matches: [seat] })
     }
     if (href.endsWith("/v1/roster")) {
-      return Response.json({ profiles: [{ fullName: "Malik Johnson", title: "Staff Backend Engineer", fields: ["APIs"] }] })
+      return Response.json({
+        profiles: [{ id: "malik-johnson", fullName: "Malik Johnson", title: "Staff Backend Engineer", fields: ["APIs"] }],
+      })
     }
     if (href.includes("/v1/coordination/assignments")) {
       if (String(init?.method ?? "GET").toUpperCase() === "POST") {
@@ -340,6 +342,33 @@ describe("observer opencode plugin: seating the roster on child sessions", () =>
     })
     await h.flush()
     expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("subcontractor")
+  })
+
+  it("attributes an exact generated agent to its employee even when task text does not match", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" } },
+      seat: { id: "x", directive: "", score: 0 },
+      agents: [...STOCK_AGENTS, "observer-malik-johnson"],
+    })
+    const call = taskCall("root", "call_1", "Trace dispatch", "Inspect this issue", "observer-malik-johnson")
+    await h.hooks["tool.execute.before"](call.input, call.output)
+    await h.hooks.event({
+      event: sessionCreated({ id: "child", parentID: "root", title: "Trace dispatch (@observer-malik-johnson subagent)" }),
+    })
+    await h.flush()
+
+    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("malik-johnson")
+  })
+
+  it("resolves an unambiguous shortened Observer agent type before host dispatch", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" } },
+      agents: [...STOCK_AGENTS, "observer-malik-johnson"],
+    })
+    const call = taskCall("root", "call_1", "Trace dispatch", "Inspect this issue", "observer-malik")
+    await h.hooks["tool.execute.before"](call.input, call.output)
+
+    expect(call.output.args["subagent_type"]).toBe("observer-malik-johnson")
   })
 })
 
@@ -640,7 +669,7 @@ describe("observer opencode plugin: nesting", () => {
     await h.hooks.config(config)
     expect(config.agent.general.permission.task).toBe("allow")
     expect(config.agent.explore).toBeUndefined()
-    expect(config.subagent_depth).toBe(8)
+    expect(config.subagent_depth).toBe(2)
   })
 
   it("does not override an explicit global or general task policy", async () => {
@@ -842,6 +871,65 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.mail[0]).toMatchObject({ fromRuntimeId: "a", toRuntimeId: "b", text: "Please verify the migration" })
   })
 
+  it("directs a top-level subagent to return its root-bound message as the task result", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, a: { id: "a", parentID: "root" } } })
+    h.assignments.set("assignment-a", {
+      id: "assignment-a",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "a",
+      parentRuntimeId: null,
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const result = await h.hooks.tool.agent_send.execute(
+      { to: "root", message: "Repository exploration findings" },
+      { sessionID: "a", agent: "general" },
+    )
+
+    expect(result).toContain("Return this message as your final response")
+    expect(result).toContain("active task call")
+    expect(h.mail).toHaveLength(0)
+    expect(h.promptedSessions).toHaveLength(0)
+  })
+
+  it("briefs top-level and nested subagents on their different result channels", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        parent: { id: "parent", parentID: "root" },
+        nested: { id: "nested", parentID: "parent" },
+      },
+    })
+    for (const assignment of [
+      { id: "assignment-parent", runtimeId: "parent", parentRuntimeId: null },
+      { id: "assignment-nested", runtimeId: "nested", parentRuntimeId: "parent" },
+    ]) {
+      h.assignments.set(assignment.id, {
+        ...assignment,
+        host: "opencode",
+        rootSessionKey: "root",
+        agentType: "malik-johnson",
+        hostAgentType: "general",
+        status: "running",
+        createdAt: 1,
+      })
+    }
+
+    const topLevel = { system: ["you are opencode"] }
+    await h.hooks["experimental.chat.system.transform"]({ sessionID: "parent" }, topLevel)
+    expect(topLevel.system.join("\n")).toContain("Return results to it as your final response")
+    expect(topLevel.system.join("\n")).toContain("active task call")
+
+    const nested = { system: ["you are opencode"] }
+    await h.hooks["experimental.chat.system.transform"]({ sessionID: "nested" }, nested)
+    expect(nested.system.join("\n")).toContain("Your parent subagent is parent")
+    expect(nested.system.join("\n")).toContain("use agent_send")
+  })
+
   it("recovers a same-session peer whose assignment was not persisted", async () => {
     const h = await harness({
       sessions: {
@@ -945,6 +1033,36 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.promptedSessions).toHaveLength(1)
   })
 
+  it("resolves a shortened Observer agent type for a nested child and preserves employee attribution", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      seat: { id: "x", directive: "", score: 0 },
+      agents: [...STOCK_AGENTS, "observer-malik-johnson"],
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: null,
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    await h.hooks.tool.agent_spawn.execute(
+      { description: "Nested audit", prompt: "Inspect this issue", subagent_type: "observer-malik" },
+      { sessionID: "parent", agent: "general" },
+    )
+
+    expect(h.createdSessions[0]).toMatchObject({ agent: "observer-malik-johnson" })
+    expect([...h.assignments.values()].find((entry) => entry.runtimeId === "spawned-1")).toMatchObject({
+      agentType: "malik-johnson",
+      hostAgentType: "observer-malik-johnson",
+    })
+  })
+
   it("honours OpenCode's configured subagent depth", async () => {
     const h = await harness({
       subagentDepth: 1,
@@ -964,8 +1082,141 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       { description: "Too deep", prompt: "Do more work", subagent_type: "general" },
       { sessionID: "parent", agent: "general" },
     )
-    expect(result).toContain("depth limit reached (1)")
+    expect(result).toContain("depth limit reached (2 session levels)")
     expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("allows only root, subagent and nested subagent session levels", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        parent: { id: "parent", parentID: "root" },
+        nested: { id: "nested", parentID: "parent" },
+      },
+    })
+    h.assignments.set("assignment-nested", {
+      id: "assignment-nested",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "nested",
+      parentRuntimeId: "parent",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Too deep", prompt: "Create a third subagent level", subagent_type: "general" },
+      { sessionID: "nested", agent: "general" },
+    )
+    expect(result).toContain("depth limit reached (3 session levels)")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("caps all subagents in a root session at 15, not just active siblings", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } } })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: null,
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    for (let index = 1; index < 15; index++) {
+      h.assignments.set(`assignment-${index}`, {
+        id: `assignment-${index}`,
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: `finished-${index}`,
+        parentRuntimeId: null,
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        status: "completed",
+        createdAt: index + 1,
+      })
+    }
+
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "One too many", prompt: "Do more work", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+    expect(result).toBe("Subagent limit reached (15 per session).")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("holds the overall cap across parallel nested spawn calls", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } } })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: null,
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const results = await Promise.all(
+      Array.from({ length: 15 }, (_, index) =>
+        h.hooks.tool.agent_spawn.execute(
+          { description: `Nested ${index}`, prompt: `Do work ${index}`, subagent_type: "general" },
+          { sessionID: "parent", agent: "general" },
+        ),
+      ),
+    )
+    expect(results.filter((result) => result === "Subagent limit reached (15 per session).")).toHaveLength(1)
+    expect(h.createdSessions).toHaveLength(14)
+  })
+
+  it("enforces the overall cap on native task calls", async () => {
+    const h = await harness({ sessions: { root: { id: "root" } } })
+    for (let index = 0; index < 15; index++) {
+      h.assignments.set(`assignment-${index}`, {
+        id: `assignment-${index}`,
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: `child-${index}`,
+        parentRuntimeId: null,
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        status: "completed",
+        createdAt: index + 1,
+      })
+    }
+
+    const call = taskCall("root", "call-over-limit", "One too many", "Do more work")
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Subagent limit reached (15 per session)",
+    )
+  })
+
+  it("allows resuming a task_id after the creation cap is reached", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, child: { id: "child", parentID: "root" } } })
+    for (let index = 0; index < 15; index++) {
+      h.assignments.set(`assignment-${index}`, {
+        id: `assignment-${index}`,
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: index === 0 ? "child" : `child-${index}`,
+        parentRuntimeId: null,
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        status: "interrupted",
+        createdAt: index + 1,
+      })
+    }
+
+    const call = taskCall("root", "call-resume", "Continue", "Continue existing work")
+    call.output.args["task_id"] = "child"
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).resolves.toBeUndefined()
+    expect(call.output.args["task_id"]).toBe("child")
   })
 
   it("enforces the caller's task denial inside agent_spawn", async () => {

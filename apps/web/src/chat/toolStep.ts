@@ -636,7 +636,7 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
           step.inputLabel = "New content"
         }
       } else if (family === "patch") {
-        const patch = exactText(input, ["patch", "diff", "content", "input"])
+        const patch = exactText(input, ["patch", "patchText", "patch_text", "diff", "content", "input"])
         step.title = call.title ?? (path ? `Patch ${baseName(path)}` : prettyTool(call.tool))
         if (patch !== null) {
           const files = parsePatchFiles(patch)

@@ -283,7 +283,7 @@ describe("describeToolCall — edits, delegations, todos", () => {
 
   it("turns a patch envelope into per-file changes", () => {
     const patch = "*** Begin Patch\n*** Update File: src/old.ts\n*** Move to: src/a.ts\n@@\n-old\n+new\n*** Add File: src/b.ts\n+one\n+two\n*** End Patch"
-    const patchStep = describeToolCall(call("apply_patch", { input: { patch } }))
+    const patchStep = describeToolCall(call("apply_patch", { input: { patchText: patch } }))
     expect(patchStep.title).toBe("2 files edited")
     expect(patchStep.input).toBeNull()
     expect(patchStep.patchFiles).toEqual([

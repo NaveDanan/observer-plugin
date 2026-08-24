@@ -205,13 +205,15 @@ avoids losing a message when OpenCode accepts a queued turn but the turn is late
 
 Messages may only address assignments under the same host root session. Sending also emits a
 `messaged` edge, but it never changes the spawn parent. Sender and recipient budgets each cap direct
-messages at 30 per minute. `agent_spawn` respects OpenCode's configured depth with a hard ceiling
-of 8 and enforces an active fan-out of 16. OpenCode otherwise strips `task` from child sessions, so
+messages at 30 per minute. Native `task` calls and `agent_spawn` cap each root session at 15 distinct
+subagents. They respect a lower OpenCode depth setting and otherwise allow three session levels:
+the root, its subagent, and that subagent's child. Resuming a stable `task_id` creates no subagent and
+does not consume another slot. OpenCode otherwise strips `task` from child sessions, so
 the plugin adds `task: allow` only to `general` and generated Observer seats when no global,
 wildcard or per-agent task policy exists. Coordination tools check the resolved session rules when
 they run, and nested children inherit parent restrictions. OpenCode's default depth is 1, which
-forbids a subagent from creating a child; Observer changes that default to 8 but leaves any explicit
-user value intact.
+forbids a subagent from creating a child. Observer changes that default to 2 parent edges, which
+produces the three session levels, but leaves any explicit lower user value intact.
 
 The allow-list is a named constant, `NEUTRAL_AGENT_TYPES`, and — like the
 naming rule — it exists in both `packages/cli/src/seat-agents.ts` and

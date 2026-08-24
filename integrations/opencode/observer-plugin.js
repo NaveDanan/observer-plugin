@@ -69,8 +69,12 @@ const MAX_STAFFED_SESSIONS = 512
 const UNKNOWN_SESSION_RETRY_MS = 5000
 /** Guards the parent walk against a malformed parentID chain. */
 const MAX_SESSION_DEPTH = 32
-const MAX_COORDINATION_DEPTH = 8
-const MAX_COORDINATION_CHILDREN = 16
+/** Root agent plus two subagent levels: root -> subagent -> subagent. */
+const MAX_SUBAGENT_SESSION_DEPTH = 3
+/** OpenCode expresses subagent depth as parent edges below the root session. */
+const MAX_COORDINATION_DEPTH = MAX_SUBAGENT_SESSION_DEPTH - 1
+/** Maximum number of distinct subagents created under one root session. */
+const MAX_SUBAGENTS_PER_SESSION = 15
 
 /**
  * How long the host's agent list is trusted before it is asked again.
@@ -277,6 +281,7 @@ function briefingFromProfiles(profiles) {
     "## Team roster",
     "You can delegate work to subagents. These employees are available to staff them: pick the teammate whose strengths fit the task and describe the task in their terms, so Observer seats them on the node:",
     ...rows,
+    "When selecting a host agent directly, copy its exact registered type; never abbreviate an agent type.",
     'If no teammate fits a task, delegate anyway without naming one: that subagent is recorded as a "subcontractor".',
     "Every task result returns a stable task id. Reuse it as task_id after an interruption or when continuing the same work; omitting it creates a fresh subagent with no prior context.",
     "Assigned subagents can call agent_identity, agent_send, and agent_inbox to address each other directly, and can call task to spawn nested subagents.",
@@ -334,6 +339,7 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
   }
   const pluginStartedAt = Date.now()
   let briefing = undefined
+  let rosterProfiles = undefined
 
   /**
    * Seat control: whether Observer may point a delegation at the generated
@@ -498,13 +504,35 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
     if (briefing) return briefing
     try {
       const data = await apiGet("/v1/roster")
-      briefing = briefingFromProfiles(data.profiles)
+      rosterProfiles = Array.isArray(data.profiles) ? data.profiles : undefined
+      briefing = briefingFromProfiles(rosterProfiles)
     } catch {
       briefing = undefined
     }
     return briefing
   }
   void loadBriefing()
+
+  /**
+   * Resolves only Observer-generated names. A unique prefix repairs common
+   * first-name abbreviations, while the roster check prevents a user-written
+   * `observer-*` agent from being assigned an employee identity.
+   */
+  const resolveRosterAgent = async (requested) => {
+    if (typeof requested !== "string" || requested === "observer" || !requested.startsWith("observer-")) return undefined
+    await loadBriefing()
+    const employeeIds = new Set(
+      (rosterProfiles ?? []).map((profile) => profile?.id).filter((id) => typeof id === "string" && id.length > 0),
+    )
+    const agents = await knownAgents()
+    if (!agents) return undefined
+    const candidates = [...agents].filter(
+      (name) => name.startsWith(requested) && name.startsWith("observer-") && employeeIds.has(name.slice("observer-".length)),
+    )
+    if (candidates.length !== 1) return undefined
+    const hostAgentType = candidates[0]
+    return { hostAgentType, employeeId: hostAgentType.slice("observer-".length) }
+  }
 
   /**
    * Asks the daemon to seat the best employee on a delegated task. Returns
@@ -551,6 +579,10 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
   const staffedSessions = new Map()
   /** sessionID -> whether the user activated staffing with @observer */
   const activated = new Map()
+  /** Root session -> task calls admitted but not yet bound to a child session. */
+  const spawnReservations = new Map()
+  /** Root session -> child ids observed in this plugin process. */
+  const locallyCreatedSubagents = new Map()
 
   /** Drops expired and overflowing delegations. A missed join must not leak. */
   const prunePendingTasks = () => {
@@ -1021,10 +1053,68 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
     }
   }
 
+  const releaseSpawnReservation = (rootSessionKey, reservationId) => {
+    if (!rootSessionKey || !reservationId) return
+    const reservations = spawnReservations.get(rootSessionKey)
+    reservations?.delete(reservationId)
+    if (reservations?.size === 0) spawnReservations.delete(rootSessionKey)
+  }
+
+  const rememberCreatedSubagent = (rootSessionKey, runtimeId) => {
+    if (!rootSessionKey || !runtimeId) return
+    const runtimeIds = locallyCreatedSubagents.get(rootSessionKey) ?? new Set()
+    runtimeIds.add(runtimeId)
+    locallyCreatedSubagents.set(rootSessionKey, runtimeIds)
+  }
+
+  /**
+   * Reserves one creation slot before any asynchronous spawn work begins.
+   * The reservation closes the race where parallel calls all observe 14
+   * persisted assignments and otherwise create past the cap together.
+   */
+  const reserveSubagent = async (sessionID, reservationId) => {
+    const target = await resolve(sessionID)
+    if (!target) return { error: "Observer could not resolve the current session." }
+    const depthLimit = Math.min(await configuredDepth(), MAX_COORDINATION_DEPTH)
+    if ((await coordinationDepth(sessionID)) >= depthLimit) {
+      return {
+        error: `Subagent depth limit reached (${depthLimit + 1} session levels).`,
+        rootSessionKey: target.root,
+      }
+    }
+
+    let assignments = []
+    try {
+      const existing = await apiGet(
+        `/v1/coordination/assignments?${new URLSearchParams({ host: "opencode", rootSessionKey: target.root })}`,
+      )
+      assignments = existing.assignments ?? []
+    } catch {
+      // In-process tracking still enforces the cap for this plugin lifetime.
+    }
+    const persistedRuntimeIds = new Set(assignments.map((entry) => entry.runtimeId).filter(Boolean))
+    const persistedWithoutRuntime = assignments.filter(
+      (entry) => !entry.runtimeId && ["starting", "running"].includes(entry.status),
+    ).length
+    const localOnly = [...(locallyCreatedSubagents.get(target.root) ?? [])].filter(
+      (runtimeId) => !persistedRuntimeIds.has(runtimeId),
+    ).length
+    const reservations = spawnReservations.get(target.root) ?? new Set()
+    const persistedCallIds = new Set(assignments.map((entry) => entry.callId).filter(Boolean))
+    const unpersistedReservations = [...reservations].filter((id) => !persistedCallIds.has(id)).length
+    const total = persistedRuntimeIds.size + persistedWithoutRuntime + localOnly + unpersistedReservations
+    if (total >= MAX_SUBAGENTS_PER_SESSION) {
+      return { error: `Subagent limit reached (${MAX_SUBAGENTS_PER_SESSION} per session).`, rootSessionKey: target.root }
+    }
+    reservations.add(reservationId)
+    spawnReservations.set(target.root, reservations)
+    return { rootSessionKey: target.root }
+  }
+
   return {
     config(input) {
-      // OpenCode defaults to 1, which prevents a subagent from spawning a
-      // child. Observer establishes nesting unless the user set a value.
+      // OpenCode defaults to 1. Observer permits one nested subagent level
+      // unless the user explicitly sets a lower value.
       if (input.subagent_depth === undefined) input.subagent_depth = MAX_COORDINATION_DEPTH
       input.agent ??= {}
       const global = input.permission && typeof input.permission === "object" ? input.permission : {}
@@ -1060,6 +1150,7 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
               confirmed: true,
               at: Date.now(),
             })
+            rememberCreatedSubagent(parent ? parent.root : info.parentID, info.id)
           } else if (!sessions.get(info.id)?.confirmed) {
             sessions.set(info.id, {
               root: info.id,
@@ -1080,6 +1171,7 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
             staffed.runtimeId = info.id
             staffed.rootSessionKey ??= sessions.get(info.id)?.root
             staffed.parentRuntimeId ??= info.parentID === staffed.rootSessionKey ? null : info.parentID
+            releaseSpawnReservation(staffed.rootSessionKey, staffed.callID)
             try {
               await putAssignment(
                 staffed,
@@ -1285,7 +1377,12 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
         const identity = await identityFor(input.sessionID)
         if (identity) {
           output.system.push(
-            `Your stable subagent ID is ${identity.assignment.runtimeId}. Other subagents in this Observer session can address you with this ID. Use agent_identity to list peers, agent_send to communicate directly, agent_inbox to read queued messages, and agent_ack after processing them. This ID is also the task_id the spawning agent must use to resume your existing context instead of creating a fresh subagent.`,
+            [
+              `Your stable subagent ID is ${identity.assignment.runtimeId}. Other subagents in this Observer session can address you with this ID. Use agent_identity to list peers, agent_send to communicate directly, agent_inbox to read queued messages, and agent_ack after processing them. This ID is also the task_id the spawning agent must use to resume your existing context instead of creating a fresh subagent.`,
+              identity.assignment.parentRuntimeId === null
+                ? "Your parent is the root agent, which is not a peer address. Return results to it as your final response; OpenCode delivers that response through the active task call."
+                : `Your parent subagent is ${identity.assignment.parentRuntimeId}; use agent_send to send it interim or final results directly.`,
+            ].join(" "),
           )
         }
       } catch {
@@ -1345,6 +1442,11 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       if (tool !== "task") return
       const args = output?.args
       if (!args || typeof args.prompt !== "string" || args.prompt.length === 0) return
+      const callID = input?.callID ?? input?.callId ?? input?.id ?? randomUUID()
+      if (!(typeof args.task_id === "string" && args.task_id.length > 0)) {
+        const reserved = await reserveSubagent(input?.sessionID, callID)
+        if (reserved.error) throw new Error(reserved.error)
+      }
       // Activation is checked against the session tree's root, not the raw
       // session: `@observer` is typed once but governs every subagent below it,
       // including a subagent that spawns its own. An explicit `@observer off`
@@ -1352,11 +1454,15 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       const manual = await isActivated(input?.sessionID)
       if (manual === false) return
       if (!guidanceEnabled && !manual) return
-      const callID = input?.callID ?? input?.callId ?? input?.id
       try {
         const target = await resolve(input?.sessionID)
         if (!target) return
         const requestedHostAgent = args.subagent_type ?? args.subagentType ?? "general"
+        const requestedRosterAgent = await resolveRosterAgent(requestedHostAgent)
+        if (requestedRosterAgent) {
+          if (typeof args.subagent_type === "string") args.subagent_type = requestedRosterAgent.hostAgentType
+          else if (typeof args.subagentType === "string") args.subagentType = requestedRosterAgent.hostAgentType
+        }
         const resumedRuntimeId = typeof args.task_id === "string" && args.task_id.length > 0 ? args.task_id : undefined
         let restored
         if (resumedRuntimeId) {
@@ -1424,7 +1530,11 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           await putAssignment({ callID, ...claim }, resumedRuntimeId ? "running" : "starting")
           return
         }
-        const seat = restored ? { id: restored.agentType, directive: undefined } : await seatFor(args.prompt)
+        const seat = restored
+          ? { id: restored.agentType, directive: undefined }
+          : requestedRosterAgent
+            ? { id: requestedRosterAgent.employeeId, directive: undefined }
+            : await seatFor(args.prompt)
         const claim = {
           ...baseClaim,
           prompt: args.prompt,
@@ -1455,7 +1565,12 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           })
         }
       } catch (error) {
-        if (error instanceof Error && error.message === "Observer refused a task_id from another root session") {
+        if (
+          error instanceof Error &&
+          (error.message === "Observer refused a task_id from another root session" ||
+            error.message.startsWith("Subagent limit reached") ||
+            error.message.startsWith("Subagent depth limit reached"))
+        ) {
           throw error
         }
         // Guidance is best-effort; a down daemon changes nothing.
@@ -1466,7 +1581,13 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       if (String(input?.tool ?? "").toLowerCase() !== "task") return
       const callID = input?.callID ?? input?.callId ?? input?.id
       const runtimeId = output?.metadata?.sessionId ?? output?.metadata?.sessionID
-      if (!callID || typeof runtimeId !== "string" || runtimeId.length === 0) return
+      const target = await resolve(input.sessionID)
+      if (!callID || typeof runtimeId !== "string" || runtimeId.length === 0) {
+        releaseSpawnReservation(target?.root, callID)
+        return
+      }
+      rememberCreatedSubagent(target?.root, runtimeId)
+      releaseSpawnReservation(target?.root, callID)
       const claim = await assignmentByCallID(input.sessionID, callID)
       if (!claim) return
       claim.runtimeId = runtimeId
@@ -1500,92 +1621,93 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           if (!(await coordinationAllowedFor(context.agent, context.sessionID, "agent_spawn"))) {
             return "Agent policy denies nested spawning."
           }
-          if (await taskNotAllowedFor(context.agent, context.sessionID, args.subagent_type)) {
-            return `Task permission does not allow spawning ${args.subagent_type}.`
-          }
-          const depthLimit = Math.min(await configuredDepth(), MAX_COORDINATION_DEPTH)
-          if ((await coordinationDepth(context.sessionID)) >= depthLimit) {
-            return `Nested subagent depth limit reached (${depthLimit}).`
-          }
-          const existing = await apiGet(
-            `/v1/coordination/assignments?${new URLSearchParams({ host: "opencode", rootSessionKey: parent.target.root })}`,
-          )
-          const children = (existing.assignments ?? []).filter(
-            (entry) => entry.parentRuntimeId === context.sessionID && ["starting", "running"].includes(entry.status),
-          )
-          if (children.length >= MAX_COORDINATION_CHILDREN) {
-            return `Nested subagent fan-out limit reached (${MAX_COORDINATION_CHILDREN}).`
+          const requestedRosterAgent = await resolveRosterAgent(args.subagent_type)
+          const requestedHostAgent = requestedRosterAgent?.hostAgentType ?? args.subagent_type
+          if (await taskNotAllowedFor(context.agent, context.sessionID, requestedHostAgent)) {
+            return `Task permission does not allow spawning ${requestedHostAgent}.`
           }
           const assignmentId = randomUUID()
-          const seat = await seatFor(args.prompt)
-          const selected = { subagent_type: args.subagent_type }
-          if (seat) await applySeatAgent(selected, seat.id)
-          const hostAgentType = selected.subagent_type
-          if (await taskNotAllowedFor(context.agent, context.sessionID, hostAgentType)) {
-            return `Task permission does not allow spawning ${hostAgentType}.`
+          const reserved = await reserveSubagent(context.sessionID, assignmentId)
+          if (reserved.error) return reserved.error
+          const releaseReservation = () => releaseSpawnReservation(reserved.rootSessionKey, assignmentId)
+          try {
+            const seat = requestedRosterAgent
+              ? { id: requestedRosterAgent.employeeId, directive: undefined }
+              : await seatFor(args.prompt)
+            const selected = { subagent_type: requestedHostAgent }
+            if (seat) await applySeatAgent(selected, seat.id)
+            const hostAgentType = selected.subagent_type
+            if (await taskNotAllowedFor(context.agent, context.sessionID, hostAgentType)) {
+              return `Task permission does not allow spawning ${hostAgentType}.`
+            }
+            const agent = await knownAgent(hostAgentType)
+            if (!agent) throw new Error(`Unknown subagent type: ${hostAgentType}`)
+            const parentModel = await modelForSession(context.sessionID)
+            const model = agent.model
+              ? {
+                  providerID: agent.model.providerID,
+                  modelID: agent.model.modelID ?? agent.model.id,
+                  variant: agent.variant,
+                }
+              : parentModel
+            const taskPrompt = `${args.prompt}\n\nWhen your task is complete, use agent_send to return your result directly to parent subagent ${context.sessionID}.`
+            const prompt = seat?.directive
+              ? `${taskPrompt}\n\n---\nObserver staffing note:\n${seat.directive}`
+              : taskPrompt
+            const parentInfo = await sessionGet(context.sessionID)
+            const inheritedRestrictions = Array.isArray(parentInfo?.permission)
+              ? parentInfo.permission.filter(
+                  (rule) => rule?.permission === "external_directory" || rule?.action === "deny",
+                )
+              : []
+            const childPermission = [...inheritedRestrictions]
+            if (!Array.isArray(agent.permission) || !agent.permission.some((rule) => rule?.permission === "todowrite")) {
+              childPermission.push({ permission: "todowrite", pattern: "*", action: "deny" })
+            }
+            if (!Array.isArray(agent.permission) || !agent.permission.some((rule) => rule?.permission === "task")) {
+              childPermission.push({ permission: "task", pattern: "*", action: "deny" })
+            }
+            const child = await createSession({
+              parentID: context.sessionID,
+              title: `${args.description} (@${hostAgentType} subagent)`,
+              agent: hostAgentType,
+              model: model
+                ? { id: model.modelID, providerID: model.providerID, ...(model.variant ? { variant: model.variant } : {}) }
+                : undefined,
+              metadata: { observerAssignmentId: assignmentId },
+              permission: childPermission,
+            })
+            if (!child?.id) throw new Error("OpenCode did not return a child session id")
+            rememberCreatedSubagent(parent.target.root, child.id)
+            const claim = {
+              assignmentId,
+              runtimeId: child.id,
+              rootSessionKey: parent.target.root,
+              parentRuntimeId: context.sessionID,
+              callID: null,
+              description: args.description,
+              prompt: args.prompt,
+              agentType: seat ? seat.id : "subcontractor",
+              hostAgentType,
+              at: Date.now(),
+            }
+            staffedSessions.set(child.id, claim)
+            await putAssignment(claim, "running")
+            await forward("observer.assignment", { status: "running" }, child.id, {
+              prompt: args.prompt,
+              agentType: claim.agentType,
+              runtimeId: child.id,
+            })
+            await promptSessionAsync(child.id, {
+              agent: hostAgentType,
+              model: model ? { providerID: model.providerID, modelID: model.modelID } : undefined,
+              variant: model?.variant,
+              parts: [{ type: "text", text: prompt }],
+            })
+            return JSON.stringify({ id: child.id, task_id: child.id, status: "running" })
+          } finally {
+            releaseReservation()
           }
-          const agent = await knownAgent(hostAgentType)
-          if (!agent) throw new Error(`Unknown subagent type: ${hostAgentType}`)
-          const parentModel = await modelForSession(context.sessionID)
-          const model = agent.model
-            ? {
-                providerID: agent.model.providerID,
-                modelID: agent.model.modelID ?? agent.model.id,
-                variant: agent.variant,
-              }
-            : parentModel
-          const taskPrompt = `${args.prompt}\n\nWhen your task is complete, use agent_send to return your result directly to parent subagent ${context.sessionID}.`
-          const prompt = seat?.directive
-            ? `${taskPrompt}\n\n---\nObserver staffing note:\n${seat.directive}`
-            : taskPrompt
-          const parentInfo = await sessionGet(context.sessionID)
-          const inheritedRestrictions = Array.isArray(parentInfo?.permission)
-            ? parentInfo.permission.filter((rule) => rule?.permission === "external_directory" || rule?.action === "deny")
-            : []
-          const childPermission = [...inheritedRestrictions]
-          if (!Array.isArray(agent.permission) || !agent.permission.some((rule) => rule?.permission === "todowrite")) {
-            childPermission.push({ permission: "todowrite", pattern: "*", action: "deny" })
-          }
-          if (!Array.isArray(agent.permission) || !agent.permission.some((rule) => rule?.permission === "task")) {
-            childPermission.push({ permission: "task", pattern: "*", action: "deny" })
-          }
-          const child = await createSession({
-            parentID: context.sessionID,
-            title: `${args.description} (@${hostAgentType} subagent)`,
-            agent: hostAgentType,
-            model: model
-              ? { id: model.modelID, providerID: model.providerID, ...(model.variant ? { variant: model.variant } : {}) }
-              : undefined,
-            metadata: { observerAssignmentId: assignmentId },
-            permission: childPermission,
-          })
-          if (!child?.id) throw new Error("OpenCode did not return a child session id")
-          const claim = {
-            assignmentId,
-            runtimeId: child.id,
-            rootSessionKey: parent.target.root,
-            parentRuntimeId: context.sessionID,
-            callID: null,
-            description: args.description,
-            prompt: args.prompt,
-            agentType: seat ? seat.id : "subcontractor",
-            hostAgentType,
-            at: Date.now(),
-          }
-          staffedSessions.set(child.id, claim)
-          await putAssignment(claim, "running")
-          await forward("observer.assignment", { status: "running" }, child.id, {
-            prompt: args.prompt,
-            agentType: claim.agentType,
-            runtimeId: child.id,
-          })
-          await promptSessionAsync(child.id, {
-            agent: hostAgentType,
-            model: model ? { providerID: model.providerID, modelID: model.modelID } : undefined,
-            variant: model?.variant,
-            parts: [{ type: "text", text: prompt }],
-          })
-          return JSON.stringify({ id: child.id, task_id: child.id, status: "running" })
         },
       },
       agent_identity: {
@@ -1619,7 +1741,9 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           const identity = await identityFor(context.sessionID)
           if (!identity) return "This tool is available only inside an assigned subagent session."
           if (!(await coordinationAllowedFor(context.agent, context.sessionID, "agent_send"))) return "Agent policy denies direct messaging."
-          if (args.to === identity.target.root) return "The root session is not a peer address."
+          if (args.to === identity.target.root) {
+            return "Return this message as your final response instead. OpenCode will deliver it to the root agent through the active task call; prompting the root session directly would start a competing turn."
+          }
           let recipient
           try {
             recipient = (
