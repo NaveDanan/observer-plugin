@@ -333,6 +333,18 @@ describe("describeToolCall — edits, delegations, todos", () => {
     expect(step.input).toEqual({ kind: "text", text: "Look in packages/core" })
   })
 
+  it("names the recipient of a Codex collaboration message", () => {
+    const step = describeToolCall(
+      call("collaborationsend_message", {
+        input: { target: "/root/review_correctness", message: "Check the installer edge case" },
+      }),
+    )
+
+    expect(step.title).toBe("Messaged /root/review_correctness")
+    expect(step.fields).toContainEqual({ label: "Recipient", value: "/root/review_correctness", mono: true })
+    expect(step.input).toEqual({ kind: "text", text: "Check the installer edge case" })
+  })
+
   it("renders a task list with its statuses", () => {
     const step = describeToolCall(
       call("todowrite", { input: { todos: [{ content: "Ship it", status: "in_progress" }, { content: "Test it", status: "pending" }] } }),

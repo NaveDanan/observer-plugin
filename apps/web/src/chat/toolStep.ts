@@ -117,7 +117,8 @@ const COMMAND_KEYS = ["command", "cmd", "script", "shell_command"]
 const SCOPE_KEYS = ["paths", "include", "path_filter", "glob_filter", "directory", "dir", "cwd"]
 const DESCRIPTION_KEYS = ["description", "title", "prompt_summary"]
 const PROMPT_KEYS = ["prompt", "instructions", "task", "message"]
-const AGENT_KEYS = ["subagent_type", "subagentType", "agent", "agent_type", "agentType"]
+const AGENT_KEYS = ["subagent_type", "subagentType", "agent", "agent_type", "agentType", "task_name", "taskName"]
+const RECIPIENT_KEYS = ["target", "to", "recipient"]
 const URL_KEYS = ["url", "uri", "link"]
 const OLD_KEYS = ["old_str", "oldString", "old_string", "oldText"]
 const NEW_KEYS = ["new_str", "newString", "new_string", "newText", "content", "file_text", "text"]
@@ -700,6 +701,17 @@ export function describeToolCall(call: ToolCallEntity): ToolStep {
       if (description) step.fields.push({ label: "Task", value: description, mono: false })
       const prompt = str(input, PROMPT_KEYS)
       if (prompt) step.input = { kind: "text", text: prompt }
+      step.meta = durationMeta(call)
+      if (output) step.output = { kind: "text", text: output }
+      break
+    }
+
+    case "message": {
+      const recipient = str(input, RECIPIENT_KEYS)
+      const message = str(input, PROMPT_KEYS)
+      step.title = call.title ?? (recipient ? `Messaged ${recipient}` : "Sent a message")
+      if (recipient) step.fields.push({ label: "Recipient", value: recipient, mono: true })
+      if (message) step.input = { kind: "text", text: message }
       step.meta = durationMeta(call)
       if (output) step.output = { kind: "text", text: output }
       break

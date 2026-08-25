@@ -44,20 +44,23 @@ import type {
  *    than captured, `account/read` is not called, and no environment value is
  *    logged or returned. The probe wants an inventory, not an identity.
  *
- * ## Why `spawnSync`, once per page
+ * ## Why a synchronous bridge, once per page
  *
- * `HostSeatAdapter.catalogue` is synchronous, and following an opaque cursor
- * is not: page two's request contains a string only page one's response can
- * supply. There is no way to pipeline that into a single write. So each page
- * is its own short-lived `codex app-server` — handshake, one `model/list`,
- * EOF — and the cursor is carried across processes.
+ * `HostSeatAdapter.catalogue` is synchronous, while `codex app-server` is a
+ * long-lived JSON-RPC server. Closing stdin immediately after `model/list`
+ * disconnects the client before Codex's queued answer is ready. Each page is
+ * therefore run behind a short-lived Node bridge: the adapter waits on the
+ * bridge synchronously, while the bridge keeps Codex's stdin open until the
+ * response arrives. It then closes the connection and exits. Page two still
+ * carries the cursor learned from page one.
  *
- * That is N processes for N pages, which sounds worse than it is: Codex lists
- * on the order of a dozen models, the result is memoised per profile, and the
+ * That is one bridge and one app server per page. Codex lists on the order of
+ * a dozen models, the result is memoised per profile, and the
  * alternative is either an async interface every caller would have to thread
  * through the TUI, or synchronous reads off a live child's pipe file
  * descriptors — which deadlocks the moment the child writes more than a pipe
- * buffer before we read. A second process is cheap; a deadlocked daemon is not.
+ * buffer before we read. Two short-lived processes are cheap; a deadlocked
+ * daemon is not.
  *
  * ## Efforts are the host's vocabulary, verbatim
  *
@@ -206,7 +209,7 @@ export function createCodexAdapter(options: CodexAdapterOptions = {}): HostSeatA
   const binary = options.binaryPath && options.binaryPath.length > 0 ? options.binaryPath : DEFAULT_BINARY
   const budgetMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_TIMEOUT_MS
   const now = options.now ?? Date.now
-  const spawn = options.spawn ?? defaultSpawn
+  const spawn = options.spawn ?? spawnCodexAppServer
   const cache = new Map<string, CacheEntry>()
 
   /**
@@ -479,24 +482,13 @@ export function createCodexAdapter(options: CodexAdapterOptions = {}): HostSeatA
       return {
         // The inventory is a live probe of the install in front of us.
         discovery: "live",
-        /**
-         * `experimental`, not `supported`, and the gap is the point.
-         *
-         * Codex's app-server schema carries an optional model and an optional
-         * reasoning effort on a child collaboration item, so the protocol can
-         * express what a seat wants. Observer has no tested path that puts
-         * them there: the control point has to run *before* the child is
-         * created (`PreToolUse`; `SubagentStart` is too late, the child
-         * already exists), and there is no checked fixture of the spawn input
-         * a real Codex hook accepts. Claiming `supported` would promise a user
-         * their employee runs `xhigh` when nothing on this machine has ever
-         * made that happen.
-         */
-        childModel: "experimental",
-        childReasoning: "experimental",
-        // Codex reads its effort per turn rather than at session start, so
-        // there is no session to restart for a change to take hold.
-        requiresReload: false,
+        // Observer generates native Codex custom-agent TOML for every employee.
+        // A controlled seat adds model and reasoning fields to that employee's
+        // definition; an unpinned employee inherits Codex's choice.
+        childModel: "supported",
+        childReasoning: "supported",
+        // Codex discovers custom agents at startup.
+        requiresReload: true,
       }
     },
   }
@@ -778,7 +770,7 @@ function readChoice(entry: unknown): ModelOptionChoice | undefined {
     return id.length === 0 ? undefined : { id, label: id }
   }
   if (!isRecord(entry)) return undefined
-  const id = firstString(entry, ["id", "value", "effort", "tier", "name"])
+  const id = firstString(entry, ["id", "value", "reasoningEffort", "serviceTier", "effort", "tier", "name"])
   if (id === undefined) return undefined
   const choice: ModelOptionChoice = { id, label: firstString(entry, ["label", "displayName", "display_name"]) ?? id }
   if (entry["isDefault"] === true || entry["default"] === true) choice.isDefault = true
@@ -811,33 +803,53 @@ function describeFailure(failure: PageFailure, binary: string, budgetMs: number,
 }
 
 /**
- * `spawnSync`, mapped onto the narrow seam.
+ * Runs one app-server exchange behind a short-lived asynchronous bridge.
  *
- * stderr is `ignore`d rather than piped: it is the stream a CLI prints auth
- * failures on, those messages routinely quote a token prefix or an account
- * address, and the surest way never to log one is never to read it. The exit
- * status alone says whether the child worked.
+ * `spawnSync` cannot keep a child's stdin open after writing its input. Codex
+ * queues `model/list` and answers while the JSON-RPC connection remains live,
+ * so closing the pipe with the write drops the answer. The bridge holds that
+ * pipe open, forwards stdout, and closes it after response id 2 arrives.
+ *
+ * The bridge also launches Windows npm shims through `cmd.exe`. Node cannot
+ * execute a `.cmd` shim directly with `spawnSync`; on a normal npm install the
+ * old path failed with EPERM before Codex started.
  */
-function defaultSpawn(
+export function spawnCodexAppServer(
   binary: string,
   args: readonly string[],
   options: { input: string; env: NodeJS.ProcessEnv; timeoutMs: number },
 ): CodexSpawnResult {
-  const result = spawnSync(binary, [...args], {
-    input: options.input,
-    env: options.env,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "ignore"],
-    timeout: options.timeoutMs,
-    // A model list is kilobytes. A megabyte is room for a very chatty server
-    // and still a ceiling on a host that decides to stream its logs at us.
-    maxBuffer: 4 * 1024 * 1024,
-  })
+  const specification = Buffer.from(
+    JSON.stringify({
+      binary,
+      args,
+      platform: process.platform,
+      comspec: process.env["ComSpec"] ?? process.env["COMSPEC"] ?? "cmd.exe",
+      timeoutMs: options.timeoutMs,
+    }),
+  ).toString("base64")
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", CODEX_APP_SERVER_BRIDGE, specification],
+    {
+      input: options.input,
+      env: options.env,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+      // The bridge owns the advertised budget. This catches a bridge defect.
+      timeout: options.timeoutMs + 1_000,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024,
+    },
+  )
 
   const spawnResult: CodexSpawnResult = {
     stdout: typeof result.stdout === "string" ? result.stdout : "",
     status: result.status,
   }
+  const bridgeFailure = readBridgeFailure(spawnResult.stdout)
+  if (bridgeFailure?.kind === "timeout") spawnResult.timedOut = true
+  else if (bridgeFailure?.kind === "spawn") spawnResult.failure = describeSpawnCode(bridgeFailure.code)
   const error = result.error as (Error & { code?: string }) | undefined
   if (error?.code === "ETIMEDOUT") spawnResult.timedOut = true
   else if (error !== undefined) spawnResult.failure = describeSpawnError(error)
@@ -846,6 +858,118 @@ function defaultSpawn(
   else if (result.signal !== null && result.signal !== undefined) spawnResult.timedOut = true
   return spawnResult
 }
+
+interface BridgeFailure {
+  kind: "spawn" | "timeout"
+  code?: string
+}
+
+function readBridgeFailure(stdout: string): BridgeFailure | undefined {
+  for (const line of stdout.split("\n")) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!isRecord(parsed) || !isRecord(parsed["observerCodexProbe"])) continue
+    const marker = parsed["observerCodexProbe"]
+    if (marker["kind"] !== "spawn" && marker["kind"] !== "timeout") continue
+    const failure: BridgeFailure = { kind: marker["kind"] }
+    if (typeof marker["code"] === "string") failure.code = marker["code"]
+    return failure
+  }
+  return undefined
+}
+
+function describeSpawnCode(code: string | undefined): string {
+  if (code === "ENOENT") return "was not found on PATH"
+  if (code === "EACCES") return "is not executable"
+  return `could not be launched (${code ?? "unknown error"})`
+}
+
+/** Static source avoids a runtime asset that TypeScript would have to copy. */
+const CODEX_APP_SERVER_BRIDGE = String.raw`
+import { spawn } from "node:child_process"
+import { readFileSync } from "node:fs"
+
+const specification = JSON.parse(Buffer.from(process.argv[1], "base64").toString("utf8"))
+const input = readFileSync(0, "utf8")
+let command = specification.binary
+let args = specification.args
+let windowsVerbatimArguments = false
+
+if (specification.platform === "win32") {
+  const values = [command, ...args]
+  if (values.some((value) => /[\r\n"%!&|<>^]/.test(value))) {
+    process.stdout.write(JSON.stringify({ observerCodexProbe: { kind: "spawn", code: "UNSAFE_WINDOWS_COMMAND" } }) + "\n")
+    process.exit(127)
+  }
+  const commandLine = values.map((value) => '"' + value + '"').join(" ")
+  command = specification.comspec
+  args = ["/d", "/s", "/c", '"' + commandLine + '"']
+  windowsVerbatimArguments = true
+}
+
+const child = spawn(command, args, {
+  env: process.env,
+  stdio: ["pipe", "pipe", "ignore"],
+  windowsHide: true,
+  windowsVerbatimArguments,
+})
+let responseSeen = false
+let settled = false
+let buffer = ""
+let shutdownTimer
+
+const timer = setTimeout(() => {
+  if (settled) return
+  settled = true
+  child.kill()
+  process.stdout.write(JSON.stringify({ observerCodexProbe: { kind: "timeout" } }) + "\n", () => process.exit(124))
+}, specification.timeoutMs)
+
+child.on("error", (error) => {
+  if (settled) return
+  settled = true
+  clearTimeout(timer)
+  process.stdout.write(
+    JSON.stringify({ observerCodexProbe: { kind: "spawn", code: error && error.code } }) + "\n",
+    () => process.exit(127),
+  )
+})
+
+child.stdin.on("error", () => {})
+child.stdout.setEncoding("utf8")
+child.stdout.on("data", (chunk) => {
+  process.stdout.write(chunk)
+  buffer += chunk
+  for (;;) {
+    const newline = buffer.indexOf("\n")
+    if (newline < 0) break
+    const line = buffer.slice(0, newline).trim()
+    buffer = buffer.slice(newline + 1)
+    let message
+    try { message = JSON.parse(line) } catch { continue }
+    if (message && message.id === 2) {
+      responseSeen = true
+      clearTimeout(timer)
+      child.stdin.end()
+      shutdownTimer = setTimeout(() => child.kill(), 250)
+    }
+  }
+})
+
+child.on("close", (code) => {
+  if (settled) return
+  settled = true
+  clearTimeout(timer)
+  clearTimeout(shutdownTimer)
+  process.exit(responseSeen ? 0 : (code ?? 1))
+})
+
+child.stdin.write(input)
+`
 
 function describeSpawnError(error: Error & { code?: string }): string {
   if (error.code === "ENOENT") return "was not found on PATH"

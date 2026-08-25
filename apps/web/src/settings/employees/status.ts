@@ -138,7 +138,7 @@ export function controlVerdict(directory: HostDirectory, host: string, seatContr
     status: "applied",
     label: "applied",
     tone: "success",
-    sentence: `Observer writes a hidden per-employee ${entry.label} agent definition and points the delegation at it, so a child seated here runs this model.`,
+    sentence: `Observer pins this model in ${entry.label}'s employee agent definition. ${entry.label} may choose the employee when the description fits; the pin does not force delegation.`,
     requiresReload: capabilities.requiresReload,
     reloadSentence: reload,
     warnings: entry.warnings,

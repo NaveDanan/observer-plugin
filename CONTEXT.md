@@ -35,25 +35,29 @@ _Avoid_: Team, staff list
 
 **Seating / seated**:
 What the matcher does when a task arrives: it scores the task text against every employee and
-seats the best fit on the node. Seating is advisory by default: it labels the node and briefs the
-subagent, without changing which host agent runs. Seat control is the one thing that changes that.
+seats the best fit on the node. Seating labels and briefs the observed subagent; it never changes
+which employee agent the host selects or which model that agent uses.
 _Avoid_: Assignment (too strong — implies the host was told), matching (fine as a verb)
 
+**Employee agent**:
+A host-native selectable subagent representing one roster employee. Every installed host receives
+the full roster, whether or not any seat spec or model pin exists.
+_Avoid_: Seated worker, hidden agent
+
 **Seat spec**:
-The model, reasoning effort and skills a user assigned to an employee in `seats.employees` in
-`~/.observer/config.json`. A seat spec is *desired*: it says what an employee should run with.
-It is not seating (the matcher's runtime decision about who fits a task) and it is not an agent's
-`model` (observed — see below). Every field is optional; an omitted model means "inherit the
-session's model".
+The model pins, host options, and skills a user configures for an employee. It customises an
+employee agent but neither creates that agent nor tells the host to select it.
 _Avoid_: Assignment, agent config, model override
 
 **Seat control**:
-The opt-in flag (`seats.control`, off by default) that lets Observer act on the model and effort
-in a seat spec, by generating hidden per-employee OpenCode agent definitions and rewriting the
-host's `subagent_type`. With it off, model and effort are inert and Observer only observes.
-Skills are not gated by it: they are prompt text folded into the behaviour directive, so they
-carry none of the risk of pointing the host at an agent that does not exist.
+The opt-in flag that activates model pins in seat specs. It never controls whether an employee
+agent is available or whether the host selects one; skills apply independently of it.
 _Avoid_: Enforcement, takeover, steering
+
+**Model pin**:
+A host-specific model and supported reasoning options that an employee agent must use when the
+host selects it. Without a pin, the host inherits or chooses the employee agent's model.
+_Avoid_: Seat, employee assignment, routing rule
 
 **Model**:
 On an agent, always the *observed* model — what the host told us it ran, qualified by

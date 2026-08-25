@@ -39,13 +39,9 @@ import type {
  *
  * ## What OpenCode can actually do
  *
- * The task tool takes no `model` parameter. The only lever is `subagent_type`
- * -> agent definition -> `model`, so control means generating a hidden
- * per-employee agent file and rewriting the delegation's `subagent_type` at
- * `tool.execute.before`. That works, which is why `childModel` is
- * `"supported"` here and nowhere else yet — and it works only after a restart,
- * because agent definitions are read once at startup, which is why
- * `requiresReload` is true.
+ * Observer exposes every employee through a native agent definition. A seat
+ * pins `model` and `variant` on that definition, while OpenCode decides whether
+ * to select it. Definitions are read at startup, so `requiresReload` is true.
  *
  * ## Cost
  *
@@ -225,9 +221,7 @@ export function createOpencodeAdapter(options: OpencodeAdapterOptions = {}): Hos
       // but it is opt-in and seconds slow, so it is not what this adapter
       // promises by default.
       discovery: "cached",
-      // The whole reason OpenCode is the first adapter: generated agent
-      // definitions plus the `general`-only `subagent_type` rewrite genuinely
-      // make a delegated child run a chosen model.
+      // Native employee definitions can pin a selected child's model.
       childModel: "supported",
       // `variant` rides the same generated definition and the host honours it,
       // subject to the model declaring it — which is what `diagnose` checks

@@ -49,9 +49,9 @@ const HOSTS: HostSummary[] = [
     profiles: [{ id: "codex:default", host: "codex", label: "Codex" }],
     capabilities: {
       discovery: "live",
-      childModel: "experimental",
-      childReasoning: "experimental",
-      requiresReload: false,
+      childModel: "supported",
+      childReasoning: "supported",
+      requiresReload: true,
     },
     warnings: [],
   },
@@ -61,8 +61,8 @@ const HOSTS: HostSummary[] = [
     profiles: [{ id: "claude:default", host: "claude", label: "Claude Code" }],
     capabilities: {
       discovery: "cached",
-      childModel: "unsupported",
-      childReasoning: "unsupported",
+      childModel: "supported",
+      childReasoning: "supported",
       requiresReload: true,
     },
     warnings: [],
@@ -178,21 +178,12 @@ describe("the card never overstates what a host will do", () => {
     }
   })
 
-  it("says Claude is not applied to children, because its adapter looked and said so", () => {
-    const markup = markupFor("claude", true)
-    expect(markup).toContain("not applied to children")
-    expect(markup).not.toContain(">applied<")
-  })
-
-  it("calls a Codex target experimental rather than applied", () => {
-    expect(markupFor("codex", true)).toContain("experimental")
-    expect(markupFor("codex", true)).not.toContain(">applied<")
-  })
-
-  it("only ever says applied for OpenCode with seat control on", () => {
-    expect(markupFor("opencode", true)).toContain(">applied<")
-    expect(markupFor("opencode", false)).toContain("configured, not applied")
-    expect(markupFor("opencode", false)).not.toContain(">applied<")
+  it("says applied for every supported harness only with seat control on", () => {
+    for (const host of ["opencode", "codex", "claude"]) {
+      expect(markupFor(host, true), host).toContain(">applied<")
+      expect(markupFor(host, false), host).toContain("configured, not applied")
+      expect(markupFor(host, false), host).not.toContain(">applied<")
+    }
   })
 
   it("says nothing at all while the host list is still in flight", () => {

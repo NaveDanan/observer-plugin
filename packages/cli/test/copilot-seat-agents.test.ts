@@ -69,11 +69,17 @@ describe("Copilot seat agents", () => {
       "utf8",
     )
     const settings = JSON.parse(readFileSync(copilotSettingsPath(), "utf8"))
+    const personalAgent = readFileSync(
+      join(process.env["COPILOT_HOME"]!, "agents", "observer-arjun-mehta.agent.md"),
+      "utf8",
+    )
 
     expect(agent).toContain("observer:copilot-seat-agent v1")
     expect(agent).toContain('model: "claude-opus-5"')
     expect(agent).toContain("You are Malik Johnson")
     expect(agent).toContain("Use `apply_patch` instead of the legacy `edit` and `create` tools")
+    expect(personalAgent).toContain("You are Arjun Mehta")
+    expect(personalAgent).not.toContain("model:")
     expect(settings.theme).toBe("github")
     expect(settings.subagents.agents.explore).toEqual({ model: "gpt-5.6-luna" })
     expect(settings.subagents.agents["observer:observer-malik-johnson"]).toEqual({
@@ -89,7 +95,7 @@ describe("Copilot seat agents", () => {
     writeFileSync(join(copilotPluginCacheDir(), "plugin.json"), "{}\n")
 
     const result = syncCopilotSeatAgents(seats())
-    expect(result.written).toHaveLength(2)
+    expect(result.written).toHaveLength(42)
     expect(
       existsSync(join(copilotPluginCacheDir(), "agents", "observer-malik-johnson.agent.md")),
     ).toBe(true)
@@ -109,7 +115,8 @@ describe("Copilot seat agents", () => {
     const result = syncCopilotSeatAgents(seats())
 
     expect(readFileSync(path, "utf8")).toContain("User-owned agent.")
-    expect(result.written).toEqual([])
+    expect(result.written).toHaveLength(27)
+    expect(result.written.filter((written) => written.endsWith("observer-malik-johnson.agent.md"))).toHaveLength(1)
     expect(result.notes.join(" ")).toContain("is not owned by Observer")
     expect(existsSync(copilotSettingsPath())).toBe(false)
   })
@@ -124,7 +131,8 @@ describe("Copilot seat agents", () => {
     const after = JSON.parse(readFileSync(copilotSettingsPath(), "utf8"))
     expect(after.subagents.agents["observer:observer-malik-johnson"]).toBeUndefined()
     expect(after.subagents.agents["my-agent"]).toEqual({ model: "gpt-5.4" })
-    expect(result.removed).toHaveLength(1)
+    expect(result.removed).toEqual([])
+    expect(readFileSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-malik-johnson.agent.md"), "utf8")).not.toContain("model:")
     expect(JSON.parse(readFileSync(copilotSeatStatePath(), "utf8")).agents).toEqual([])
   })
 
@@ -138,10 +146,11 @@ describe("Copilot seat agents", () => {
     expect(result.notes.join(" ")).toContain("not valid JSON")
   })
 
-  it("does not generate control artifacts before the plugin exists", () => {
+  it("generates personal employee agents before the plugin exists", () => {
     rmSync(join(process.env["COPILOT_HOME"]!, "plugins", "observer"), { recursive: true, force: true })
     const result = syncCopilotSeatAgents(seats())
-    expect(result.written).toEqual([])
-    expect(result.notes.join(" ")).toContain("Install the Copilot plugin")
+    expect(result.written).toHaveLength(14)
+    expect(existsSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-malik-johnson.agent.md"))).toBe(true)
+    expect(result.notes.join(" ")).toContain("unpinned agents inherit Copilot's model choice")
   })
 })

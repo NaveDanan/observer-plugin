@@ -270,6 +270,97 @@ describe("Copilot session log tailer", () => {
   })
 })
 
+describe("Codex subagent transcript recovery", () => {
+  it("puts the subagent's user and assistant messages in its Chat transcript", () => {
+    pipeline.ingestHook({
+      host: "codex",
+      event: "SessionStart",
+      deliveryId: "codex-start",
+      workspaceRoot: "/repo",
+      payload: { session_id: "root", model: "gpt-5.6-sol" },
+    })
+    const transcript = join(home, "child.jsonl")
+    const userMessage = JSON.stringify({
+      timestamp: "2026-08-25T10:00:00.000Z",
+      type: "response_item",
+      payload: {
+        id: "user-1",
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Review the adapter." }],
+      },
+    })
+    const assistantMessage = JSON.stringify({
+      timestamp: "2026-08-25T10:00:01.000Z",
+      type: "response_item",
+      payload: {
+        id: "assistant-1",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "The adapter drops the transcript." }],
+      },
+    })
+    writeFileSync(transcript, `${userMessage}\n`)
+
+    pipeline.ingestHook({
+      host: "codex",
+      event: "SubagentStart",
+      deliveryId: "codex-sub-start",
+      workspaceRoot: "/repo",
+      payload: {
+        session_id: "root",
+        agent_id: "child",
+        agent_type: "reviewer",
+        agent_transcript_path: transcript,
+      },
+    })
+
+    const runningSubagent = store.listAgents("codex:root").find((agent) => agent.agentKey === "agent:child")!
+    expect(store.listMessages(runningSubagent.id).map((message) => message.text)).toEqual(["Review the adapter."])
+
+    writeFileSync(transcript, `${userMessage}\n${assistantMessage}\n`)
+    const toolResult = pipeline.ingestHook({
+      host: "codex",
+      event: "PreToolUse",
+      deliveryId: "codex-sub-tool",
+      workspaceRoot: "/repo",
+      payload: {
+        session_id: "root",
+        agent_id: "child",
+        transcript_path: transcript,
+        tool_name: "read_file",
+        tool_use_id: "tool-1",
+      },
+    })
+    expect(store.listMessages(runningSubagent.id).map((message) => message.text)).toEqual([
+      "Review the adapter.",
+      "The adapter drops the transcript.",
+    ])
+    expect(toolResult.duplicates).toBe(1)
+
+    const stopResult = pipeline.ingestHook({
+      host: "codex",
+      event: "SubagentStop",
+      deliveryId: "codex-sub-stop",
+      workspaceRoot: "/repo",
+      payload: {
+        session_id: "root",
+        agent_id: "child",
+        agent_type: "reviewer",
+        agent_transcript_path: transcript,
+        last_assistant_message: "The adapter drops the transcript.",
+      },
+    })
+
+    const subagent = store.listAgents("codex:root").find((agent) => agent.agentKey === "agent:child")!
+    expect(store.listMessages(subagent.id).map((message) => [message.role, message.text])).toEqual([
+      ["user", "Review the adapter."],
+      ["assistant", "The adapter drops the transcript."],
+    ])
+    expect(stopResult.duplicates).toBe(2)
+  })
+})
+
 describe("Broadcaster integration", () => {
   it("publishes reducer output to connected clients", () => {
     const broadcaster = new Broadcaster()

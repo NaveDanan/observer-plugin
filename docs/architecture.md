@@ -140,69 +140,29 @@ hosts of very different capability without misleading anyone.
 
 ## Seat control
 
-Seating is advisory: the matcher picks an employee, the node is labelled, and
-the subagent is briefed with a persona directive. None of that changes what the
-host runs. **Seat control** (`seats.control`, off by default) is the one path
-where Observer stops observing and acts.
+The roster and model pins are separate concepts. Installing Observer exposes
+every employee as a native custom agent, even when the employee has no seat
+configuration. The harness may select an employee when the employee's
+description fits the task. Observer does not rewrite generic delegations to
+force an employee.
 
-OpenCode and GitHub Copilot can honour it. Each host requires a generated
-employee-specific agent because its task tool selects an agent, not a model:
+**Seat control** (`seats.control`, off by default) controls only model pins.
+With it on, a target adds supported model options to that employee's native
+definition. With it off, or without a target, the definition omits model fields
+and the harness inherits or chooses the model.
 
-```text
-seats.employees.<id>.model
-  -> observer install opencode
-  -> ~/.config/opencode/agent/observer-<id>.md      (hidden, mode: subagent)
-  -> plugin rewrites args.subagent_type at tool.execute.before,
-     but only when it was `general`
-  -> task tool resolves the agent, and uses its model
-```
+| Harness | Native employee definition | Supported pin fields |
+| --- | --- | --- |
+| OpenCode | `~/.config/opencode/agent/observer-<id>.md` | `model`, `variant` |
+| Codex | `~/.codex/agents/observer-<id>.toml` | `model`, `model_reasoning_effort`, `service_tier` |
+| Claude Code | `~/.claude/agents/observer-<id>.md` | `model`, `effort` |
+| Copilot | `~/.copilot/agents/observer-<id>.agent.md` and plugin copies | `model`, plus Observer-owned effort/context settings |
 
-```text
-seats.employees.<id>.targets.copilot
-  -> observer install copilot --plugin
-  -> plugin/agents/observer-<id>.agent.md
-  -> ~/.copilot/settings.json subagents.agents.observer:observer-<id>
-  -> preToolUse rewrites args.agent_type to observer:observer-<id>,
-     but only when it was `general-purpose`
-  -> task tool resolves the agent, model, effort, and context tier
-```
-
-There is no shorter OpenCode route. Its task tool accepts
-`{description, prompt, subagent_type, …}` and no model, and it applies a
-`variant` only when the resolved agent sets its own `model`
-(`variant: agent.model ? undefined : parentEffort`). So an effort without a
-model is a no-op, and the only lever is which agent the delegation names.
-
-Copilot's `task` tool likewise has no per-call model or effort fields.
-Observer's synchronous `preToolUse` controller preserves every argument except
-the neutral `agent_type`; generated plugin agents supply the model, and
-Observer-owned entries in `~/.copilot/settings.json` supply `effortLevel` and
-`contextTier`. The controller routes only when both the marker-owned agent file
-and its exact model/effort/context settings are present. Controller failures are
-fail-open: it emits an empty decision and exits successfully so delegation
-proceeds unchanged. Copilot loads agents and subagent settings at startup, so
-the CLI/app must be restarted after seat configuration changes. This path is
-local-only; GitHub-hosted coding-agent sandboxes do not receive the user's local
-plugin or settings.
-
-### Why only `general` is ever replaced
-
-`subagent_type` does not select a model. It selects an entire agent definition:
-prompt, tool permissions, mode. Substituting a generated seat agent for it
-discards everything the named agent was for and keeps only the model.
-
-OpenCode's `general` and Copilot's `general-purpose` are the only neutral
-built-ins eligible for replacement. `explore` is the case that settles it: it carries a
-substantial specialised prompt *and* a deny-by-default permission set that
-allows only reads and searches (`{permission: "*", pattern: "*", action:
-"deny"}` followed by explicit allows for `read`, `grep`, `glob` and `list`).
-Honouring a model
-preference by silently dropping a read-only guarantee is not a trade Observer
-is entitled to make, so a delegation to `explore`, to any other built-in, or to
-a user-written agent is left exactly as the model wrote it — the same fallback
-as a missing definition. The user keeps their agent; they lose the model for
-that one task, and `observer install`, `observer config` and `observer doctor`
-all say so.
+All definitions carry the employee behavior directive and configured skills.
+Harnesses load custom agents at startup, so configuration changes require a
+restart. Sync renders the full roster each time. Turning seat control off
+rewrites pinned employees without model fields; it does not remove employees.
+Observer overwrites or deletes only files carrying its ownership marker.
 
 ## Subagent identity and coordination
 
@@ -258,91 +218,19 @@ New creation is fail-closed when the daemon cannot supply or persist that durabl
 plugin restart could have reset. Resuming an existing `task_id` is not creation and remains outside
 the slot reservation path.
 
-The allow-list is a named constant, `NEUTRAL_AGENT_TYPES`, and — like the
-naming rule — it exists in both `packages/cli/src/seat-agents.ts` and
-`integrations/opencode/observer-plugin.js`, pinned together by a test. Adding
-an entry is one edit if OpenCode ever ships another neutral agent.
-
-### Why the plugin asks the host, not the disk
-
-The task tool does this:
-
-```js
-const agent = await agents.get(args.subagent_type)
-if (!agent) return fail(`Unknown agent type: ${args.subagent_type} …`)
-```
-
-Rewriting `subagent_type` to a name that is not in the registry does not
-degrade the delegation — it kills it. That happens for entirely ordinary
-reasons: the config was edited without re-running the installer, the agent
-directory was cleaned out, OpenCode has not restarted since the files were
-written, or a dotfiles repo carried the config to a machine where the installer
-never ran.
-
-So the plugin verifies before it rewrites, using `client.app.agents()`
-(`GET /agent`) — the host's own registry, the same one the task tool fails
-against. A filesystem check was rejected: OpenCode globs its agent directory
-once at startup and never rescans, so a file can exist on disk and still be
-unknown to the running host. Only the host's answer is evidence. The result is
-cached, so a burst of parallel delegations costs one loopback request.
-
-Every uncertainty falls back to the original `subagent_type`: control off, no
-model configured, a `subagent_type` outside `NEUTRAL_AGENT_TYPES`, host
-unreachable, agent absent. Losing a model preference for one task is
-recoverable; losing the task is not. This is the same rule as the rest of the
-plugin, where every error path is swallowed.
-
 ### Where the persona lives
 
-The directive is appended to the task prompt by the plugin, and is deliberately
-**not** written into the generated agent file. Three reasons, in order of
-weight:
-
-1. It has to survive the fallback. If the persona lived only in the file, the
-   silent decline above would also silently drop the employee's briefing.
-2. It is built per task by the daemon, and carries the seat's configured
-   skills. A file written at install time would freeze it.
-3. Employees with no configured model get no file at all, and must still be
-   briefed.
-
-The generated file therefore has an empty body. OpenCode sets `prompt` to the
-trimmed body and uses it only when truthy, falling back to the provider default
-— which is exactly what the built-in `general` subagent does, because it ships
-with no prompt either. An empty body is how a generated agent stays a plain
-worker rather than acquiring a second, stale personality.
-
-The same reasoning forces the `todowrite` permission the file carries.
-`general` denies `todowrite`; a bare generated agent does not, so without it
-seating an employee would quietly *grant* a delegated subagent the right to
-rewrite the parent session's todo list. That is the same class of silent change
-`NEUTRAL_AGENT_TYPES` exists to prevent, just smaller. Generated seats also
-allow `task` and Observer's coordination tools so they can nest and communicate;
-those additions do not grant file, shell or network access. Keep `todowrite` in
-step with whatever `general` denies; a diff against a running host is how to
-check.
+Native employee definitions carry the stable roster behavior and configured
+skills. OpenCode's runtime matcher may also append a task-specific staffing
+note when the host uses a generic subagent. That note labels and briefs the
+observed task; it does not change the selected agent type or model.
 
 ### Reconciliation, not delta
 
-`syncSeatAgents` reads the whole agent directory and makes it match the config
-on every run, rather than applying the change the user just made. Two failure
-modes drive that:
-
-- `control: false` has to *remove* the definitions, not merely stop consulting
-  them. A stale file keeps billing the user for a model they stopped asking
-  for.
-- A crash between two writes leaves a partial state that a delta would never
-  correct.
-
-Deletion is authorised by a marker inside the file, not by its name, so a
-hand-written `observer-notes.md` survives both a sync and an uninstall. The
-marker is a YAML comment: OpenCode's frontmatter parser drops comments, so it
-is evidence to Observer and invisible to the host.
-
-A seat that `diagnoseSeats` reports as an *error* — an unknown employee id, or
-a model missing its provider — gets no file. This matters more than it sounds:
-a definition with a malformed model still loads, still appears in the registry,
-and so still passes the plugin's existence check, and only then fails when the
-model is resolved. Not writing it turns a broken task back into a no-op.
+Each sync renders all roster employees. Invalid or unsupported targets omit
+the pin while leaving the employee available with the harness model. Deletion
+and overwrites require an Observer marker, so hand-written collisions survive
+sync and uninstall.
 
 ### A variant the model does not declare
 
@@ -355,9 +243,8 @@ if (x.variant && !R.variants?.[x.variant]) return fail(new UnknownEffort({ effor
 ```
 
 So `{"model": "anthropic/claude-opus-4-5", "variant": "xhigh"}` on a model
-offering only low/medium/high writes a valid file, loads, appears in
-`GET /agent`, passes the plugin's check, and then kills the delegation. Same
-remedy, therefore: `syncSeatAgents` writes no file and puts the reason in
+offering only low/medium/high would fail when the employee runs. The sync keeps
+the employee definition but omits the invalid model pin and puts the reason in
 `notes`.
 
 The rule lives in `packages/cli/src/seat-agents.ts` rather than in
@@ -369,8 +256,7 @@ vocabulary for "this seat is broken":
 - `diagnoseSeats` (daemon) still owns whether a seat is *configured* wrongly.
 - `variantsFor` (`packages/cli/src/models.ts`) still owns what a model
   *declares*, and whether Observer is entitled to speak for it at all.
-- `seat-agents.ts` only decides whether a file gets written, which is the one
-  judgement it has always made.
+- `seat-agents.ts` only decides whether the pin fields get written.
 
 **The check is deliberately one-sided.** It refuses only when the catalogue
 gives a non-empty effort scale that excludes the seat's variant. Three cases
@@ -418,13 +304,6 @@ opt-in (`observer config --probe`).
 
 The catalogue is read once per sync, and only when some seat actually pairs a
 model with a variant.
-
-The naming rule (`arjun-mehta` -> `observer-arjun-mehta`) exists in two places:
-`packages/cli/src/seat-agents.ts` and `integrations/opencode/observer-plugin.js`,
-which is dependency-free plain JavaScript copied verbatim into the user's config
-directory and cannot import it. A test loads the plugin's copy and compares its
-output against the original, because drift there would be silent — the installer
-would write one name and the plugin would ask for another.
 
 ### The config UI
 

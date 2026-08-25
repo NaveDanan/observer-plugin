@@ -11,23 +11,16 @@ import { HOST_KINDS, isHostKind } from "./providers.js"
  * agent, which is observed — what the host told us it actually ran. The two
  * must never be conflated; see CONTEXT.md.
  *
- * What a host can actually honour is narrow, and the schema is shaped around
- * it rather than around what we wish were true:
+ * Every supported host receives native agent definitions for the full roster.
+ * A target only pins model fields on its employee's definition; it never makes
+ * the employee available and never routes a delegation to that employee.
+ * Host-specific rules still matter:
  *
- *  - OpenCode's task tool takes no `model` parameter. The only lever is
- *    `subagent_type` -> agent definition -> `model`. Applying a seat spec
- *    therefore means generating a hidden per-employee agent file and
- *    rewriting `args.subagent_type` at `tool.execute.before`. That is
- *    opt-in (`seats.control`) and off by default, because rewriting
- *    `subagent_type` to an agent that does not exist on disk makes the host
- *    fail the delegation outright with "Unknown agent type".
- *  - `variant` (the reasoning effort) is documented in the host as applying
+ *  - `variant` (OpenCode's reasoning effort) is documented as applying
  *    "only when using the agent's configured model", and the task tool
  *    confirms it with `variant: agent.model ? undefined : effort`. An effort
  *    with no model is a no-op, so `diagnoseSeats` says so out loud.
- *  - Copilot uses the same indirection: a synchronous
- *    `preToolUse` hook redirects neutral `general-purpose` tasks to generated
- *    plugin agents, with effort/context stored in Copilot's subagent settings.
+ *  - Copilot stores effort and context under its per-subagent settings.
  *
  * Skills are the exception: they are prompt text, they ride the directive
  * `behaviorDirective` already renders, and they carry none of the above
@@ -181,10 +174,9 @@ export interface SeatSpec {
 
 export interface SeatsConfig {
   /**
-   * Whether Observer may take real control of the model an employee runs, by
-   * generating hidden per-employee agent definitions and rewriting the host's
-   * `subagent_type`. Off by default: it changes what the user is billed for
-   * and can fail a delegation outright if the generated agent is missing.
+   * Whether configured model pins are emitted into employee definitions. Off
+   * by default because a pin changes what the user is billed for. Employee
+   * definitions remain available and inherit host model choices when it is off.
    *
    * `skills` are unaffected by this flag.
    */

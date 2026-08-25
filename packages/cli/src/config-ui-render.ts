@@ -298,13 +298,13 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
     control:
       state.profiles.length === 0
         ? [
-            "OpenCode and Copilot CLI can apply seat control",
-            "Only neutral delegations are redirected - specialist agents keep their prompt, tools and model",
+            "Employee agents are available on every installed harness",
+            "Seat control pins models; it never forces the harness to choose an employee",
           ]
         : [
-            "OpenCode and Copilot CLI targets are applied; Codex and Claude Code targets are recorded only",
+            "OpenCode, Codex, Claude Code, and Copilot targets can pin employee models",
             "Each target says whether it is applied, experimental, configured, or not applied to children",
-            "Only neutral delegations are redirected - specialist agents keep their prompt, tools and model",
+            "The harness still decides whether an employee fits the delegated task",
           ],
     employees: ["Give a person one target per host/profile, plus shared skills."],
     "default-model": [
@@ -336,7 +336,7 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
     lines.push(
       "",
       theme.heading("Getting started"),
-      theme.dim("  1. Turn seat control on, so the models you pick here reach OpenCode."),
+      theme.dim("  1. Turn seat control on, so the models you pick here become employee pins."),
       theme.dim("  2. Open Employees and give someone a model."),
       theme.dim("  3. Press s to save."),
     )
@@ -696,7 +696,7 @@ function targetModelPicker(state: ConfigUIState, room: number, columns: number, 
     theme.dim(
       choosingDefault
         ? "Enter arms this model; the next screen asks who receives it."
-        : `Choose the model to use when ${employee?.name ?? state.employeeId ?? "this employee"} launches matching subagents.`,
+        : `Choose the model to pin when the harness uses ${employee?.name ?? state.employeeId ?? "this employee"}.`,
     ),
     "",
   ]
@@ -1069,7 +1069,7 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[], profiles
 
   const configured = roster.filter((row) => seats.employees[row.id] !== undefined)
   if (configured.length === 0) {
-    lines.push("No employee has a seat. Every subagent inherits the session's model.")
+    lines.push("No employee model pins are configured. Employee agents remain available and inherit the harness's model choice.")
   } else if (profiles.length > 0) {
     for (const row of configured) {
       lines.push(...reportTargetSeat(row.id, seats.employees[row.id]!, profiles, seats.control))

@@ -73,9 +73,9 @@ const CODEX_HOST: HostSummary = {
   profiles: [{ id: "codex:default", host: "codex", label: "Codex" }],
   capabilities: {
     discovery: "live",
-    childModel: "experimental",
-    childReasoning: "experimental",
-    requiresReload: false,
+    childModel: "supported",
+    childReasoning: "supported",
+    requiresReload: true,
   },
   warnings: [],
 }
@@ -84,7 +84,7 @@ const CLAUDE_HOST: HostSummary = {
   id: "claude",
   label: "Claude Code",
   profiles: [{ id: "claude:default", host: "claude", label: "Claude Code" }],
-  capabilities: { discovery: "cached", childModel: "unsupported", childReasoning: "unsupported", requiresReload: true },
+  capabilities: { discovery: "cached", childModel: "supported", childReasoning: "supported", requiresReload: true },
   warnings: [],
 }
 
@@ -263,8 +263,12 @@ describe("a null capabilities is unknown, never 'no control'", () => {
   })
 
   it("is a different verdict from an adapter that looked and said unsupported", () => {
-    expect(controlVerdict(directoryOf(CLAUDE_HOST), "claude", true).status).toBe("inert")
-    expect(controlVerdict(directoryOf(CLAUDE_HOST), "claude", true).label).toBe("not applied to children")
+    const unsupported = {
+      ...CLAUDE_HOST,
+      capabilities: { ...CLAUDE_HOST.capabilities!, childModel: "unsupported" as const, childReasoning: "unsupported" as const },
+    }
+    expect(controlVerdict(directoryOf(unsupported), "claude", true).status).toBe("inert")
+    expect(controlVerdict(directoryOf(unsupported), "claude", true).label).toBe("not applied to children")
   })
 })
 
@@ -415,22 +419,18 @@ describe("loading is a state, not a blank", () => {
 describe("control status never overstates", () => {
   const directory = directoryOf(OPENCODE_HOST, CODEX_HOST, CLAUDE_HOST)
 
-  it("is applied only for OpenCode, and only with seat control on", () => {
-    expect(controlVerdict(directory, "opencode", true).status).toBe("applied")
-    expect(controlVerdict(directory, "opencode", false).status).toBe("configured")
-    expect(controlVerdict(directory, "opencode", false).sentence).toMatch(/seat control is off/)
+  it("applies model pins on every supported harness only when control is on", () => {
+    for (const host of ["opencode", "codex", "claude"]) {
+      expect(controlVerdict(directory, host, true).status, host).toBe("applied")
+      expect(controlVerdict(directory, host, true).sentence, host).toContain("does not force delegation")
+      expect(controlVerdict(directory, host, false).status, host).toBe("configured")
+      expect(controlVerdict(directory, host, false).sentence, host).toMatch(/seat control is off/)
+    }
   })
 
   it("says OpenCode needs a restart, because it reads agent definitions once", () => {
     expect(controlVerdict(directory, "opencode", true).requiresReload).toBe(true)
     expect(controlVerdict(directory, "opencode", true).reloadSentence).toMatch(/next time you start/)
-  })
-
-  it("calls Codex experimental whether or not seat control is on", () => {
-    expect(controlVerdict(directory, "codex", true).status).toBe("experimental")
-    expect(controlVerdict(directory, "codex", false).status).toBe("experimental")
-    expect(controlVerdict(directory, "codex", true).sentence).toMatch(/fails open/)
-    expect(controlVerdict(directory, "codex", true).requiresReload).toBe(false)
   })
 
   it("never lets a host the daemon does not list look like it steers a child", () => {
@@ -447,7 +447,7 @@ describe("control status never overstates", () => {
   })
 
   it("does not send the user to flip seat control for a host it would not help", () => {
-    for (const host of ["claude", "cursor"]) {
+    for (const host of ["cursor"]) {
       expect(controlVerdict(directory, host, false).sentence, host).not.toMatch(/Turn seat control on/)
     }
   })

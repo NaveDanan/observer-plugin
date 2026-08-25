@@ -41,13 +41,10 @@ import type {
  *     that does. `CatalogueModel.options` is therefore a list of descriptors,
  *     each emitted only for models that actually declare it.
  *
- *  3. **Child control is unproven.** Claude's agent-definition contract really
- *     does carry a per-subagent model and effort, so it is tempting to report
- *     `childModel: "supported"`. Observer has no verified path to set it — see
- *     `CLAUDE_CAPABILITIES` — and a capability flag is a promise the seat UI
- *     makes to the user about their bill. It stays `"unsupported"` until a
- *     generated definition plus a `PreToolUse` rewrite has been measured
- *     against real Claude Code versions.
+ *  3. **Child control belongs in native agent definitions.** Observer exposes
+ *     every employee as a Claude subagent. A controlled seat adds Claude's
+ *     documented model and effort fields; no hook rewrites an Agent call or
+ *     forces Claude to choose that employee.
  *
  * Neither `catalogue()` nor `diagnose()` throws. Both are called from a TUI on
  * half-typed input and from the daemon on a config written on another machine;
@@ -693,37 +690,15 @@ export function claudeAdapter(providers?: Record<string, ProviderInstanceConfig>
 /* -------------------------------------------------------------------------- */
 
 /**
- * What Observer can and cannot do to a Claude seat today.
- *
- * `childModel` and `childReasoning` are `"unsupported"`, and that is a
- * statement about Observer, not about Claude. Claude's agent-definition
- * contract carries a per-subagent model, effort, prompt, tools, limits and
- * permission mode, and an Agent invocation can carry a model override on top.
- * The capability is real. Observer's *path to it* is not verified:
- *
- *  - `SubagentStart` fires after the child exists. It can add context; it
- *    cannot choose a model.
- *  - The current hook emitter cannot return `updatedInput`, so there is no way
- *    to rewrite an Agent call in flight.
- *  - Per-call effort is not a stable documented Agent input field.
- *
- * The future path, named so the next agent does not have to rediscover it:
- * generate marker-owned Claude agent definitions, one per employee per
- * profile, and redirect only a verified neutral/default Agent invocation from
- * a dedicated synchronous `PreToolUse` controller — copying the whole original
- * input and changing one field, leaving named specialised agents untouched.
- * When that is measured against real Claude Code versions, these two flags
- * become `"experimental"`, then `"supported"`. Not before: a seat UI reads
- * these flags to decide whether to tell a user their employee "runs Opus", and
- * that sentence is a claim about their bill.
- *
- * `requiresReload: true` because model and effort are read when a Claude
- * session starts; changing a seat cannot reach a session already running.
+ * Observer writes marker-owned Claude subagent definitions for the full
+ * roster. Only model and effort are pinned today. Context-window, fast-mode,
+ * and thinking preferences remain recorded but are not emitted into an agent
+ * definition.
  */
 export const CLAUDE_CAPABILITIES: HostCapabilities = {
   discovery: "cached",
-  childModel: "unsupported",
-  childReasoning: "unsupported",
+  childModel: "supported",
+  childReasoning: "supported",
   requiresReload: true,
 }
 
@@ -842,7 +817,17 @@ export function diagnoseClaudeTarget(input: DiagnoseInput): SeatIssue[] {
       continue
     }
 
-    if (id === "effort") diagnoseEffort(option.value, known, add)
+    if (id !== "effort") {
+      add(
+        "unknown-field",
+        "info",
+        suffix,
+        `Observer records Claude's "${id}" preference but cannot pin it in an employee agent definition yet. Model and effort pins still apply.`,
+      )
+      continue
+    }
+
+    diagnoseEffort(option.value, known, add)
   }
 
   return issues

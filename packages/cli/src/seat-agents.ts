@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from "node:path"
 import {
   OPENCODE_DEFAULT_PROFILE,
+  applySeatSkills,
   createOpencodeAdapter,
   diagnoseOpencodeModel,
   diagnoseSeats,
@@ -10,25 +11,19 @@ import {
   seatTargets,
 } from "@observer-ai/daemon"
 import type { OpencodeSeatTarget, SeatIssue, SeatSpec, SeatTarget, SeatsConfig } from "@observer-ai/daemon"
-import { getEmployee } from "@observer-ai/roster"
+import { behaviorDirective, getEmployee, ROSTER } from "@observer-ai/roster"
 import { opencodeAgentDir } from "./paths.js"
 
 /**
- * Generated OpenCode agent definitions: the half of seat control that makes a
- * seat spec's model and reasoning effort real.
- *
- * OpenCode's task tool takes no model parameter. The only lever is
- * `subagent_type` -> agent definition -> `model`, so applying a seat spec means
- * writing a per-employee agent file here and having the plugin point the
- * delegation at it. Everything in this module is therefore about one question:
- * is the file on disk exactly what the config asks for, and nothing more?
+ * Generated OpenCode employee definitions. The full roster is always
+ * selectable; seat control only adds a model and variant to the chosen
+ * employee's definition.
  *
  * Two properties matter more than any feature:
  *
- *  1. Turning `control` off must actually turn it off. A stale definition left
- *     behind after a disabled save keeps billing the user for a model they
- *     stopped asking for, so every run reconciles the whole directory rather
- *     than applying a delta.
+ *  1. Turning `control` off must remove model pins without removing employees.
+ *     A stale model field keeps billing the user for a choice they disabled,
+ *     so every run reconciles the whole directory rather than applying a delta.
  *  2. Nothing Observer did not write is ever deleted. The directory is the
  *     user's; a hand-written `observer-notes.md` has to survive both a sync and
  *     an uninstall. Ownership is proved by a marker inside the file, not by the
@@ -49,34 +44,11 @@ import { opencodeAgentDir } from "./paths.js"
  * parser and drops comments, so this is invisible to the host and legible to
  * us. Deleting the line is how a user adopts a generated file as their own.
  */
-const MARKER = "observer:seat-agent v1"
+const MARKER = "observer:employee-agent v1"
+const LEGACY_MARKER = "observer:seat-agent v1"
 
 /** Only files matching this *and* carrying the marker are ever removed. */
 const GENERATED_FILE = /^observer-.+\.md$/
-
-/**
- * The `subagent_type` values seat control is allowed to replace.
- *
- * `subagent_type` does not select a model — it selects a whole agent
- * definition, prompt and tool permissions included. `general` is the only
- * built-in that ships with neither, so substituting a generated seat agent for
- * it is lossless: it changes the model and nothing else. Every other agent,
- * built-in or user-written, carries intent Observer did not author, and
- * `explore` — a specialised prompt plus a deny-by-default permission set that
- * allows only reads and searches — is why this is a
- * rule and not a preference. Dropping a read-only restriction to honour a model
- * preference is not a trade Observer makes silently.
- *
- * Nothing in this module branches on the list; the plugin is what enforces it.
- * It lives here so `summarise` can tell the user what seat control applies to
- * without a second copy of the sentence, and so a test can pin the two lists
- * together.
- *
- * **This rule is duplicated in `integrations/opencode/observer-plugin.js`**,
- * which is dependency-free plain JavaScript copied verbatim into the user's
- * config directory and so cannot import it. Change one, change both.
- */
-export const NEUTRAL_AGENT_TYPES = ["general"] as const
 
 /**
  * The OpenCode agent name for an employee's generated definition. Slug-shaped.
@@ -117,9 +89,9 @@ export interface SeatAgentSync {
 }
 
 /**
- * Brings ~/.config/opencode/agent/observer-*.md into line with the seat specs.
- * Safe to call repeatedly. Writes nothing when seats.control is false, and
- * removes any definitions a previous run left behind.
+ * Brings ~/.config/opencode/agent/observer-*.md into line with the roster and
+ * its optional model pins. Every roster employee gets a selectable agent.
+ * Seat control only decides whether that definition pins a model.
  *
  * `written` and `removed` are literal: a run that finds every file already
  * correct reports both as empty. That makes idempotency observable instead of
@@ -133,8 +105,9 @@ export interface SeatAgentSync {
 export function syncSeatAgents(seats: SeatsConfig): SeatAgentSync {
   const directory = seatAgentDir()
   const notes: string[] = []
-  const control = seats?.control === true
-  const desired = control ? renderDesired(seats, notes) : new Map<string, string>()
+  const normalized = normalizeSeats(seats)
+  const control = normalized.control === true
+  const desired = renderDesired(normalized, notes, control)
 
   const written: string[] = []
   const removed: string[] = []
@@ -145,7 +118,12 @@ export function syncSeatAgents(seats: SeatsConfig): SeatAgentSync {
     const path = join(directory, file)
     // Skip a byte-identical rewrite: an unchanged mtime is the cheapest signal
     // to anything watching this directory that nothing actually happened.
-    if (readIfPresent(path) === contents) continue
+    const before = readIfPresent(path)
+    if (before === contents) continue
+    if (before !== undefined && !isOwned(before)) {
+      notes.push(`${path} was left unchanged because Observer does not own it.`)
+      continue
+    }
     writeFileSync(path, contents)
     written.push(path)
   }
@@ -158,6 +136,14 @@ export function syncSeatAgents(seats: SeatsConfig): SeatAgentSync {
 
   notes.unshift(...summarise({ control, directory, desired: desired.size, written, removed }))
   return { written, removed, notes }
+}
+
+function normalizeSeats(seats: SeatsConfig): SeatsConfig {
+  if (typeof seats !== "object" || seats === null || Array.isArray(seats)) return { control: false, employees: {} }
+  const employees = typeof seats.employees === "object" && seats.employees !== null && !Array.isArray(seats.employees)
+    ? seats.employees
+    : {}
+  return { ...seats, employees }
 }
 
 /** Absolute paths of every file in the directory that Observer generated. */
@@ -174,7 +160,7 @@ function generatedFiles(directory: string): string[] {
     // `observer.md` is the @observer mention, not a seat, and does not match.
     if (!GENERATED_FILE.test(entry)) continue
     const path = join(directory, entry)
-    if (!readIfPresent(path)?.includes(MARKER)) continue
+    if (!isOwned(readIfPresent(path))) continue
     found.push(path)
   }
   return found
@@ -198,8 +184,8 @@ export function removeSeatAgents(): string[] {
 
 // ------------------------------------------------------------------ rendering
 
-/** filename -> file contents, for every seat that can actually work. */
-function renderDesired(seats: SeatsConfig, notes: string[]): Map<string, string> {
+/** filename -> file contents, for every employee, with a model pin when active. */
+function renderDesired(seats: SeatsConfig, notes: string[], control: boolean): Map<string, string> {
   const desired = new Map<string, string>()
 
   // Every seat reduced to the one OpenCode target it asks for, whether it was
@@ -245,12 +231,13 @@ function renderDesired(seats: SeatsConfig, notes: string[]): Map<string, string>
     issues.filter((issue) => issue.severity === "error" && issue.employeeId).map((issue) => issue.employeeId as string),
   )
 
-  for (const seat of seated) {
-    if (blocked.has(seat.employeeId)) continue
-    // No model means nothing to apply: a variant alone is a no-op the host
-    // discards, so there is no file worth writing.
-    if (!seat.resolved) continue
-    desired.set(`${seatAgentName(seat.employeeId)}.md`, renderAgent(seat.employeeId, seat.resolved))
+  const active = new Map(
+    seated
+      .filter((seat) => control && !blocked.has(seat.employeeId) && seat.resolved !== undefined)
+      .map((seat) => [seat.employeeId, seat.resolved!]),
+  )
+  for (const profile of ROSTER) {
+    desired.set(`${seatAgentName(profile.id)}.md`, renderAgent(profile.id, seats, active.get(profile.id)))
   }
 
   for (const issue of issues) {
@@ -421,37 +408,31 @@ export function diagnoseOpencodeSeats(seats: SeatsConfig): SeatIssue[] {
  * fields, which is what makes a migrated seat byte-identical to the one it
  * replaced instead of merely similar.
  */
-function renderAgent(employeeId: string, target: OpencodeSeatTarget): string {
+function renderAgent(employeeId: string, seats: SeatsConfig, target: OpencodeSeatTarget | undefined): string {
   const profile = getEmployee(employeeId)
-  const who = profile ? `${profile.fullName} (${profile.title})` : employeeId
+  if (!profile) throw new Error(`Unknown employee ${employeeId}`)
+  const who = `${profile.fullName} (${profile.title})`
   const lines = [
     "---",
-    `# ${MARKER} - generated by Observer from seats.employees.${employeeId}.`,
+    `# ${MARKER} - generated by Observer for roster employee ${employeeId}.`,
     "# Edits are overwritten by `observer install opencode`. Delete the line above to keep this file.",
     `name: ${yaml(seatAgentName(employeeId))}`,
-    `description: ${yaml(`Observer seat for ${who}. Runs delegated work on the model this employee is assigned.`)}`,
+    `description: ${yaml(`Use ${who} for delegated work matching ${profile.fields.slice(0, 5).join(", ")}.`)}`,
     "mode: subagent",
-    // Hidden keeps fourteen generated entries out of OpenCode's @ menu. The
-    // plugin reaches them by name; a human never needs to.
-    "hidden: true",
     // The one permission the built-in `general` subagent denies and a bare
-    // generated agent does not. Without this line the swap quietly *widens*
-    // what a delegated subagent may do — the host lets it edit the parent
-    // session's todo list — which is the same class of silent change the
-    // NEUTRAL_AGENT_TYPES allow-list exists to prevent, just smaller. Keep it
-    // in step with whatever `general` denies; a live `GET /agent` diff against
-    // `general` is how to check.
+    // generated agent does not. Keep this in step with whatever `general`
+    // denies; a live `GET /agent` diff against `general` is how to check.
     "permission:",
     `  todowrite: ${yaml("deny")}`,
-    `model: ${yaml(target.model)}`,
   ]
-  if (target.variant !== undefined) {
+  if (target !== undefined) lines.push(`model: ${yaml(target.model)}`)
+  if (target?.variant !== undefined) {
     // Free-form on purpose: each model declares its own subset of efforts and
     // the host has the final say, so an enum here would reject a level that
     // ships in models.dev tomorrow.
     lines.push(`variant: ${yaml(target.variant)}`)
   }
-  lines.push("---", "")
+  lines.push("---", "", behaviorDirective(applySeatSkills(profile, seats)), "")
   return lines.join("\n")
 }
 
@@ -478,38 +459,23 @@ function summarise(input: {
   const notes: string[] = []
   const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? "" : "s"}`
 
-  if (!input.control) {
-    if (input.removed.length > 0) {
-      notes.push(
-        `Seat control is off, so ${count(input.removed.length, "generated agent definition")} were removed from ${input.directory}.`,
-      )
-    }
-    return notes
-  }
-
-  if (input.desired === 0) {
-    if (input.removed.length > 0) {
-      notes.push(`Removed ${count(input.removed.length, "generated agent definition")} whose seat no longer asks for one.`)
-    }
-    return notes
-  }
-
-  notes.push(`${count(input.desired, "seat agent definition")} in force in ${input.directory}.`)
+  notes.push(`${count(input.desired, "employee agent definition")} available in ${input.directory}.`)
   if (input.removed.length > 0) {
     notes.push(`Removed ${count(input.removed.length, "generated agent definition")} whose seat no longer asks for one.`)
   }
   if (input.written.length > 0) {
     notes.push("Restart OpenCode so the new agent definitions load; agents are read at startup.")
   }
-  // The two visible behaviour changes, said where somebody will read it. The
-  // task tool asks permission with the agent name it was given, so a seated
-  // delegation now prompts for `observer-<employee>` and not for `general` —
-  // and only a `general` delegation is touched at all, because every other
-  // agent carries a prompt or a tool restriction seat control must not discard.
   notes.push(
-    `Seat control applies to ${NEUTRAL_AGENT_TYPES.map((name) => `\`${name}\``).join(" or ")} delegations only: those now ask permission as \`observer-<employee>\` and run on that employee's model instead of the session's. A delegation the model sends to any other agent is left alone and keeps that agent's own prompt, tools and model.`,
+    input.control
+      ? `Seat control pins configured models on employee agents. It does not force OpenCode to use an employee; OpenCode may choose one when its description fits.`
+      : "Seat control is off, so every employee agent inherits OpenCode's model choice.",
   )
   return notes
+}
+
+function isOwned(contents: string | undefined): boolean {
+  return contents?.includes(MARKER) === true || contents?.includes(LEGACY_MARKER) === true
 }
 
 function readIfPresent(path: string): string | undefined {

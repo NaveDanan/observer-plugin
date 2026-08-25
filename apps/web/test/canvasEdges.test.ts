@@ -85,7 +85,7 @@ describe("toFlowEdges", () => {
             : `edge-${edgeType}`,
         source: "opencode:root~session:a",
         target: "opencode:root~session:b",
-        type: edgeType === "messaged" ? PEER_EDGE_TYPE : "step",
+        type: "step",
         data: { edgeType, provenance: "reconciled", label: null, bidirectional: false },
         pathOptions: { borderRadius: 0 },
       })
@@ -105,10 +105,10 @@ describe("toFlowEdges", () => {
     expect(toFlowEdges([edge("messaged")], true)[0]?.animated).toBe(false)
   })
 
-  it("retains an authoritative relationship label", () => {
+  it("retains an authoritative relationship label before lineage is known", () => {
     const [flowEdge] = toFlowEdges([edge("messaged", "authoritative", "direct message")], false)
 
-    expect(flowEdge?.label).toBeUndefined()
+    expect(flowEdge?.label).toBe("direct message")
     expect(flowEdge?.ariaLabel).toBe("direct message")
   })
 
@@ -117,9 +117,11 @@ describe("toFlowEdges", () => {
     expect(toFlowEdges([edge("spawned", "authoritative")], false)[0]?.label).toBeUndefined()
   })
 
-  it("routes every message through the dedicated side handles", () => {
-    const [message] = toFlowEdges([edge("messaged")], false)
-    const [spawn] = toFlowEdges([edge("spawned")], false)
+  it("routes cross-branch messages through the dedicated side handles", () => {
+    const { agents, edges } = family()
+    const lineage = computeLineage(agents, edges)
+    const [message] = toFlowEdges([link("a", "b", "messaged")], false, lineage)
+    const [spawn] = toFlowEdges([link("root", "a")], false, lineage)
 
     expect(message).toMatchObject({
       sourceHandle: MESSAGE_SOURCE_HANDLE,
@@ -266,12 +268,12 @@ describe("peer messages", () => {
     expect(new Set(drawn.map((entry) => entry.id)).size).toBe(2)
   })
 
-  it("uses the communication arc for ancestor messages too", () => {
+  it("reserves the communication arc for messages outside the family line", () => {
     const [message] = toFlowEdges([link("a", "a1", "messaged")], false, lineage)
 
-    expect(message?.type).toBe(PEER_EDGE_TYPE)
-    expect(message?.className).toContain("edge-peer")
-    expect(message?.data?.peer).toBe(true)
+    expect(message?.type).toBe("step")
+    expect(message?.className).not.toContain("edge-peer")
+    expect(message?.data?.peer).toBe(false)
   })
 })
 

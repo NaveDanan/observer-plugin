@@ -3,9 +3,13 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { dirname, join } from "node:path"
 import type { InstallResult } from "./install.js"
 import { HOST_EVENTS } from "./install.js"
-import { syncCopilotSeatAgents, removeCopilotSeatSettings } from "./copilot-seat-agents.js"
+import {
+  removeCopilotEmployeeAgents,
+  removeCopilotSeatSettings,
+  syncCopilotSeatAgents,
+} from "./copilot-seat-agents.js"
 import { loadConfig } from "@observer-ai/daemon"
-import { copilotControlPath, copilotHome, emitterPath, nodePath, shellQuote } from "./paths.js"
+import { copilotHome, emitterPath, nodePath, shellQuote } from "./paths.js"
 
 /**
  * Copilot CLI plugin packaging.
@@ -105,16 +109,6 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
   if (!existsSync(emitter)) {
     return { host: "copilot", action: "missing", path: emitter, notes: ["Hook emitter not found; reinstall Observer."] }
   }
-  const controller = copilotControlPath()
-  if (!existsSync(controller)) {
-    return {
-      host: "copilot",
-      action: "missing",
-      path: controller,
-      notes: ["Copilot seat controller not found; reinstall Observer."],
-    }
-  }
-
   // 1. Manifest. `hooks` points at the conventional location explicitly so the
   //    file is self-describing rather than relying on discovery.
   mkdirSync(pluginDir, { recursive: true })
@@ -135,30 +129,18 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
   mkdirSync(join(pluginDir, "hooks"), { recursive: true })
   const hooks: Record<string, unknown> = {}
   for (const event of HOST_EVENTS.copilot) {
-    const entries: Record<string, unknown>[] = []
-    if (event === "preToolUse") {
-      entries.push({
-        type: "command",
-        matcher: "task",
-        bash: `${shellQuote(nodePath())} ${shellQuote(controller)}`,
-        powershell: `& "${nodePath()}" "${controller}"`,
-        timeoutSec: 3,
-      })
-    }
-    entries.push({
+    hooks[event] = [{
       type: "command",
       bash: `${shellQuote(nodePath())} ${shellQuote(emitter)} --host copilot --event ${event}`,
       powershell: `& "${nodePath()}" "${emitter}" --host copilot --event ${event}`,
       timeoutSec: HOOK_TIMEOUT_SECONDS,
-    })
-    hooks[event] = entries
+    }]
   }
   writeJson(join(pluginDir, "hooks", "hooks.json"), { version: 1, hooks })
 
   // 3. A copy of the emitter, so the installed plugin is inspectable on its own.
   mkdirSync(join(pluginDir, "scripts"), { recursive: true })
   copyFileSync(emitter, join(pluginDir, "scripts", "emit.js"))
-  copyFileSync(controller, join(pluginDir, "scripts", "copilot-control.js"))
 
   const notes = [
     "The plugin carries the same hooks as the plain install; use one or the other, not both.",
@@ -166,7 +148,7 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
   try {
     notes.push(...syncCopilotSeatAgents(loadConfig().seats).notes)
   } catch (error) {
-    notes.push(`Seat agents were not generated: ${error instanceof Error ? error.message : String(error)}`)
+    notes.push(`Employee agents were not generated: ${error instanceof Error ? error.message : String(error)}`)
   }
 
   // 4. Hand it to Copilot. This is the step that makes it appear in the
@@ -187,6 +169,11 @@ export function uninstallCopilotPlugin(run: CopilotRunner = runCopilot): Install
   const pluginDir = copilotPluginDir()
   let removed = false
   const notes: string[] = removeCopilotSeatSettings()
+  const employeeAgents = removeCopilotEmployeeAgents()
+  if (employeeAgents.length > 0) {
+    removed = true
+    notes.push(`Removed ${employeeAgents.length} personal Copilot employee agents.`)
+  }
 
   // Ask Copilot to forget it first: removing the staging directory underneath
   // an installed plugin would leave the CLI listing something with no source.

@@ -91,12 +91,15 @@ describe("install", () => {
     expect(entry.timeoutSec).toBe(5)
   })
 
-  it("writes Codex hooks as shell commands with quoted paths", () => {
+  it("writes Codex hooks with platform-specific commands", () => {
     install("codex")
     const document = readJson(hostConfigPath("codex"))
     const entry = document["hooks"]["SessionStart"][0].hooks[0]
     expect(entry.command).toContain("--host codex --event SessionStart")
+    expect(entry.commandWindows).toContain("WindowsPowerShell\\v1.0\\powershell.exe")
+    expect(entry.commandWindows).toContain("-EncodedCommand")
     expect(entry.statusMessage).toBe("Observer")
+    expect(document["hooks"]["SessionEnd"][0].hooks[0].timeout).toBe(3)
   })
 
   it("honours CODEX_HOME and XDG_CONFIG_HOME", () => {
@@ -137,7 +140,7 @@ describe("install", () => {
     expect(existsSync(hostConfigPath("opencode"))).toBe(false)
     expect(existsSync(join(seatAgentDir(), "observer.md"))).toBe(false)
     expect(result.action).toBe("removed")
-    expect(result.notes.join("\n")).toContain("1 generated seat agent definition")
+    expect(result.notes.join("\n")).toContain("14 generated seat agent definitions")
   })
 })
 
@@ -186,7 +189,7 @@ describe("uninstall", () => {
     const result = uninstall("opencode")
 
     expect(result.action).toBe("removed")
-    expect(result.notes.join("\n")).toContain("1 generated seat agent definition")
+    expect(result.notes.join("\n")).toContain("14 generated seat agent definitions")
     expect(result.notes.join("\n")).not.toContain("Removed the Observer plugin")
   })
 })

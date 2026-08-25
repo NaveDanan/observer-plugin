@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest"
 // Straight from source rather than the package barrel, which resolves to
 // `dist` and would test whatever was last compiled.
 import {
+  contextTierWindowsFor,
   contextTiersFor,
   contextWindowsFor,
   refreshCopilotModelMetadata,
@@ -24,7 +25,7 @@ const SNAPSHOT = JSON.stringify({
       "claude-opus-5": { name: "Claude Opus 5", limit: { context: 1_000_000, output: 64_000 } },
       "gpt-5.6-sol": {
         name: "GPT-5.6 Sol",
-        limit: { context: 1_050_000 },
+        limit: { context: 1_050_000, output: 128_000 },
         cost: {
           input: 2.5,
           output: 15,
@@ -110,6 +111,20 @@ describe("contextTiersFor", () => {
       expect(contextTiersFor("github-copilot", raw).size).toBe(0)
     }
     expect(contextTiersFor("no-such-provider", SNAPSHOT).size).toBe(0)
+  })
+})
+
+describe("contextTierWindowsFor", () => {
+  it("turns the model list's prompt and output limits into total context windows", () => {
+    expect(contextTierWindowsFor("github-copilot", SNAPSHOT).get("gpt-5.6-sol")).toEqual({
+      standard: 400_000,
+      maximum: 1_050_000,
+    })
+  })
+
+  it("omits a tier when the model list lacks the output allowance needed for a total", () => {
+    const incomplete = SNAPSHOT.replace('limit":{"context":1050000,"output":128000}', 'limit":{"context":1050000}')
+    expect(contextTierWindowsFor("github-copilot", incomplete).has("gpt-5.6-sol")).toBe(false)
   })
 })
 

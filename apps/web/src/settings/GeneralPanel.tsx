@@ -247,7 +247,7 @@ export function GeneralPanel(): JSX.Element {
         <SettingsRow
           id="setting-guidance"
           title="Roster guidance"
-          description="Whether the OpenCode plugin offers the roster to the root agent, so it can pick an employee for a delegation by name. Off, the roster still labels and briefs whoever the matcher seats — the root agent is simply never told the cast list."
+          description="Whether the OpenCode plugin adds an extra roster briefing to the root agent. Native employee agents remain available on installed harnesses either way."
           resetAction={
             config.guidance !== DEFAULT_GUIDANCE ? (
               <SettingResetButton label="roster guidance" onClick={() => patch(() => ({ guidance: DEFAULT_GUIDANCE }))} />

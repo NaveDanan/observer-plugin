@@ -304,8 +304,8 @@ function applyNote(seats: SeatsConfig, sync: SyncSeatAgents | undefined): string
     const suffix = churn.length > 0 ? ` (${churn.join(", ")})` : ""
     if (result.notes.length > 0) return `${result.notes.join(" ")}${suffix}`
     return seats.control
-      ? `Agent definitions are up to date${suffix}.`
-      : `Seat control is off, so no agent definitions are in force${suffix}. Skills apply anyway.`
+      ? `Employee definitions and model pins are up to date${suffix}.`
+      : `Employee definitions are up to date${suffix}. Seat control is off, so the harness chooses their models. Skills apply anyway.`
   } catch (error) {
     return `Config saved, but agent definitions failed: ${error instanceof Error ? error.message : String(error)}`
   }
@@ -317,18 +317,18 @@ function applyNote(seats: SeatsConfig, sync: SyncSeatAgents | undefined): string
  * A full-screen UI takes its own output with it when it exits, so whatever
  * the user needs to carry away has to be said here, in the scrollback they
  * keep. With seat control on that includes the step Observer cannot take for
- * them: OpenCode reads agent definitions at startup, so a session already
- * running will not see the ones this save just wrote.
+ * them: harnesses read native agent definitions at startup, so a session
+ * already running will not see the ones this save just wrote.
  */
 function farewell(state: ConfigUIState, saves: number): string[] {
   if (state.dirty) return ["Left without saving. The config on disk is unchanged."]
   if (saves === 0) return ["No changes."]
   if (!state.seats.control) {
-    return ["Seats saved. Seat control is off, so models and efforts stay inert - skills still apply."]
+    return ["Employees saved. Harnesses may use them with their own model choices; configured pins stay inactive."]
   }
   return [
-    "Seats saved. Seat control is on, so OpenCode subagents will run the models you chose.",
-    `Agent definitions live in ${seatAgentDir()}.`,
-    "Restart OpenCode to pick them up: it reads agent definitions once, at startup.",
+    "Employees saved. Seat control is on, so configured employees pin the models you chose.",
+    `OpenCode agent definitions live in ${seatAgentDir()}; other harnesses use their native agent directories.`,
+    "Restart installed harnesses so they reload employee definitions.",
   ]
 }

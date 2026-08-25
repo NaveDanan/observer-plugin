@@ -379,16 +379,15 @@ describe("diagnose", () => {
     expect(issues[0]?.path).toBe("seats.employees.arjun-mehta.targets.claude:default.options.thinking")
   })
 
-  it("stays silent about options on a model it does not know", () => {
-    // A deployment id's capabilities are unknowable from here, so "this model
-    // does not declare thinking" would be an assertion with no basis.
-    expect(
-      diagnose({
+  it("reports unpinnable options on a model it does not know without guessing its capabilities", () => {
+    const issues = diagnose({
         host: "claude",
         model: "anthropic.claude-opus-4-5-v1:0",
         options: [{ id: "thinking", value: true }, { id: "effort", value: "turbo" }],
-      }),
-    ).toEqual([])
+      })
+    expect(issues).toHaveLength(1)
+    expect(issues[0]?.severity).toBe("info")
+    expect(issues[0]?.message).toContain("cannot pin")
   })
 
   it("reports an option id it does not apply as info, preserved not deleted", () => {
@@ -430,16 +429,12 @@ describe("diagnose", () => {
 })
 
 describe("capabilities", () => {
-  it("does not claim child control it has not verified", () => {
+  it("reports native employee-agent model and effort control", () => {
     const { adapter } = adapterAt("2.4.0")
     expect(adapter.capabilities(CLAUDE_DEFAULT_PROFILE_ID)).toEqual({
       discovery: "cached",
-      // Claude's agent-definition contract really does carry a per-subagent
-      // model and effort. Observer has no verified path to set it, and a seat
-      // UI reads these flags to tell a user their employee "runs Opus" — which
-      // is a claim about their bill.
-      childModel: "unsupported",
-      childReasoning: "unsupported",
+      childModel: "supported",
+      childReasoning: "supported",
       requiresReload: true,
     })
   })
@@ -448,7 +443,7 @@ describe("capabilities", () => {
     const { adapter } = adapterAt("2.4.0")
     const capabilities = adapter.capabilities(CLAUDE_DEFAULT_PROFILE_ID)
     capabilities.childModel = "supported"
-    expect(CLAUDE_CAPABILITIES.childModel).toBe("unsupported")
+    expect(CLAUDE_CAPABILITIES.childModel).toBe("supported")
   })
 
   it("reports discovery as cached, because that is what it is", () => {

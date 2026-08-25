@@ -311,6 +311,12 @@ export interface RefreshCopilotModelMetadataOptions {
 
 export type ModelMetadataFreshness = "live" | "cached" | "stale" | "unavailable"
 
+/** The two total context capacities behind Copilot's named context tiers. */
+export interface ContextTierWindows {
+  standard: number
+  maximum: number
+}
+
 /** Observer's own models.dev cache, independent of whether OpenCode is installed. */
 export function copilotModelMetadataCachePath(): string {
   const base =
@@ -437,7 +443,7 @@ export function contextTiersFor(provider: string, raw?: string): Set<string> {
     const entry = parseCatalogue(text).get(provider)
     if (entry === undefined) return tiered
     for (const [id, model] of entry.models) {
-      if (!model.contextTiered) continue
+      if (model.contextTierStart === undefined) continue
       // The catalogue keys models by their qualified id; hosts name them bare.
       tiered.add(id.startsWith(prefix) ? id.slice(prefix.length) : id)
     }
@@ -445,6 +451,45 @@ export function contextTiersFor(provider: string, raw?: string): Set<string> {
     return new Set()
   }
   return tiered
+}
+
+/**
+ * Total context capacities for models with Copilot's standard and long tiers.
+ *
+ * models.dev records the context tier's `size` as the prompt-token boundary
+ * where long-context pricing starts. Copilot's model list reports context as
+ * prompt plus output, so the standard total is that boundary plus
+ * `limit.output`. `limit.context` is the long tier's total capacity.
+ *
+ * A partial entry is omitted. Showing a prompt limit as though it were total
+ * context would be worse than retaining the host's named tier.
+ */
+export function contextTierWindowsFor(provider: string, raw?: string): Map<string, ContextTierWindows> {
+  const windows = new Map<string, ContextTierWindows>()
+  const prefix = `${provider}/`
+  try {
+    const text = raw ?? cachedProviderCatalogue(provider) ?? readFileOrUndefined(catalogueCachePath())
+    const entry = parseCatalogue(text).get(provider)
+    if (entry === undefined) return windows
+    for (const [id, model] of entry.models) {
+      if (
+        model.contextTierStart === undefined ||
+        model.outputWindow === undefined ||
+        model.contextWindow === undefined
+      ) {
+        continue
+      }
+      const standard = model.contextTierStart + model.outputWindow
+      if (standard <= 0 || standard >= model.contextWindow) continue
+      windows.set(id.startsWith(prefix) ? id.slice(prefix.length) : id, {
+        standard,
+        maximum: model.contextWindow,
+      })
+    }
+  } catch {
+    return new Map()
+  }
+  return windows
 }
 
 function cachedProviderCatalogue(provider: string): string | undefined {
@@ -482,13 +527,16 @@ function writeModelMetadataCache(path: string, value: CachedModelMetadata): void
 /**
  * `1048576` -> `1M`, `200000` -> `200K`.
  *
- * Rounded to whole units on purpose: the picker's Context column exists so a
- * user can tell 200K from 1M at a glance, and `1.05M` costs three characters
- * to say nothing extra.
+ * Million-token windows keep one useful decimal. Copilot exposes 1.05M totals,
+ * and rounding those to 1M would erase the difference the context picker is
+ * meant to report.
  */
 export function formatContext(window: number | undefined): string {
   if (window === undefined || window <= 0) return "-"
-  if (window >= 1_000_000) return `${Math.round(window / 1_000_000)}M`
+  if (window >= 1_000_000) {
+    const millions = Math.round(window / 100_000) / 10
+    return `${Number.isInteger(millions) ? millions.toFixed(0) : millions.toFixed(1)}M`
+  }
   if (window >= 1000) return `${Math.round(window / 1000)}K`
   return String(window)
 }
@@ -502,8 +550,9 @@ interface CatalogueProvider {
 interface CatalogueModel {
   label: string
   contextWindow?: number
-  /** True when `cost.tiers[]` prices a larger context window separately. */
-  contextTiered?: boolean
+  outputWindow?: number
+  /** Prompt-token boundary where the separately priced context tier starts. */
+  contextTierStart?: number
   variants: ModelVariants
   releaseDate?: string
   usable: boolean
@@ -539,6 +588,7 @@ function parseCatalogue(raw: string | undefined): Map<string, CatalogueProvider>
 function readModel(model: Record<string, unknown>): CatalogueModel {
   const limit = isRecord(model["limit"]) ? model["limit"] : {}
   const context = typeof limit["context"] === "number" ? limit["context"] : undefined
+  const output = typeof limit["output"] === "number" ? limit["output"] : undefined
   const result: CatalogueModel = {
     label: typeof model["name"] === "string" && model["name"].length > 0 ? model["name"] : "",
     variants: readVariants(model["reasoning_options"]),
@@ -547,21 +597,28 @@ function readModel(model: Record<string, unknown>): CatalogueModel {
     usable: model["tool_call"] !== false && (context === undefined || context > 0),
   }
   if (context !== undefined && context > 0) result.contextWindow = context
-  if (declaresContextTier(model["cost"])) result.contextTiered = true
+  if (output !== undefined && output > 0) result.outputWindow = output
+  const tierStart = contextTierStart(model["cost"])
+  if (tierStart !== undefined) result.contextTierStart = tierStart
   if (typeof model["release_date"] === "string") result.releaseDate = model["release_date"]
   return result
 }
 
 /**
- * Whether a `cost` block prices a second, larger context window.
+ * The prompt-token boundary where a `cost` block starts context-tier pricing.
  *
  * Only `tier.type === "context"` counts. The same `tiers[]` array carries other
  * kinds of tiering elsewhere in the catalogue, and treating any tier as a
  * context tier would offer `long_context` on a model tiered by something else.
  */
-function declaresContextTier(cost: unknown): boolean {
-  if (!isRecord(cost) || !Array.isArray(cost["tiers"])) return false
-  return cost["tiers"].some((entry) => isRecord(entry) && isRecord(entry["tier"]) && entry["tier"]["type"] === "context")
+function contextTierStart(cost: unknown): number | undefined {
+  if (!isRecord(cost) || !Array.isArray(cost["tiers"])) return undefined
+  for (const entry of cost["tiers"]) {
+    if (!isRecord(entry) || !isRecord(entry["tier"]) || entry["tier"]["type"] !== "context") continue
+    const size = entry["tier"]["size"]
+    if (typeof size === "number" && size > 0) return size
+  }
+  return undefined
 }
 
 /**

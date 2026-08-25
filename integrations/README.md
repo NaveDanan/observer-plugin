@@ -104,6 +104,19 @@ codex plugin add observer@observer-local
 Finally run `/hooks` inside Codex and trust the Observer entries. Plugin hooks
 are non-managed, so Codex skips them until reviewed.
 
+Observer asks Codex for the enabled skills visible from the project where the
+install or config save runs. Codex's merged project and global inventory becomes
+the **Default** skills pack in every generated employee definition. The pack
+stores skill names, descriptions, scopes, and `SKILL.md` paths so an employee
+can load the same skill instructions as the root agent. A failed skills probe
+does not block employee generation; the installer reports the empty pack and
+the reason.
+
+The Codex plugin observes lifecycle and tool events. It does not add the
+OpenCode-only `agent_identity`, `agent_send`, `agent_inbox`, or `agent_ack`
+coordination tools. Codex subagents communicate with the host's built-in
+collaboration tools; those messages are not Observer coordination mail.
+
 Two details make this work:
 
 - `~/.agents/plugins/marketplace.json` is **auto-discovered**; no
@@ -185,7 +198,6 @@ It writes:
   hooks/hooks.json       lifecycle hooks
   agents/*.agent.md      generated employee agents
   scripts/emit.js        telemetry emitter
-  scripts/copilot-control.js  synchronous task controller
 ```
 
 then runs `copilot plugin install ~/.copilot/plugins/observer`, which is what
@@ -201,15 +213,13 @@ the installed emitter rather than `$PLUGIN_ROOT`. Copilot documents
 command strings, so the plugin uses paths that are known to resolve.
 `scripts/emit.js` still ships inside the plugin for provenance.
 
-With `seats.control: true`, the plugin's controller redirects only a
-`general-purpose` task to the selected employee agent. The agent supplies the
-configured Copilot model; Observer-owned `observer:observer-*` entries under
-`~/.copilot/settings.json` supply subagent effort and context tier. All other
-task arguments and all specialist agent selections are preserved. Controller
-errors emit an empty decision and exit successfully, so a failure leaves the
-delegation unchanged instead of blocking it. Restart Copilot after changing a
-seat because agents and subagent settings load at startup. This control path
-affects the local CLI/app only.
+The plugin exposes the full employee roster whether or not any employee has a
+seat. Copilot may choose an employee agent when its description fits. With
+`seats.control: true`, that employee definition pins the configured model;
+Observer-owned `observer:observer-*` settings add effort and context tier.
+Observer does not rewrite a task or force Copilot to select an employee.
+Restart Copilot after changing a seat because agents and subagent settings load
+at startup. These local agents affect the CLI/app only.
 
 To remove it:
 

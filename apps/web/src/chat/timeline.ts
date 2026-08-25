@@ -13,7 +13,7 @@ import type { MessageEntity, ToolCallEntity } from "@observer-ai/protocol"
  * that are actually easy to get wrong — can be tested directly.
  */
 
-export type ToolAction = "read" | "edit" | "command" | "search" | "task" | "todo" | "other"
+export type ToolAction = "read" | "edit" | "command" | "search" | "task" | "message" | "todo" | "other"
 
 /** Exact file-creation tools, after removing host-specific separators and case. */
 export function isFileCreationTool(tool: string): boolean {
@@ -130,6 +130,7 @@ export function buildTimeline(messages: MessageEntity[], toolCalls: ToolCallEnti
 export function toolAction(tool: string): ToolAction {
   const name = tool.toLowerCase()
   if (name.includes("todo")) return "todo"
+  if (name.replace(/[^a-z0-9]/g, "").includes("sendmessage")) return "message"
   if (name.includes("task") || name.includes("agent") || name.includes("subagent")) return "task"
   if (name.includes("grep") || name.includes("glob") || name.includes("search") || name.includes("find")) {
     return "search"
@@ -164,6 +165,7 @@ const VERBS: Record<ToolAction, { one: string; many: string; noun: string }> = {
   command: { one: "Ran", many: "Ran", noun: "command" },
   search: { one: "Searched", many: "Searched", noun: "time" },
   task: { one: "Delegated", many: "Delegated", noun: "task" },
+  message: { one: "Messaged", many: "Messaged", noun: "agent" },
   todo: { one: "Updated", many: "Updated", noun: "task list" },
   other: { one: "Used", many: "Used", noun: "tool" },
 }

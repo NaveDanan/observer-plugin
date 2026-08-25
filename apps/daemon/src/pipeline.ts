@@ -128,9 +128,9 @@ export class Pipeline {
     })
   }
 
-  private toIngestEvent(event: AdapterEvent, request: HookRequest, id: string): IngestEvent {
+  private toIngestEvent(event: AdapterEvent, request: HookRequest, fallbackId: string): IngestEvent {
     return {
-      id,
+      id: event.id ?? fallbackId,
       host: request.host,
       hostVersion: request.hostVersion,
       adapter: adapterIdFor(request.host),

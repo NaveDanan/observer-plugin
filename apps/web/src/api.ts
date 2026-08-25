@@ -282,9 +282,8 @@ export type DiscoveryMode = "live" | "cached" | "manual"
 /**
  * How far Observer will go in acting on a setting for this host.
  *
- * `experimental` is a real third state and not a hedge: Codex's per-child model
- * needs a synchronous `PreToolUse` rewrite that is prototyped and not hardened.
- * The three must render differently.
+ * `experimental` is a real third state for a model-pin path that exists but is
+ * not hardened. The three states must render differently.
  */
 export type ControlSupport = "supported" | "experimental" | "unsupported"
 

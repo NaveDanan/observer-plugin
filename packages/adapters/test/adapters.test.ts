@@ -159,12 +159,107 @@ describe("codex adapter", () => {
     ])
   })
 
-  it("attaches subagents to the session's main agent", () => {
+  it("reconciles Codex collaboration paths, nested parents, and direct messages", () => {
+    const hook = (event: string, payload: Record<string, unknown>, deliveryId: string) =>
+      normalizeHook({
+        host: "codex",
+        event,
+        deliveryId,
+        payload: { session_id: "codex-collaboration-s", ...payload },
+      })
+
+    hook(
+      "PreToolUse",
+      {
+        tool_name: "collaborationspawn_agent",
+        tool_use_id: "spawn-reviewer",
+        tool_input: { task_name: "reviewer", message: "Review correctness" },
+      },
+      "collab-1",
+    )
+    hook(
+      "PostToolUse",
+      {
+        tool_name: "collaborationspawn_agent",
+        tool_use_id: "spawn-reviewer",
+        tool_input: { task_name: "reviewer", message: "Review correctness" },
+        tool_response: { task_name: "/root/reviewer" },
+      },
+      "collab-2",
+    )
+    const reviewer = hook(
+      "SubagentStart",
+      { agent_id: "reviewer-id", agent_type: "reviewer", model: "gpt-5.6-sol" },
+      "collab-3",
+    )
+
+    expect(reviewer[0]?.agentKey).toBe("agent:reviewer-id")
+    expect(reviewer[0]?.provenance).toBe("reconciled")
+    expect(reviewer[0]?.body).toMatchObject({
+      kind: "agent.started",
+      parentAgentKey: "main",
+      displayName: "/root/reviewer",
+      prompt: "Review correctness",
+    })
+
+    hook(
+      "PreToolUse",
+      {
+        agent_id: "reviewer-id",
+        tool_name: "collaborationspawn_agent",
+        tool_use_id: "spawn-tests",
+        tool_input: { task_name: "tests", message: "Check the tests" },
+      },
+      "collab-4",
+    )
+    hook(
+      "PostToolUse",
+      {
+        agent_id: "reviewer-id",
+        tool_name: "collaborationspawn_agent",
+        tool_use_id: "spawn-tests",
+        tool_input: { task_name: "tests", message: "Check the tests" },
+        tool_response: { task_name: "/root/reviewer/tests" },
+      },
+      "collab-5",
+    )
+    const tests = hook(
+      "SubagentStart",
+      { agent_id: "tests-id", agent_type: "reviewer", model: "gpt-5.6-sol" },
+      "collab-6",
+    )
+
+    expect(tests[0]?.body).toMatchObject({
+      kind: "agent.started",
+      parentAgentKey: "agent:reviewer-id",
+      displayName: "/root/reviewer/tests",
+    })
+
+    const message = hook(
+      "PreToolUse",
+      {
+        agent_id: "tests-id",
+        tool_name: "collaborationsend_message",
+        tool_use_id: "message-reviewer",
+        tool_input: { target: "/root/reviewer", message: "Tests are clean" },
+      },
+      "collab-7",
+    )
+    expect(find(message, "edge.observed")).toEqual({
+      kind: "edge.observed",
+      fromAgentKey: "agent:tests-id",
+      toAgentKey: "agent:reviewer-id",
+      edgeType: "messaged",
+      label: "direct message",
+    })
+  })
+
+  it("falls back to the root when a Codex subagent has no matching spawn event", () => {
     const events = normalizeHook({
       host: "codex",
       event: "SubagentStart",
       deliveryId: "d",
-      payload: { session_id: "s", agent_id: "a1", agent_type: "reviewer", model: "gpt-5.3-codex" },
+      payload: { session_id: "unmatched-s", agent_id: "a1", agent_type: "reviewer", model: "gpt-5.3-codex" },
     })
     expect(events[0]?.agentKey).toBe("agent:a1")
     expect(events[0]?.body).toMatchObject({ parentAgentKey: "main", agentType: "reviewer" })

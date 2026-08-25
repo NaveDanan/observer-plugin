@@ -1,10 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   CODEX_PLUGIN_NAME,
   codexPluginDir,
+  hookWindowsCommand,
   installCodexPlugin,
   isCodexPluginInstalled,
   personalMarketplacePath,
@@ -14,8 +16,61 @@ import {
 let home: string
 let originalHome: string | undefined
 
+function recorderScript(path: string): void {
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, 'process.stdout.write(JSON.stringify(process.argv.slice(1)))\n')
+}
+
+function useSpacedNodePath(): () => void {
+  const original = process.execPath
+  if (original.includes(" ")) return () => {}
+  const spaced = join(home, "node runtime", "node.exe")
+  mkdirSync(dirname(spaced), { recursive: true })
+  try {
+    linkSync(original, spaced)
+  } catch {
+    copyFileSync(original, spaced)
+  }
+  process.execPath = spaced
+  return () => {
+    process.execPath = original
+  }
+}
+
+function runAsCodex(commandWindows: string, extraEnv: Record<string, string> = {}): string[] {
+  const comspec = process.env["ComSpec"] ?? "cmd.exe"
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"))
+  const rawCommandLine = `${comspec} /d /s /c "${commandWindows}"`
+  const result = spawnSync(comspec, ["/d", "/s", "/c", `"${commandWindows}"`], {
+    encoding: "utf8",
+    env: { ...env, ...extraEnv },
+    // Codex uses CommandExt::raw_arg for this literal outer quote pair. Normal
+    // argv escaping is a different parser path and gives a false green here.
+    windowsVerbatimArguments: true,
+  })
+  expect(result.status, `${rawCommandLine}\n${result.stderr || result.error?.message}`).toBe(0)
+  return JSON.parse(result.stdout) as string[]
+}
+
+function runThroughPowerShell(commandWindows: string, extraEnv: Record<string, string> = {}): string[] {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"))
+  const powershell = join(
+    process.env["SystemRoot"] ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  )
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", commandWindows], {
+    encoding: "utf8",
+    env: { ...env, ...extraEnv },
+  })
+  expect(result.status, `${powershell} -NoProfile -Command ${commandWindows}\n${result.stderr || result.error?.message}`).toBe(0)
+  return JSON.parse(result.stdout) as string[]
+}
+
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "observer-codex-"))
+  home = mkdtempSync(join(tmpdir(), "observer codex "))
   originalHome = process.env["HOME"]
   process.env["HOME"] = home
   delete process.env["CODEX_HOME"]
@@ -33,6 +88,57 @@ function readJson(path: string): Record<string, any> {
 }
 
 describe("installCodexPlugin", () => {
+  it.runIf(process.platform === "win32")(
+    "executes a direct hook with spaced paths through Codex's cmd and PowerShell runners",
+    () => {
+      const restoreNodePath = useSpacedNodePath()
+      const recorder = join(home, "direct hook scripts", "record args.js")
+      recorderScript(recorder)
+
+      try {
+        const commandWindows = hookWindowsCommand("codex", "SessionStart", process.execPath, recorder)
+        const expected = [
+          recorder,
+          "--host",
+          "codex",
+          "--event",
+          "SessionStart",
+        ]
+        expect(runAsCodex(commandWindows)).toEqual(expected)
+        expect(runThroughPowerShell(commandWindows)).toEqual(expected)
+      } finally {
+        restoreNodePath()
+      }
+    },
+  )
+
+  it.runIf(process.platform === "win32")(
+    "executes a packaged hook with a spaced PLUGIN_ROOT through both Windows runners",
+    () => {
+      const restoreNodePath = useSpacedNodePath()
+      try {
+        installCodexPlugin("1.0.0")
+        const pluginRoot = codexPluginDir()
+        const recorder = join(pluginRoot, "scripts", "emit.js")
+        recorderScript(recorder)
+        const hooks = readJson(join(pluginRoot, "hooks", "hooks.json"))
+        const commandWindows = hooks["hooks"]["SessionStart"][0].hooks[0].commandWindows as string
+
+        const expected = [
+          recorder,
+          "--host",
+          "codex",
+          "--event",
+          "SessionStart",
+        ]
+        expect(runAsCodex(commandWindows, { PLUGIN_ROOT: pluginRoot })).toEqual(expected)
+        expect(runThroughPowerShell(commandWindows, { PLUGIN_ROOT: pluginRoot })).toEqual(expected)
+      } finally {
+        restoreNodePath()
+      }
+    },
+  )
+
   it("writes a complete, self-contained plugin bundle", () => {
     const result = installCodexPlugin("1.2.3")
     expect(result.action).toBe("installed")
@@ -41,7 +147,11 @@ describe("installCodexPlugin", () => {
     const manifest = readJson(join(dir, ".codex-plugin", "plugin.json"))
     expect(manifest["name"]).toBe(CODEX_PLUGIN_NAME)
     expect(manifest["version"]).toBe("1.2.3")
-    expect(manifest["hooks"]).toBe("./hooks/hooks.json")
+    expect(manifest).not.toHaveProperty("hooks")
+    expect(manifest["interface"]).toMatchObject({
+      displayName: "Observer",
+      category: "Developer Tools",
+    })
 
     // The emitter ships inside the plugin so the cached copy is runnable.
     expect(existsSync(join(dir, "scripts", "emit.js"))).toBe(true)
@@ -51,13 +161,35 @@ describe("installCodexPlugin", () => {
   it("references the emitter through PLUGIN_ROOT, not an absolute plugin path", () => {
     installCodexPlugin("1.0.0")
     const hooks = readJson(join(codexPluginDir(), "hooks", "hooks.json"))
-    const command = hooks["hooks"]["SessionStart"][0].hooks[0].command as string
+    const entry = hooks["hooks"]["SessionStart"][0].hooks[0]
+    const command = entry.command as string
+    const commandWindows = entry.commandWindows as string
 
     // PLUGIN_ROOT points at Codex's installed cache copy, which is the only
     // location guaranteed to exist when the hook actually runs.
     expect(command).toContain('"$PLUGIN_ROOT/scripts/emit.js"')
     expect(command).toContain("--host codex --event SessionStart")
     expect(command).not.toContain(codexPluginDir())
+
+    expect(commandWindows).toContain("WindowsPowerShell\\v1.0\\powershell.exe")
+    expect(commandWindows).toContain("-EncodedCommand")
+    expect(commandWindows).not.toContain(process.execPath)
+    expect(commandWindows).not.toContain("PLUGIN_ROOT")
+  })
+
+  it("uses Codex's supported SessionEnd timeout without clamping", () => {
+    installCodexPlugin("1.0.0")
+    const hooks = readJson(join(codexPluginDir(), "hooks", "hooks.json"))["hooks"]
+
+    expect(hooks["SessionStart"][0].hooks[0].timeout).toBe(5)
+    expect(hooks["SessionEnd"][0].hooks[0].timeout).toBe(3)
+  })
+
+  it("uses a valid semantic version for development builds", () => {
+    installCodexPlugin("dev")
+    const manifest = readJson(join(codexPluginDir(), ".codex-plugin", "plugin.json"))
+
+    expect(manifest["version"]).toBe("0.0.0-dev")
   })
 
   it("subscribes to every Codex event Observer understands", () => {

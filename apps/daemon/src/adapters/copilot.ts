@@ -1,7 +1,13 @@
 import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { contextTiersFor, contextWindowsFor } from "../models.js"
+import {
+  contextTierWindowsFor,
+  contextTiersFor,
+  contextWindowsFor,
+  formatContext,
+  type ContextTierWindows,
+} from "../models.js"
 import { probeCopilotEntitlement, type CopilotEntitlementProbe } from "./copilot-entitlement.js"
 import type { HostKind } from "../providers.js"
 import type { SeatIssue, SeatIssueSeverity, SeatTarget } from "../seats.js"
@@ -140,8 +146,8 @@ export const COPILOT_SEAT_AGENT_MARKER = "observer:copilot-seat-agent v1"
 /**
  * Decodes one Copilot target without applying policy from another host.
  *
- * The same decoder is used by diagnosis, plugin generation, and the hook
- * controller so a saved target cannot mean three subtly different things.
+ * The same decoder is used by diagnosis and native-agent generation so a saved
+ * target cannot mean two subtly different things.
  */
 export function readCopilotTarget(target: SeatTarget | undefined): CopilotSeatTarget | undefined {
   if (target?.host !== "copilot" || typeof target.model !== "string") return undefined
@@ -157,7 +163,7 @@ export function readCopilotTarget(target: SeatTarget | undefined): CopilotSeatTa
   return result
 }
 
-/** Stable custom-agent id shared by generation and pre-tool routing. */
+/** Stable plugin-qualified custom-agent id used by generated settings. */
 export function copilotSeatAgentName(employeeId: string): string {
   const slug = String(employeeId)
     .toLowerCase()
@@ -288,6 +294,8 @@ export interface CopilotAdapterOptions {
    * Defaults to the `github-copilot` provider of OpenCode's snapshot.
    */
   contextTiers?: () => Set<string>
+  /** Total capacities behind Copilot's `default` and `long_context` tiers. */
+  contextTierWindows?: () => Map<string, ContextTierWindows>
   /**
    * Which models this account may actually run.
    *
@@ -494,12 +502,12 @@ function descriptorsFor(
   efforts: readonly string[],
   tiers: readonly string[],
   tiered: boolean,
+  windows?: ContextTierWindows,
 ): ModelOptionDescriptor[] {
   const descriptors: ModelOptionDescriptor[] = []
-  // No `isDefault` and no `currentValue` on either: Copilot's help declares
-  // both ladders but never says which rung it stands on when the flag is
-  // omitted. Marking a guess as the default would put a checkmark next to a
-  // level the host may not be using.
+  // Reasoning has no declared default. Context does: the host calls its first
+  // tier `default`, so omitting the saved value and selecting that tier are the
+  // same operation.
   if (efforts.length > 0) {
     descriptors.push({
       id: COPILOT_REASONING_OPTION,
@@ -513,7 +521,15 @@ function descriptorsFor(
       id: COPILOT_CONTEXT_TIER_OPTION,
       label: "Context tier",
       type: "select",
-      choices: tiers.map((value) => ({ id: value, label: value })),
+      choices: tiers.map((value) => {
+        const context =
+          value === "default" ? windows?.standard : value === "long_context" ? windows?.maximum : undefined
+        return {
+          id: value,
+          label: context === undefined ? value : formatContext(context),
+          ...(value === "default" ? { isDefault: true } : {}),
+        }
+      }),
     })
   }
   return descriptors
@@ -540,6 +556,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
   const spawn = options.spawn ?? defaultSpawn
   const readContextWindows = options.contextWindows ?? (() => contextWindowsFor(COPILOT_CATALOGUE_PROVIDER))
   const readContextTiers = options.contextTiers ?? (() => contextTiersFor(COPILOT_CATALOGUE_PROVIDER))
+  const readContextTierWindows = options.contextTierWindows ?? (() => contextTierWindowsFor(COPILOT_CATALOGUE_PROVIDER))
   const readEntitlement: CopilotEntitlementProbe =
     options.entitlement ??
     ((probeBinary, probeOptions) =>
@@ -692,6 +709,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
     // the only machine-readable answer to `help config`'s "for tiered-pricing
     // models". A model it does not list gets no tier control.
     const tiered = readContextTiers()
+    const tierWindows = readContextTierWindows()
     // Which of those models this account may actually run. `help config` names
     // the product's whole inventory; entitlement is a property of the seat, and
     // the gap between the two is what makes a picker offer models that fail at
@@ -716,7 +734,11 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
     if (auto) models.push({ id: AUTO_MODEL, label: "Auto (Copilot picks)", options: [...plain] })
     for (const id of ids) {
       if (id === AUTO_MODEL && auto) continue
-      const model: CatalogueModel = { id, label: id, options: descriptorsFor(efforts, tiers, tiered.has(id)) }
+      const model: CatalogueModel = {
+        id,
+        label: id,
+        options: descriptorsFor(efforts, tiers, tiered.has(id), contextTierWindowsForModel(tierWindows, id)),
+      }
       const context = contextWindowFor(contexts, id)
       if (context !== undefined && context > 0) model.contextWindow = context
       if (entitled !== undefined) model.available = entitled.has(id)
@@ -985,16 +1007,9 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): HostS
      * hook reports `agentName` and that is precisely the key this setting is
      * filed under.
      *
-     * Observer now has a narrow path to it. Its plugin generates a namespaced
-     * custom agent per configured employee, writes only that agent's entry under
-     * `settings.json`'s documented `subagents.agents` key, and a synchronous
-     * `preToolUse` hook changes only neutral `task(agent_type="general-purpose")`
-     * calls. Specialised agents and every uncertain input are left untouched.
-     *
-     * The path accepts both the documented object-shaped arguments and Copilot
-     * CLI's serialized task arguments. End-to-end validation confirms that a
-     * real delegated child reports the generated plugin agent and its configured
-     * model. The desktop app consumes the same installed plugin cache.
+     * Observer generates the complete employee roster as custom agents and
+     * writes model settings only for configured pins. Copilot chooses an
+     * employee from its description; Observer installs no routing hook.
      *
      * ### `requiresReload`
      *
@@ -1028,6 +1043,16 @@ function contextWindowFor(contexts: Map<string, number>, modelId: string): numbe
   // `claude-opus-4.8`; models.dev publishes the base entry only. The alias does
   // not change how many tokens the underlying model accepts.
   if (modelId.endsWith("-fast")) return contexts.get(modelId.slice(0, -"-fast".length))
+  return undefined
+}
+
+function contextTierWindowsForModel(
+  windows: Map<string, ContextTierWindows>,
+  modelId: string,
+): ContextTierWindows | undefined {
+  const direct = windows.get(modelId)
+  if (direct !== undefined) return direct
+  if (modelId.endsWith("-fast")) return windows.get(modelId.slice(0, -"-fast".length))
   return undefined
 }
 

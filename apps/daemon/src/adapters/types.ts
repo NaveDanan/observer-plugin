@@ -16,8 +16,8 @@ import type { SeatIssue, SeatTarget } from "../seats.js"
  *
  *  - **Discovery** is "can Observer list what this host can run". Every host
  *    can do some version of this.
- *  - **Control** is "can Observer make a delegated child run a chosen model".
- *    OpenCode and Copilot support this through narrow neutral-agent paths. A
+ *  - **Control** is "can Observer pin a selected employee child to a model".
+ *    Supported hosts do this through native employee definitions. A
  *    UI that promotes discovery into control would tell the user their Cursor
  *    employee runs Opus when it demonstrably does not, so `HostCapabilities`
  *    reports them separately and no adapter may collapse them.
@@ -41,10 +41,8 @@ export type DiscoveryMode = "live" | "cached" | "manual"
 /**
  * How far Observer will go in acting on a setting for this host.
  *
- * `experimental` is a real third state and not a hedge: Codex's per-child model
- * needs a synchronous `PreToolUse` rewrite that has been prototyped and not
- * hardened, and shipping it as `supported` would have the TUI promise something
- * that fails open. A UI must render the three differently.
+ * `experimental` is a real third state for a host whose model-pin path exists
+ * but has not been hardened. A UI must render the three states differently.
  */
 export type ControlSupport = "supported" | "experimental" | "unsupported"
 

@@ -19,6 +19,8 @@ export interface HookRequest {
 
 /** Partial event produced by an adapter; the daemon fills in the rest. */
 export interface AdapterEvent {
+  /** Stable source id when the event comes from a replayable host log. */
+  id?: string
   sessionKey: string
   agentKey?: string
   at?: number

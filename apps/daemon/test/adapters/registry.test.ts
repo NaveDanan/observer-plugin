@@ -73,14 +73,10 @@ describe("the adapter registry", () => {
     }
   })
 
-  it("does not promise control it has not proved", () => {
-    // The whole point of the capability fields. OpenCode is the only host with
-    // a shipped path to a delegated child's model today; if a future adapter
-    // flips one of these it must be because someone measured it, not because a
-    // registration copied a neighbour.
+  it("reports model pins for every supported harness", () => {
     expect(seatAdapter("opencode")?.capabilities("").childModel).toBe("supported")
-    expect(seatAdapter("codex")?.capabilities("").childModel).toBe("experimental")
-    expect(seatAdapter("claude")?.capabilities("").childModel).toBe("unsupported")
+    expect(seatAdapter("codex")?.capabilities("").childModel).toBe("supported")
+    expect(seatAdapter("claude")?.capabilities("").childModel).toBe("supported")
     expect(seatAdapter("copilot")?.capabilities("").childModel).toBe("supported")
   })
 })

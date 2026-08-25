@@ -1,6 +1,6 @@
 import { createRequire } from "node:module"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { dirname, join, resolve, win32 } from "node:path"
 import { fileURLToPath } from "node:url"
 import { dataDir } from "@observer-ai/storage"
 
@@ -145,6 +145,51 @@ export function hookShellCommand(host: string, event: string): string {
 
 export function hookPowershellCommand(host: string, event: string): string {
   return `& "${nodePath()}" "${emitterPath()}" --host ${host} --event ${event}`
+}
+
+function powershellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+/**
+ * Builds one Windows command that survives both Codex runner shapes: its raw
+ * `cmd.exe /C` wrapper and a configured PowerShell session shell.
+ *
+ * The visible command stays quote-free. PowerShell decodes the real invocation
+ * and applies its call operator after the outer shell has finished parsing.
+ */
+export function codexWindowsCommand(
+  executable: string,
+  script: string,
+  host: string,
+  event: string,
+  scriptRootEnvironment?: string,
+): string {
+  if (scriptRootEnvironment && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(scriptRootEnvironment)) {
+    throw new Error(`Invalid Windows script-root environment name: ${scriptRootEnvironment}`)
+  }
+  const scriptExpression = scriptRootEnvironment
+    ? `(Join-Path $env:${scriptRootEnvironment} ${powershellLiteral(script)})`
+    : powershellLiteral(script)
+  const payload = `& ${powershellLiteral(executable)} ${scriptExpression} --host ${powershellLiteral(host)} --event ${powershellLiteral(event)}`
+  const encoded = Buffer.from(payload, "utf16le").toString("base64")
+  const powershell = win32.join(
+    process.env["SystemRoot"] ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  )
+  return `${powershell} -NoProfile -NonInteractive -EncodedCommand ${encoded}`
+}
+
+export function hookWindowsCommand(
+  host: string,
+  event: string,
+  executable = nodePath(),
+  script = emitterPath(),
+): string {
+  return codexWindowsCommand(executable, script, host, event)
 }
 
 export function homeDir(): string {

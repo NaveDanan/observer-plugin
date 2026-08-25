@@ -2,7 +2,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { dirname, join, relative, sep } from "node:path"
 import type { InstallResult } from "./install.js"
 import { HOST_EVENTS } from "./install.js"
-import { codexHome, emitterPath, homeDir, nodePath, shellQuote } from "./paths.js"
+import { loadConfig } from "@observer-ai/daemon"
+import { removeCodexEmployeeAgents, syncCodexEmployeeAgents } from "./host-employee-agents.js"
+import { codexHome, codexWindowsCommand, emitterPath, homeDir, nodePath, shellQuote } from "./paths.js"
 
 /**
  * Codex plugin packaging.
@@ -46,6 +48,7 @@ export function installCodexPlugin(version: string): InstallResult {
   const pluginDir = codexPluginDir()
   const marketplacePath = personalMarketplacePath()
   const existed = isCodexPluginInstalled()
+  const pluginVersion = version === "dev" ? "0.0.0-dev" : version
 
   const relativePath = toPosixRelative(homeDir(), pluginDir)
   if (!relativePath) {
@@ -64,12 +67,20 @@ export function installCodexPlugin(version: string): InstallResult {
   mkdirSync(join(pluginDir, ".codex-plugin"), { recursive: true })
   writeJson(join(pluginDir, ".codex-plugin", "plugin.json"), {
     name: CODEX_PLUGIN_NAME,
-    version,
+    version: pluginVersion,
     description: "Interactive canvas for the coding agents you are already running.",
     author: { name: "Observer" },
     license: "MIT",
     keywords: ["observability", "agents", "canvas"],
-    hooks: "./hooks/hooks.json",
+    interface: {
+      displayName: "Observer",
+      shortDescription: "Watch coding agents on a live local canvas.",
+      longDescription: "Capture Codex lifecycle events and inspect the active agent graph in Observer.",
+      developerName: "NJ-Labs",
+      category: "Developer Tools",
+      capabilities: ["Observability"],
+      defaultPrompt: ["Check whether Observer is capturing this session."],
+    },
   })
 
   // 2. Lifecycle hooks, generated from the same event list the plain install uses.
@@ -84,7 +95,10 @@ export function installCodexPlugin(version: string): InstallResult {
             // PLUGIN_ROOT resolves to the installed cache copy of this plugin,
             // so the emitter shipped alongside is always the one that runs.
             command: `${shellQuote(nodePath())} "$PLUGIN_ROOT/scripts/emit.js" --host codex --event ${event}`,
-            timeout: 5,
+            // Resolve PLUGIN_ROOT inside the encoded payload so both cmd and
+            // PowerShell runner shapes preserve a spaced cache path.
+            commandWindows: codexWindowsCommand(nodePath(), "scripts\\emit.js", "codex", event, "PLUGIN_ROOT"),
+            timeout: event === "SessionEnd" ? 3 : 5,
             statusMessage: "Observer",
           },
         ],
@@ -112,7 +126,7 @@ export function installCodexPlugin(version: string): InstallResult {
   kept.push({
     name: CODEX_PLUGIN_NAME,
     description: "Interactive canvas for the coding agents you are already running.",
-    version,
+    version: pluginVersion,
     source: { source: "local", path: relativePath },
     policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
     category: "Productivity",
@@ -121,6 +135,12 @@ export function installCodexPlugin(version: string): InstallResult {
   writeJson(marketplacePath, marketplace)
 
   const marketplaceName = typeof marketplace["name"] === "string" ? marketplace["name"] : MARKETPLACE_NAME
+  let employeeNotes: string[] = []
+  try {
+    employeeNotes = syncCodexEmployeeAgents(loadConfig().seats).notes
+  } catch (error) {
+    employeeNotes = [`Codex employee agents were not generated: ${error instanceof Error ? error.message : String(error)}`]
+  }
   return {
     host: "codex",
     action: existed ? "updated" : "installed",
@@ -130,6 +150,7 @@ export function installCodexPlugin(version: string): InstallResult {
       "Restart the ChatGPT desktop app, then install Observer from the Plugins directory.",
       `CLI equivalent: codex plugin add ${CODEX_PLUGIN_NAME}@${marketplaceName}`,
       "Then run /hooks inside Codex and trust the Observer entries.",
+      ...employeeNotes,
     ],
   }
 }
@@ -138,6 +159,8 @@ export function uninstallCodexPlugin(): InstallResult {
   const pluginDir = codexPluginDir()
   const marketplacePath = personalMarketplacePath()
   let removed = false
+  const employeeAgents = removeCodexEmployeeAgents()
+  if (employeeAgents.length > 0) removed = true
 
   if (existsSync(pluginDir)) {
     rmSync(pluginDir, { recursive: true, force: true })
@@ -164,6 +187,7 @@ export function uninstallCodexPlugin(): InstallResult {
     path: pluginDir,
     notes: removed
       ? [
+          ...(employeeAgents.length > 0 ? [`Removed ${employeeAgents.length} personal Codex employee agents.`] : []),
           "Codex keeps its own installed copy in the plugin cache.",
           `Remove it with: codex plugin remove ${CODEX_PLUGIN_NAME}@${MARKETPLACE_NAME}`,
         ]

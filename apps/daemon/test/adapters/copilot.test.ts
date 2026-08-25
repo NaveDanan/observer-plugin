@@ -131,6 +131,7 @@ function adapterWith(
     // have a models.dev cache is not allowed to decide what a test sees.
     contextWindows: () => new Map(),
     contextTiers: () => new Set<string>(),
+    contextTierWindows: () => new Map(),
     // No ACP, ever. The real probe spawns a child and leaves a session behind
     // in the developer's own Copilot history; a test run must do neither.
     entitlement: () => ({ freshness: "unknown" as const }),
@@ -236,6 +237,21 @@ describe("copilot adapter catalogue", () => {
     const model = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.find((entry) => entry.id === "gpt-5.6-sol")
     const descriptor = model?.options.find((option) => option.id === COPILOT_CONTEXT_TIER_OPTION)
     expect(descriptor?.choices?.map((choice) => choice.id)).toEqual(["default", "long_context"])
+  })
+
+  it("labels Copilot's context tiers with the actual window sizes shown by the TUI", () => {
+    const { adapter } = adapterWith(HEALTHY, {
+      contextWindows: () => new Map([["gpt-5.6-sol", 1_050_000]]),
+      contextTiers: () => new Set(["gpt-5.6-sol"]),
+      contextTierWindows: () => new Map([["gpt-5.6-sol", { standard: 400_000, maximum: 1_050_000 }]]),
+    })
+    const model = adapter.catalogue(COPILOT_DEFAULT_PROFILE).models.find((entry) => entry.id === "gpt-5.6-sol")
+    const descriptor = model?.options.find((option) => option.id === COPILOT_CONTEXT_TIER_OPTION)
+
+    expect(descriptor?.choices).toEqual([
+      { id: "default", label: "400K", isDefault: true },
+      { id: "long_context", label: "1.1M" },
+    ])
   })
 
   it("never offers a tier on auto, which routes to a model this probe cannot name", () => {

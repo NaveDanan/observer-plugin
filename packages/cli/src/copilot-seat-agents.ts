@@ -18,7 +18,7 @@ import {
   seatTargets,
 } from "@observer-ai/daemon"
 import type { CopilotSeatTarget, SeatsConfig } from "@observer-ai/daemon"
-import { behaviorDirective, getEmployee } from "@observer-ai/roster"
+import { behaviorDirective, getEmployee, ROSTER } from "@observer-ai/roster"
 import { dataDir } from "@observer-ai/storage"
 import { copilotHome } from "./paths.js"
 
@@ -66,26 +66,23 @@ export function copilotSeatPluginDirs(): string[] {
  */
 export function syncCopilotSeatAgents(seats: SeatsConfig): CopilotSeatSync {
   const notes: string[] = []
-  const roots = copilotSeatPluginDirs()
-  const desired = seats?.control === true ? desiredAgents(seats, notes) : new Map<string, RenderedAgent>()
+  const pluginRoots = copilotSeatPluginDirs()
+  const roots = [copilotHome(), ...pluginRoots]
+  const desired = desiredAgents(seats, notes)
   const written: string[] = []
   const removed: string[] = []
 
-  if (roots.length === 0) {
-    if (desired.size > 0) notes.push("Install the Copilot plugin to apply Copilot seat targets.")
-    return { written, removed, notes }
-  }
-
   const effective = new Map(desired)
   for (const name of desired.keys()) {
-    const collision = roots
+    const collision = pluginRoots
       .map((root) => join(root, "agents", `${name}.agent.md`))
       .find((path) => {
         const contents = readIfPresent(path)
         return contents !== undefined && !contents.includes(COPILOT_SEAT_AGENT_MARKER)
       })
     if (!collision) continue
-    effective.delete(name)
+    const agent = effective.get(name)
+    if (agent) effective.set(name, { ...agent, target: undefined })
     notes.push(`${name} was not applied because ${collision} is not owned by Observer.`)
   }
 
@@ -97,7 +94,12 @@ export function syncCopilotSeatAgents(seats: SeatsConfig): CopilotSeatSync {
 
     for (const [name, agent] of effective) {
       const path = join(directory, `${name}.agent.md`)
-      if (readIfPresent(path) === agent.contents) continue
+      const before = readIfPresent(path)
+      if (before === agent.contents) continue
+      if (before !== undefined && !before.includes(COPILOT_SEAT_AGENT_MARKER)) {
+        notes.push(`${path} was left unchanged because Observer does not own it.`)
+        continue
+      }
       writeFileSync(path, agent.contents)
       written.push(path)
     }
@@ -111,7 +113,7 @@ export function syncCopilotSeatAgents(seats: SeatsConfig): CopilotSeatSync {
 
   const settings = reconcileSettings(previouslyManaged, effective)
   notes.push(
-    `${effective.size} Copilot seat agent${effective.size === 1 ? "" : "s"} in force across ${roots.length} plugin cop${roots.length === 1 ? "y" : "ies"}.`,
+    `${effective.size} Copilot employee agent${effective.size === 1 ? "" : "s"} available; unpinned agents inherit Copilot's model choice.`,
   )
   if (settings) notes.push(settings)
   if (written.length > 0 || removed.length > 0) {
@@ -130,57 +132,72 @@ export function removeCopilotSeatSettings(): string[] {
 
 interface RenderedAgent {
   employeeId: string
-  target: CopilotSeatTarget
+  target?: CopilotSeatTarget
   contents: string
+}
+
+/** Removes Observer-owned personal Copilot employee agents on uninstall. */
+export function removeCopilotEmployeeAgents(): string[] {
+  const directory = join(copilotHome(), "agents")
+  const removed: string[] = []
+  for (const path of generatedFiles(directory)) {
+    rmSync(path, { force: true })
+    removed.push(path)
+  }
+  return removed
 }
 
 function desiredAgents(seats: SeatsConfig, notes: string[]): Map<string, RenderedAgent> {
   const desired = new Map<string, RenderedAgent>()
-  for (const id of Object.keys(seats?.employees ?? {})) {
+  for (const profile of ROSTER) {
+    const id = profile.id
     const spec = seatFor(seats, id)
-    if (!spec) continue
-    const targets = Object.entries(seatTargets(spec)).filter(([, target]) => target?.host === "copilot")
+    const targets = spec
+      ? Object.entries(seatTargets(spec)).filter(([, target]) => target?.host === "copilot")
+      : []
     const usable = targets
       .map(([targetId, target]) => ({ targetId, target: readCopilotTarget(target) }))
       .filter((entry): entry is { targetId: string; target: CopilotSeatTarget } => entry.target !== undefined)
-    if (usable.length === 0) continue
     if (usable.length > 1) {
       notes.push(
         `${id} has ${usable.length} Copilot targets (${usable.map((entry) => `"${entry.targetId}"`).join(", ")}); only "${usable[0]!.targetId}" was applied.`,
       )
     }
 
-    const target = usable[0]!.target
+    const target = seats?.control === true ? usable[0]?.target : undefined
     const name = copilotSeatAgentName(id)
     desired.set(name, { employeeId: id, target, contents: renderAgent(seats, id, name, target) })
   }
   return desired
 }
 
-function renderAgent(seats: SeatsConfig, employeeId: string, name: string, target: CopilotSeatTarget): string {
+function renderAgent(seats: SeatsConfig, employeeId: string, name: string, target: CopilotSeatTarget | undefined): string {
   const profile = getEmployee(employeeId)
   if (!profile) throw new Error(`Unknown employee ${employeeId}`)
-  return [
+  const lines = [
     "---",
-    `# ${COPILOT_SEAT_AGENT_MARKER} - generated by Observer from seats.employees.${employeeId}.`,
+    `# ${COPILOT_SEAT_AGENT_MARKER} - generated by Observer for roster employee ${employeeId}.`,
     "# Edits are overwritten by `observer config`. Delete the marker above to keep this file.",
     `name: ${yaml(name)}`,
-    `description: ${yaml(`Observer-managed seat for ${profile.fullName}, ${profile.title}.`)}`,
-    `model: ${yaml(target.model)}`,
+    `description: ${yaml(`${profile.fullName}, ${profile.title}. Use proactively when delegated work needs ${profile.fields.slice(0, 5).join(", ")}.`)}`,
     `tools: ["*"]`,
+  ]
+  if (target !== undefined) lines.push(`model: ${yaml(target.model)}`)
+  lines.push(
     "---",
     "",
     behaviorDirective(applySeatSkills(profile, seats)),
     "",
     "Use `apply_patch` instead of the legacy `edit` and `create` tools for file changes so Copilot shows the unified diff interface.",
     "",
-  ].join("\n")
+  )
+  return lines.join("\n")
 }
 
 function reconcileSettings(previouslyManaged: Set<string>, desired: Map<string, RenderedAgent>): string | undefined {
   const path = copilotSettingsPath()
   const before = readIfPresent(path)
-  if (before === undefined && desired.size === 0) {
+  if (before === undefined && ![...desired.values()].some((agent) => agent.target !== undefined)) {
     writeManagedState([])
     return undefined
   }
@@ -197,7 +214,9 @@ function reconcileSettings(previouslyManaged: Set<string>, desired: Map<string, 
   const subagents = isRecord(document["subagents"]) ? { ...document["subagents"] } : {}
   const agents = isRecord(subagents["agents"]) ? { ...subagents["agents"] } : {}
   const desiredSettings = new Map(
-    [...desired.values()].map((agent) => [copilotSeatAgentReference(agent.employeeId), agent]),
+    [...desired.values()]
+      .filter((agent): agent is RenderedAgent & { target: CopilotSeatTarget } => agent.target !== undefined)
+      .map((agent) => [copilotSeatAgentReference(agent.employeeId), agent]),
   )
   for (const name of previouslyManaged) {
     if (!desiredSettings.has(name)) delete agents[name]
@@ -218,7 +237,7 @@ function reconcileSettings(previouslyManaged: Set<string>, desired: Map<string, 
   const next = `${JSON.stringify(document, null, 2)}\n`
   if (next !== before) atomicWriteIfUnchanged(path, before, next)
   writeManagedState([...desiredSettings.keys()])
-  return `${desired.size} Observer-owned Copilot subagent setting${desired.size === 1 ? "" : "s"} reconciled.`
+  return `${desiredSettings.size} Observer-owned Copilot model pin${desiredSettings.size === 1 ? "" : "s"} reconciled.`
 }
 
 function atomicWriteIfUnchanged(path: string, expected: string | undefined, contents: string): void {

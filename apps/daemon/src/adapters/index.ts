@@ -145,6 +145,12 @@ export {
 export type { OpencodeAdapterOptions, OpencodeSeatTarget } from "./opencode.js"
 export { createCodexAdapter, codexAdapter, CODEX_DEFAULT_PROFILE } from "./codex.js"
 export type { CodexAdapterOptions, CodexSpawn, CodexSpawnResult } from "./codex.js"
+export { fetchCodexSkills } from "./codex-skills.js"
+export type {
+  CodexAvailableSkill,
+  CodexSkillDiscoveryOptions,
+  CodexSkillInventory,
+} from "./codex-skills.js"
 export { createClaudeAdapter, claudeAdapter, CLAUDE_DEFAULT_PROFILE_ID } from "./claude.js"
 export type { ClaudeAdapterOptions, ClaudeVersionRunner } from "./claude.js"
 export {

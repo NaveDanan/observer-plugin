@@ -433,15 +433,13 @@ describe("codex adapter diagnose", () => {
 })
 
 describe("codex adapter capabilities", () => {
-  it("reports live discovery and experimental child control", () => {
+  it("reports live discovery and native employee-agent control", () => {
     const { adapter } = adapterWith([])
     expect(adapter.capabilities(CODEX_DEFAULT_PROFILE)).toEqual({
       discovery: "live",
-      // Not "supported": the protocol carries the fields, but Observer has no
-      // tested pre-spawn path that fills them in.
-      childModel: "experimental",
-      childReasoning: "experimental",
-      requiresReload: false,
+      childModel: "supported",
+      childReasoning: "supported",
+      requiresReload: true,
     })
   })
 

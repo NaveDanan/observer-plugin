@@ -5,6 +5,7 @@ import {
   CircleAlertIcon,
   FileTextIcon,
   ListChecksIcon,
+  MessageSquareIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -58,6 +59,7 @@ const ACTION_ICON: Record<ToolAction, typeof WrenchIcon> = {
   command: TerminalIcon,
   search: SearchIcon,
   task: BotIcon,
+  message: MessageSquareIcon,
   todo: ListChecksIcon,
   other: WrenchIcon,
 }

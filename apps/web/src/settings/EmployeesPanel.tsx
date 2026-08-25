@@ -162,7 +162,7 @@ export function EmployeesPanel(): JSX.Element {
         <SettingsRow
           id="setting-seat-control"
           title="Seat control"
-          description="The master consent switch, opt-in and off by default. With it on, Observer generates hidden per-employee agent definitions and rewrites the host's delegation, so a seat's model and options are what your subagents actually run — on the hosts whose adapters can do that, which today is OpenCode alone. With it off, every target is inert and Observer only observes. Skills are not gated on it: they are prompt text folded into the behaviour directive, so they apply either way."
+          description="The model-pin switch, opt-in and off by default. Observer always makes the full employee roster available to installed harnesses, which may choose an employee when the description fits. With seat control on, a configured employee uses the selected model and supported options. A pin never forces the harness to delegate to that employee. Skills apply either way."
           resetAction={
             seats.control ? (
               <SettingResetButton

@@ -41,3 +41,9 @@ specialists untouched.
 End-to-end validation on Copilot CLI 1.0.80 routed a neutral delegation from
 `gpt-5.6-sol` to `observer:observer-malik-johnson`; Copilot reported the child
 running `gpt-5-mini` and completing successfully.
+
+Superseded by issue 11. Copilot no longer installs the routing controller;
+native employee agents remain available and a seat only pins their model.
+
+Superseded by issue 11. Copilot no longer installs the routing controller;
+native employee agents remain available and a seat only pins their model.

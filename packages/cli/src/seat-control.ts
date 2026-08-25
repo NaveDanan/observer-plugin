@@ -1,5 +1,6 @@
 import type { SeatsConfig } from "@observer-ai/daemon"
 import { syncCopilotSeatAgents } from "./copilot-seat-agents.js"
+import { syncClaudeEmployeeAgents, syncCodexEmployeeAgents } from "./host-employee-agents.js"
 import { syncSeatAgents } from "./seat-agents.js"
 
 export interface SeatControlSync {
@@ -12,9 +13,11 @@ export interface SeatControlSync {
 export function syncSeatControl(seats: SeatsConfig): SeatControlSync {
   const opencode = syncSeatAgents(seats)
   const copilot = syncCopilotSeatAgents(seats)
+  const codex = syncCodexEmployeeAgents(seats)
+  const claude = syncClaudeEmployeeAgents(seats)
   return {
-    written: [...opencode.written, ...copilot.written],
-    removed: [...opencode.removed, ...copilot.removed],
-    notes: [...opencode.notes, ...copilot.notes],
+    written: [...opencode.written, ...copilot.written, ...codex.written, ...claude.written],
+    removed: [...opencode.removed, ...copilot.removed, ...codex.removed, ...claude.removed],
+    notes: [...opencode.notes, ...copilot.notes, ...codex.notes, ...claude.notes],
   }
 }

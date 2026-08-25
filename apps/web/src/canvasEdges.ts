@@ -106,7 +106,7 @@ export function toFlowEdges(
   return conversations(edges).map(({ edge, bidirectional }) => {
     const label = edge.label ?? (edge.provenance === "authoritative" ? undefined : edge.provenance)
     const message = edge.edgeType === "messaged"
-    const peer = message
+    const peer = isPeerMessage(edge, lineage)
     // The spawner's hue, not the child's: the line belongs to whoever drew it.
     // A message is nobody's lineage, so it never takes a branch colour.
     const color = message ? undefined : lineage.get(edge.fromAgentId)?.color
@@ -118,15 +118,15 @@ export function toFlowEdges(
       id: message ? `message-pair:${messagePairKey(edge)}` : edge.id,
       source: edge.fromAgentId,
       target: edge.toAgentId,
-      type: message ? PEER_EDGE_TYPE : "step",
+      type: peer ? PEER_EDGE_TYPE : "step",
       // Motion belongs to communication only: a single flare moves between
       // the agents while the dotted hierarchy stays still.
       animated: !reducedMotion && message,
       // A peer arc says what it is by its shape, and repeating "direct
       // message" over every one of them buries the canvas in identical text.
-      label: message ? undefined : label,
+      label: peer ? undefined : label,
       ariaLabel: message
-        ? (edge.label ?? `${bidirectional ? "peer messages between" : "peer message from"} ${ends}`)
+        ? (edge.label ?? `${peer ? "peer " : ""}${bidirectional ? "messages between" : "message from"} ${ends}`)
         : (label ?? `${edge.edgeType} relationship from ${edge.fromAgentId} to ${edge.toAgentId}`),
       className: `edge-${edge.edgeType} edge-${edge.provenance}${color ? " edge-lineage" : ""}${peer ? " edge-peer" : ""}`,
       data: {
@@ -140,7 +140,7 @@ export function toFlowEdges(
       // Handed to CSS as a custom property rather than as `stroke` directly,
       // so the selected and hover rules in the stylesheet still outrank it.
       ...(color ? { style: { "--app-lineage": color } as CSSProperties } : {}),
-      ...(message ? { sourceHandle: MESSAGE_SOURCE_HANDLE, targetHandle: MESSAGE_TARGET_HANDLE } : {}),
+      ...(peer ? { sourceHandle: MESSAGE_SOURCE_HANDLE, targetHandle: MESSAGE_TARGET_HANDLE } : {}),
     }
   })
 }

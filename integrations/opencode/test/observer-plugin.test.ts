@@ -1573,14 +1573,13 @@ describe("observer opencode plugin: seat control", () => {
   const MALIK = "observer-malik-johnson"
   const CONTROLLED = { control: true, employees: { "malik-johnson": { model: "anthropic/claude-opus-4-5", variant: "high" } } }
 
-  it("points the delegation at the employee's generated agent when the host has it", async () => {
+  it("does not force a generated employee agent even when a model pin and definition exist", async () => {
     const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agents: [...STOCK_AGENTS, MALIK] })
     const call = taskCall("root", "call_1", "Audit the build", "prompt text")
     await h.hooks["tool.execute.before"](call.input, call.output)
 
-    // OpenCode's task tool has no model parameter. Rewriting `subagent_type` to
-    // an agent whose definition carries the model is the only lever there is.
-    expect(call.output.args["subagent_type"]).toBe(MALIK)
+    expect(call.output.args["subagent_type"]).toBe("general")
+    expect(h.agentListCalls()).toBe(0)
   })
 
   it("LEAVES subagent_type UNTOUCHED WHEN THE GENERATED AGENT IS MISSING", async () => {
@@ -1754,25 +1753,22 @@ describe("observer opencode plugin: seat control", () => {
     }
   })
 
-  it("asks the host for its agent list once for a burst of parallel delegations", async () => {
+  it("does not inspect the host agent list for generic delegations", async () => {
     const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agents: [...STOCK_AGENTS, MALIK] })
     const calls = [1, 2, 3, 4].map((n) => taskCall("root", `call_${n}`, `Task ${n}`, `prompt ${n}`))
     await Promise.all(calls.map((call) => h.hooks["tool.execute.before"](call.input, call.output)))
 
-    // A model fanning out eight subagents must not cost eight lookups.
-    expect(h.agentListCalls()).toBe(1)
-    for (const call of calls) expect(call.output.args["subagent_type"]).toBe(MALIK)
+    expect(h.agentListCalls()).toBe(0)
+    for (const call of calls) expect(call.output.args["subagent_type"]).toBe("general")
   })
 
-  it("does not cache a failed lookup as an empty agent list", async () => {
-    // One unlucky request must not turn into a session-long refusal to apply
-    // any seat, so a failure is retried rather than remembered.
+  it("does not query an unavailable agent list to route a seat", async () => {
     const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agentsUnavailable: true })
     const first = taskCall("root", "call_1", "One", "prompt one")
     const second = taskCall("root", "call_2", "Two", "prompt two")
     await h.hooks["tool.execute.before"](first.input, first.output)
     await h.hooks["tool.execute.before"](second.input, second.output)
-    expect(h.agentListCalls()).toBe(2)
+    expect(h.agentListCalls()).toBe(0)
   })
 
   it("never asks the host anything at all while seat control is off", async () => {
@@ -1782,15 +1778,14 @@ describe("observer opencode plugin: seat control", () => {
     expect(h.agentListCalls()).toBe(0)
   })
 
-  it("rewrites a camelCase subagentType in place rather than adding a second key", async () => {
+  it("leaves a camelCase subagentType untouched", async () => {
     const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agents: [...STOCK_AGENTS, MALIK] })
     const call = {
       input: { tool: "task", sessionID: "root", callID: "call_1" },
       output: { args: { description: "Audit the build", prompt: "prompt text", subagentType: "general" } as Record<string, any> },
     }
     await h.hooks["tool.execute.before"](call.input, call.output)
-    expect(call.output.args["subagentType"]).toBe(MALIK)
-    // Introducing a key the host does not read is at best noise.
+    expect(call.output.args["subagentType"]).toBe("general")
     expect("subagent_type" in call.output.args).toBe(false)
   })
 })

@@ -144,8 +144,8 @@ describe("observer opencode plugin autostart, end to end", () => {
       expect(health, "daemon did not come up").toBeDefined()
       expect(existsSync(join(home, "autostart.stamp"))).toBe(true)
 
-      // Once up, the next turn's telemetry gets through for real.
-      await session.chat()
+      // The turn that noticed the dead port must survive startup; requiring a
+      // second turn here would hide a lost cold-start batch.
       const deadline = Date.now() + 10_000
       while (Date.now() < deadline && (health?.["events"] ?? 0) === 0) {
         const fresh = await waitForHealth(port, 1_000)

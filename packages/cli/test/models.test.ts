@@ -395,6 +395,7 @@ describe("groupByProvider", () => {
 describe("formatContext", () => {
   it("reads at a glance in a fixed-width column", () => {
     expect(formatContext(1_048_576)).toBe("1M")
+    expect(formatContext(1_050_000)).toBe("1.1M")
     expect(formatContext(1_000_000)).toBe("1M")
     expect(formatContext(200_000)).toBe("200K")
     expect(formatContext(128_000)).toBe("128K")

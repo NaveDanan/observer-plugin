@@ -206,6 +206,7 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
       {
         id: "claude-opus-5",
         label: "Claude Opus 5",
+        contextWindow: 1_000_000,
         options: [
           {
             id: "effortLevel",
@@ -215,6 +216,15 @@ const TARGET_CATALOGUES: Record<string, ModelCatalogue> = {
               { id: "low", label: "low" },
               { id: "medium", label: "medium" },
               { id: "high", label: "high" },
+            ],
+          },
+          {
+            id: "contextTier",
+            label: "Context tier",
+            type: "select",
+            choices: [
+              { id: "default", label: "264K", isDefault: true },
+              { id: "long_context", label: "1M" },
             ],
           },
         ],
@@ -568,7 +578,7 @@ describe("host targets", () => {
     let state = press(targets(), "return")
     const text = render(state, { rows: 40, columns: 120 }).join("\n")
     expect(text).toContain("Select model for OpenCode / default")
-    expect(text).toContain("Choose the model to use when Arjun Mehta launches matching subagents.")
+    expect(text).toContain("Choose the model to pin when the harness uses Arjun Mehta.")
     expect(text).toContain("Context")
     expect(text).toContain("Reasoning")
     expect(text).toContain("Recommended models")
@@ -634,6 +644,17 @@ describe("host targets", () => {
     // The scale left the table, so the change says itself on the status line.
     expect(tabbed.status).toBe("Claude Opus 5: context window set to 1M.")
     expect(press(tabbed, "down").status).toBe("")
+  })
+
+  it("shows Copilot context capacities instead of its saved tier ids", () => {
+    const state = press(targets(), "down", "down", "return", "down")
+    const row = (current: ConfigUIState): string =>
+      render(current, { rows: 40, columns: 120 }).find((line) => line.includes("Claude Opus 5"))!
+
+    expect(row(state)).toContain("264K")
+    const long = press(state, "tab")
+    expect(row(long)).toContain("1M")
+    expect(row(long)).not.toContain("long_context")
   })
 
   it("keeps an armed option on its own row instead of painting the column", () => {
@@ -1702,27 +1723,15 @@ describe("render", () => {
     expect(lines.some((line) => line.includes("Employees") && line.includes("3 people"))).toBe(true)
   })
 
-  it("names the hosts that can apply seat control on the row that owns the flag", () => {
+  it("says every installed harness receives employee agents", () => {
     // The narrowings are too long to sit on every screen, so they expand under
     // the cursor — which starts on Seat control, where they belong.
-    expect(render(menu, viewport).join("\n")).toContain(
-      "OpenCode and Copilot CLI can apply seat control",
-    )
+    expect(render(menu, viewport).join("\n")).toContain("Employee agents are available on every installed harness")
   })
 
-  it("says seat control reaches neutral delegations only", () => {
-    /**
-     * The second narrowing, and it is not cosmetic.
-     *
-     * Seating works by rewriting the host's neutral agent type. Doing that to a
-     * specialist would throw away its own prompt, tools and permissions. A UI
-     * that omitted this limit would imply every child moves onto the selected
-     * model.
-     */
+  it("says seat control never forces employee selection", () => {
     const text = collapse(render(menu, viewport).join("\n"))
-    expect(text).toContain(
-      collapse("Only neutral delegations are redirected - specialist agents keep their prompt, tools and model"),
-    )
+    expect(text).toContain(collapse("Seat control pins models; it never forces the harness to choose an employee"))
   })
 
   it("walks a new user through the first two steps, and stops once they are taken", () => {
@@ -1734,11 +1743,10 @@ describe("render", () => {
   })
 
   it("wraps a value into the gutter rather than clipping the end off it", () => {
-    // The sentences in this block exist to be read in full; "...keeps its own
-    // prompt, tools and mo..." is worse than two lines.
+    // The sentence must remain readable at every supported width.
     for (const columns of [60, 80, 100, 160]) {
       const text = collapse(render(menu, { rows: 30, columns }).join("\n"))
-      expect(text).toContain(collapse("specialist agents keep their prompt, tools and model"))
+      expect(text).toContain(collapse("never forces the harness to choose an employee"))
     }
   })
 
@@ -1912,9 +1920,9 @@ describe("renderReport", () => {
     expect(text).not.toMatch(/\u001B\[/)
   })
 
-  it("says plainly when no employee is seated", () => {
+  it("says plainly when no employee model pin is configured", () => {
     const text = renderReport({ control: false, employees: {} }, ROSTER).join("\n")
-    expect(text).toContain("No employee has a seat.")
+    expect(text).toContain("No employee model pins are configured.")
   })
 
   it("surfaces a seat whose id is not on the roster", () => {
@@ -1947,7 +1955,7 @@ describe("observer config without a terminal", () => {
         timeout: 20_000,
       })
       expect(output).toContain("Observer seats")
-      expect(output).toContain("No employee has a seat.")
+      expect(output).toContain("No employee model pins are configured.")
       expect(output).not.toMatch(/\u001B\[/)
     } finally {
       rmSync(home, { recursive: true, force: true })

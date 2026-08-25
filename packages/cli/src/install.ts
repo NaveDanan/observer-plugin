@@ -6,6 +6,7 @@ import {
   emitterPath,
   hookPowershellCommand,
   hookShellCommand,
+  hookWindowsCommand,
   homeDir,
   nodePath,
   opencodeAgentDir,
@@ -15,6 +16,13 @@ import {
   recordInstallPaths,
 } from "./paths.js"
 import { removeSeatAgents, syncSeatAgents } from "./seat-agents.js"
+import { removeCopilotEmployeeAgents, removeCopilotSeatSettings, syncCopilotSeatAgents } from "./copilot-seat-agents.js"
+import {
+  removeClaudeEmployeeAgents,
+  removeCodexEmployeeAgents,
+  syncClaudeEmployeeAgents,
+  syncCodexEmployeeAgents,
+} from "./host-employee-agents.js"
 
 export interface InstallResult {
   host: HostId
@@ -130,11 +138,15 @@ export function install(host: HostId): InstallResult {
 export function uninstall(host: HostId): InstallResult {
   switch (host) {
     case "claude":
-      return removeFromJsonHooks("claude", claudeSettingsPath())
+      return withRemovedEmployeeAgents(removeFromJsonHooks("claude", claudeSettingsPath()), removeClaudeEmployeeAgents())
     case "codex":
-      return removeFromJsonHooks("codex", codexHooksPath())
+      return withRemovedEmployeeAgents(removeFromJsonHooks("codex", codexHooksPath()), removeCodexEmployeeAgents())
     case "copilot":
-      return removeFile("copilot", copilotHooksPath())
+      return withRemovedEmployeeAgents(
+        removeFile("copilot", copilotHooksPath()),
+        removeCopilotEmployeeAgents(),
+        removeCopilotSeatSettings(),
+      )
     case "opencode":
       return removeOpencode()
   }
@@ -182,7 +194,10 @@ function installClaude(): InstallResult {
     host: "claude",
     action: existed ? "updated" : "installed",
     path,
-    notes: ["Restart Claude Code, or start a new session, for the hooks to load."],
+    notes: [
+      "Restart Claude Code, or start a new session, for the hooks to load.",
+      ...syncClaudeEmployeeAgentsQuietly(),
+    ],
   }
 }
 
@@ -200,7 +215,8 @@ function installCodex(): InstallResult {
         {
           type: "command",
           command: hookShellCommand("codex", event),
-          timeout: HOOK_TIMEOUT_SECONDS,
+          commandWindows: hookWindowsCommand("codex", event),
+          timeout: event === "SessionEnd" ? 3 : HOOK_TIMEOUT_SECONDS,
           statusMessage: "Observer",
         },
       ],
@@ -218,6 +234,7 @@ function installCodex(): InstallResult {
     notes: [
       "Codex requires you to trust new hooks: run `/hooks` inside Codex and approve the Observer entries.",
       "Hooks are enabled by default; if disabled, set `[features] hooks = true` in ~/.codex/config.toml.",
+      ...syncCodexEmployeeAgentsQuietly(),
     ],
   }
 }
@@ -241,7 +258,7 @@ function installCopilot(): InstallResult {
     host: "copilot",
     action: existed ? "updated" : "installed",
     path,
-    notes: ["Copilot CLI loads hook files at startup; restart any running session."],
+    notes: ["Copilot CLI loads hook files at startup; restart any running session.", ...syncCopilotEmployeeAgentsQuietly()],
   }
 }
 
@@ -289,6 +306,30 @@ function installOpencode(): InstallResult {
 function syncSeatAgentsQuietly(): string[] {
   try {
     return syncSeatAgents(loadConfig().seats).notes
+  } catch {
+    return []
+  }
+}
+
+function syncCodexEmployeeAgentsQuietly(): string[] {
+  try {
+    return syncCodexEmployeeAgents(loadConfig().seats).notes
+  } catch {
+    return []
+  }
+}
+
+function syncClaudeEmployeeAgentsQuietly(): string[] {
+  try {
+    return syncClaudeEmployeeAgents(loadConfig().seats).notes
+  } catch {
+    return []
+  }
+}
+
+function syncCopilotEmployeeAgentsQuietly(): string[] {
+  try {
+    return syncCopilotSeatAgents(loadConfig().seats).notes
   } catch {
     return []
   }
@@ -358,6 +399,16 @@ function removeFile(host: HostId, path: string): InstallResult {
   rmSync(path)
   rmSync(`${path}${BACKUP_SUFFIX}`, { force: true })
   return { host, action: "removed", path, notes: [] }
+}
+
+function withRemovedEmployeeAgents(result: InstallResult, removed: string[], extraNotes: string[] = []): InstallResult {
+  const notes = [...result.notes, ...extraNotes]
+  if (removed.length > 0) notes.push(`Removed ${removed.length} Observer employee agent definition${removed.length === 1 ? "" : "s"}.`)
+  return {
+    ...result,
+    action: result.action === "removed" || removed.length > 0 ? "removed" : result.action,
+    notes,
+  }
 }
 
 // ------------------------------------------------------------------ helpers

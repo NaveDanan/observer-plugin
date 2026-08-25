@@ -87,6 +87,86 @@ async function turn(): Promise<void> {
 }
 
 describe("observer opencode plugin autostart: claims and cooldown", () => {
+  it("retries the failed cold-start batch ahead of events queued during startup", async () => {
+    writeConfig({})
+    process.env.OBSERVER_DAEMON = fakeDaemon()
+
+    const attempts: Array<Array<Record<string, any>>> = []
+    let resolveFirstAttempt: (() => void) | undefined
+    const firstAttempt = new Promise<void>((resolve) => {
+      resolveFirstAttempt = resolve
+    })
+    globalThis.fetch = (async (url: any, init?: any) => {
+      if (!String(url).endsWith("/v1/hooks")) return Response.json({})
+      const deliveries = JSON.parse(String(init?.body ?? "{}")).deliveries ?? []
+      attempts.push(deliveries)
+      if (attempts.length === 1) {
+        resolveFirstAttempt?.()
+        throw new TypeError("fetch failed")
+      }
+      return Response.json({})
+    }) as typeof globalThis.fetch
+
+    const hooks = await ObserverPlugin({
+      client: { session: { get: async ({ path }: any) => ({ data: { id: path.id } }) } },
+      directory: "/repo",
+      worktree: "/repo",
+    })
+    const chat = (id: string) =>
+      hooks["chat.message"](
+        { sessionID: "root" },
+        { message: { id, sessionID: "root" }, parts: [{ type: "text", text: id }] },
+      )
+
+    try {
+      await chat("m1")
+      await firstAttempt
+      await chat("m2")
+
+      await vi.waitFor(() => expect(attempts.length).toBeGreaterThanOrEqual(2))
+      const retried = attempts.slice(1).flat()
+      expect(retried.map((delivery) => delivery.payload.messageID)).toEqual(["m1", "m2"])
+      expect(retried[0]?.deliveryId).toBe(attempts[0]?.[0]?.deliveryId)
+    } finally {
+      await hooks.dispose()
+    }
+  })
+
+  it("stops retrying when the daemon never becomes reachable", async () => {
+    vi.useFakeTimers()
+    writeConfig({})
+    process.env.OBSERVER_DAEMON = fakeDaemon()
+    let hookAttempts = 0
+    globalThis.fetch = (async (url: any) => {
+      if (String(url).endsWith("/v1/hooks")) {
+        hookAttempts++
+        throw new TypeError("fetch failed")
+      }
+      return Response.json({})
+    }) as typeof globalThis.fetch
+
+    const hooks = await ObserverPlugin({
+      client: { session: { get: async ({ path }: any) => ({ data: { id: path.id } }) } },
+      directory: "/repo",
+      worktree: "/repo",
+    })
+    try {
+      await hooks["chat.message"](
+        { sessionID: "root" },
+        { message: { id: "m1", sessionID: "root" }, parts: [{ type: "text", text: "hello" }] },
+      )
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(hookAttempts).toBe(31)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(hookAttempts).toBe(31)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      await hooks.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it("spawns the recorded daemon once when deliveries cannot get through", async () => {
     writeConfig({})
     const daemon = fakeDaemon()
