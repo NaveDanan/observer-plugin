@@ -182,6 +182,27 @@ describe("copilot adapter", () => {
     expect(kinds(events)).toContain("session.started")
   })
 
+  // Copilot states the opening prompt twice — once on sessionStart, once on
+  // userPromptSubmitted — with different timestamps and identical text. Neither
+  // hook may draw a message, or every session opens with a duplicated turn.
+  it("draws no user message from either hook that carries the opening prompt", () => {
+    const start = normalizeHook({
+      host: "copilot",
+      event: "sessionStart",
+      deliveryId: "d1",
+      payload: { sessionId: "s", source: "new", initialPrompt: "fix the bug", timestamp: 1000 },
+    })
+    const submitted = normalizeHook({
+      host: "copilot",
+      event: "userPromptSubmitted",
+      deliveryId: "d2",
+      payload: { sessionId: "s", prompt: "fix the bug", timestamp: 1200 },
+    })
+    expect(kinds(start)).not.toContain("message.user")
+    expect(kinds(submitted)).not.toContain("message.user")
+    expect(kinds(submitted)).toContain("session.status")
+  })
+
   it("synthesises a stable tool call id from name and arguments", () => {
     const pre = normalizeHook({
       host: "copilot",

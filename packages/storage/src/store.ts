@@ -10,6 +10,7 @@ import type {
   EntityStore,
   HostId,
   IngestEvent,
+  MessageAttachment,
   MessageEntity,
   PromptFragmentEntity,
   SessionEntity,
@@ -201,7 +202,7 @@ export class Store implements EntityStore {
         const id = str(row["id"])
         const { host, sessionKey } = splitSessionId(id)
         this.deleteCoordination(host as HostId, sessionKey)
-        for (const table of ["messages", "tool_calls", "todos", "prompt_fragments", "edges", "agents"]) {
+        for (const table of ["message_attachments", "messages", "tool_calls", "todos", "prompt_fragments", "edges", "agents"]) {
           this.db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(id)
         }
         this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
@@ -218,7 +219,7 @@ export class Store implements EntityStore {
     const { host, sessionKey } = splitSessionId(sessionId)
     this.transaction(() => {
       this.deleteCoordination(host as HostId, sessionKey)
-      for (const table of ["messages", "tool_calls", "todos", "prompt_fragments", "edges", "agents"]) {
+      for (const table of ["message_attachments", "messages", "tool_calls", "todos", "prompt_fragments", "edges", "agents"]) {
         this.db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId)
       }
       this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId)
@@ -335,11 +336,13 @@ export class Store implements EntityStore {
   }
 
   putMessage(row: MessageEntity): void {
+    const attachments = row.attachments ?? []
     this.db
       .prepare(
-        `INSERT INTO messages (id, session_id, agent_id, role, message_key, text, streaming, created_at, updated_at, seq)
-         VALUES (?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET text=excluded.text, streaming=excluded.streaming, updated_at=excluded.updated_at`,
+        `INSERT INTO messages (id, session_id, agent_id, role, message_key, text, streaming, attachments, created_at, updated_at, seq)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET text=excluded.text, streaming=excluded.streaming,
+           attachments=COALESCE(excluded.attachments, messages.attachments), updated_at=excluded.updated_at`,
       )
       .run(
         row.id,
@@ -349,10 +352,55 @@ export class Store implements EntityStore {
         row.messageKey,
         row.text,
         row.streaming ? 1 : 0,
+        attachments.length > 0 ? JSON.stringify(attachments) : null,
         row.createdAt,
         row.updatedAt,
         row.seq,
       )
+    // The serve-time allowlist. Written after the message so an attachment can
+    // never name a file that no transcript refers to.
+    for (const attachment of attachments) {
+      this.db
+        .prepare(
+          `INSERT INTO message_attachments (id, session_id, message_id, name, path, mime_type, byte_length, updated_at)
+           VALUES (?,?,?,?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET message_id=excluded.message_id, name=excluded.name,
+             path=excluded.path, mime_type=excluded.mime_type, byte_length=excluded.byte_length,
+             updated_at=excluded.updated_at`,
+        )
+        .run(
+          attachment.id,
+          row.sessionId,
+          row.id,
+          attachment.name,
+          attachment.path ?? null,
+          attachment.mimeType ?? null,
+          attachment.byteLength ?? null,
+          row.updatedAt,
+        )
+    }
+  }
+
+  /**
+   * One attachment by id, or nothing.
+   *
+   * This is what makes serving a file off the agent's machine safe: the daemon
+   * never takes a path from the browser, only an id it previously minted, and
+   * a path that no message references cannot be named at all.
+   */
+  getAttachment(id: string): MessageAttachment | undefined {
+    const row = this.db.prepare("SELECT * FROM message_attachments WHERE id = ?").get(id) as Row | undefined
+    if (!row) return undefined
+    const path = nstr(row["path"])
+    const mimeType = nstr(row["mime_type"])
+    const byteLength = nnum(row["byte_length"])
+    return {
+      id: str(row["id"]),
+      name: str(row["name"]),
+      ...(path === null ? {} : { path }),
+      ...(mimeType === null ? {} : { mimeType }),
+      ...(byteLength === null ? {} : { byteLength }),
+    }
   }
 
   nextMessageSeq(agentId: string): number {
@@ -759,6 +807,7 @@ function toEdge(r: Row): EdgeEntity {
 }
 
 function toMessage(r: Row): MessageEntity {
+  const attachments = json<MessageAttachment[]>(r["attachments"], [])
   return {
     id: str(r["id"]),
     sessionId: str(r["session_id"]),
@@ -767,6 +816,7 @@ function toMessage(r: Row): MessageEntity {
     messageKey: str(r["message_key"]),
     text: str(r["text"]),
     streaming: num(r["streaming"]) === 1,
+    ...(attachments.length > 0 ? { attachments } : {}),
     createdAt: num(r["created_at"]),
     updatedAt: num(r["updated_at"]),
     seq: num(r["seq"]),

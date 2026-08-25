@@ -84,7 +84,9 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilities> = {
     model: "partial",
     systemPrompt: "none",
     notes: [
-      "Hooks expose no main-agent reply text; Observer recovers it by tailing the session event log.",
+      "Hooks expose no message text; Observer recovers both sides by tailing the session event log.",
+      "Subagent transcripts are recovered too: subagent.started ties the log's agentId to the hook's agent name.",
+      "Files attached to a turn are shown from the paths the session log records; Observer never copies the bytes.",
       "subagentStop carries the full final subagent response.",
       "The built-in general-purpose agent does not emit subagent events.",
       "preToolUse carries no tool call id, so repeated identical calls are merged.",

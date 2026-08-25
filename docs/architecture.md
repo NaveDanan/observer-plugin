@@ -87,6 +87,32 @@ safe:
 The reducer is idempotent on top of that: applying the same event twice produces
 the same state, so a duplicate that slips through still cannot corrupt the graph.
 
+## One source per fact
+
+Idempotency only protects against the *same* fact arriving twice. It cannot help
+when a host states one fact two different ways.
+
+Copilot does exactly that with the opening prompt: `sessionStart` carries it as
+`initialPrompt` and `userPromptSubmitted` carries it again as `prompt`, byte for
+byte, moments apart. Nothing links the two, so both keys were legitimate and the
+first turn was drawn twice.
+
+The rule that resolves it is to pick one source per fact rather than to invent a
+cleverer key. For Copilot, message text belongs to the session log
+(`~/.copilot/session-state/<id>/events.jsonl`), not to hooks, and the adapter
+emits no `message.user` at all. The log is the better source anyway:
+
+- it carries the raw `content`, where hooks carry the model-facing
+  `transformedContent` with system blocks injected into it;
+- it carries `attachments`, which hooks do not expose at all;
+- its `subagent.started` lines map a log `agentId` to an agent name, so subagent
+  transcripts land on the right node instead of being dropped.
+
+Attachments are recorded, never copied. Observer stores the path and mints an id
+from it, and `/v1/attachments/:id` serves the bytes off disk. The browser can
+only ever name an id, so the stored rows are the allowlist and a path cannot be
+supplied as a parameter.
+
 ## Order tolerance
 
 Hooks arrive out of order in normal operation. A subagent can report its start

@@ -84,7 +84,7 @@ describe("Copilot session log tailer", () => {
     pipeline.ingestHook({
       host: "copilot",
       event: "sessionStart",
-      deliveryId: "seed",
+      deliveryId: `seed:${sessionKey}`,
       workspaceRoot: "/repo",
       payload: { sessionId: sessionKey, timestamp: Date.now() },
     })
@@ -117,7 +117,33 @@ describe("Copilot session log tailer", () => {
     expect(agent.modelConfidence).toBe("reconciled")
   })
 
-  it("skips subagent-originated and ephemeral entries", () => {
+  it("reads the model from a current Copilot log, which has no assistant.usage", () => {
+    process.env["COPILOT_HOME"] = join(home, "copilot")
+    seedSession("cs1b")
+    writeLog("cs1b", [
+      JSON.stringify({
+        id: "b1",
+        timestamp: new Date().toISOString(),
+        type: "session.start",
+        data: { sessionId: "cs1b", selectedModel: "claude-opus-5", reasoningEffort: "medium" },
+      }),
+      JSON.stringify({
+        id: "b2",
+        timestamp: new Date().toISOString(),
+        type: "session.model_change",
+        data: { previousModel: "claude-opus-5", newModel: "gpt-5.6-terra" },
+      }),
+    ])
+
+    const tailer = new CopilotTailer(store, pipeline, 10_000)
+    expect(tailer.tick()).toBe(2)
+
+    const agent = store.listAgents("copilot:cs1b")[0]!
+    expect(agent.model).toBe("gpt-5.6-terra")
+    expect(agent.modelConfidence).toBe("reconciled")
+  })
+
+  it("skips subagent entries whose agent was never introduced", () => {
     process.env["COPILOT_HOME"] = join(home, "copilot")
     seedSession("cs2")
     writeLog("cs2", [
@@ -127,6 +153,103 @@ describe("Copilot session log tailer", () => {
 
     const tailer = new CopilotTailer(store, pipeline, 10_000)
     expect(tailer.tick()).toBe(0)
+  })
+
+  it("recovers the user's own turns, which no hook states exactly once", () => {
+    process.env["COPILOT_HOME"] = join(home, "copilot")
+    seedSession("cs4")
+    writeLog("cs4", [
+      JSON.stringify({
+        id: "u1",
+        timestamp: new Date().toISOString(),
+        type: "user.message",
+        // The transformed form is what the model saw; the transcript shows what
+        // the human typed.
+        data: { content: "look at this", transformedContent: "look at this\n<system_reminder>noise</system_reminder>" },
+      }),
+    ])
+
+    const tailer = new CopilotTailer(store, pipeline, 10_000)
+    expect(tailer.tick()).toBe(1)
+
+    const agent = store.listAgents("copilot:cs4")[0]!
+    const message = store.listMessages(agent.id)[0]!
+    expect(message.role).toBe("user")
+    expect(message.text).toBe("look at this")
+  })
+
+  it("keeps the files a turn carried, addressable by id", () => {
+    process.env["COPILOT_HOME"] = join(home, "copilot")
+    seedSession("cs5")
+    writeLog("cs5", [
+      JSON.stringify({
+        id: "u1",
+        timestamp: new Date().toISOString(),
+        type: "user.message",
+        data: {
+          content: "why does this look wrong?",
+          attachments: [
+            { displayName: "Pasted Image", path: "/tmp/shot.png", type: "file", mimeType: "image/png", byteLength: 12 },
+            { displayName: "no path", type: "file" },
+          ],
+        },
+      }),
+    ])
+
+    const tailer = new CopilotTailer(store, pipeline, 10_000)
+    tailer.tick()
+
+    const agent = store.listAgents("copilot:cs5")[0]!
+    const attachments = store.listMessages(agent.id)[0]?.attachments ?? []
+    expect(attachments).toHaveLength(1)
+    expect(attachments[0]).toMatchObject({ name: "Pasted Image", path: "/tmp/shot.png", mimeType: "image/png" })
+    expect(store.getAttachment(attachments[0]!.id)?.path).toBe("/tmp/shot.png")
+  })
+
+  it("routes a subagent's transcript to the node the hooks named", () => {
+    process.env["COPILOT_HOME"] = join(home, "copilot")
+    seedSession("cs6")
+    pipeline.ingestHook({
+      host: "copilot",
+      event: "subagentStart",
+      deliveryId: "sub:cs6",
+      workspaceRoot: "/repo",
+      payload: { sessionId: "cs6", agentName: "code-review", agentDisplayName: "Code Review Agent" },
+    })
+    writeLog("cs6", [
+      JSON.stringify({
+        id: "s1",
+        timestamp: new Date().toISOString(),
+        type: "subagent.started",
+        agentId: "call_1",
+        data: { agentName: "code-review", toolCallId: "call_1" },
+      }),
+      JSON.stringify({
+        id: "s2",
+        timestamp: new Date().toISOString(),
+        type: "user.message",
+        agentId: "call_1",
+        data: {
+          content: "review this screenshot",
+          attachments: [{ displayName: "shot", path: "/tmp/review.png", mimeType: "image/png" }],
+        },
+      }),
+      JSON.stringify({
+        id: "s3",
+        timestamp: new Date().toISOString(),
+        type: "assistant.message",
+        agentId: "call_1",
+        data: { messageId: "m1", content: "looks good" },
+      }),
+    ])
+
+    const tailer = new CopilotTailer(store, pipeline, 10_000)
+    tailer.tick()
+
+    const sub = store.listAgents("copilot:cs6").find((agent) => agent.agentKey === "sub:code-review")!
+    const messages = store.listMessages(sub.id)
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant"])
+    expect(messages[0]?.attachments?.[0]?.name).toBe("shot")
   })
 
   it("only reads newly appended lines on the next pass", () => {

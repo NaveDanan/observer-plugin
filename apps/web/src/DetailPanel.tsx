@@ -9,6 +9,7 @@ import type {
 } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { ChatMarkdown } from "./chat/ChatMarkdown"
+import { Attachments } from "./chat/Attachments"
 import { EMPTY_VOCABULARY, type InlineVocabulary } from "./chat/InlineVocabulary"
 import { buildTimeline } from "./chat/timeline"
 import { ToolRun } from "./chat/ToolRun"
@@ -256,6 +257,7 @@ function ChatTab({
                       vocabulary={vocabulary}
                       streaming={row.message.streaming}
                     />
+                    {row.message.attachments && <Attachments attachments={row.message.attachments} />}
                     {row.message.streaming && <span className="cursor" aria-label="still writing" />}
                   </div>
                 </li>

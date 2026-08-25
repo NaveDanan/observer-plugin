@@ -1231,6 +1231,213 @@ describe("the default model", () => {
   })
 })
 
+/**
+ * The same default, once hosts have targets.
+ *
+ * With targets configured there is no single model list to hand out: models
+ * come from one host's catalogue, and they are loaded when that target is
+ * opened. The default flow therefore asks which target first, and from there
+ * it is the per-employee target picker with a different recipient - same
+ * table, same catalogue, same steppers, same shape written onto the seat.
+ */
+describe("the default model with host targets", () => {
+  function chooser(
+    seats: Partial<SeatsConfig> = {},
+    catalogues: Record<string, ModelCatalogue> = TARGET_CATALOGUES,
+  ): ConfigUIState {
+    return press(targetStart(seats, catalogues), "down", "down", "return")
+  }
+
+  /** Arm OpenCode's single model at low effort and land on the apply view. */
+  function applying(seats: Partial<SeatsConfig> = {}): ConfigUIState {
+    return press(chooser(seats), "return", "down", "right", "return")
+  }
+
+  it("asks which target the default is for, instead of showing an empty list", () => {
+    const state = chooser()
+    expect(state.view).toBe("default-target")
+    expect(state.employeeId).toBeUndefined()
+    expect(state.targetId).toBeUndefined()
+    const text = render(state, { rows: 40, columns: 120 }).join("\n")
+    expect(text).toContain("Default model > Which target")
+    expect(text).toContain("OpenCode / default")
+    expect(text).toContain("Codex / default")
+    expect(text).toContain("2 known")
+  })
+
+  it("loads the chosen target's catalogue the way the per-employee picker does", () => {
+    let state = press(chooser({}, {}), "return")
+    expect(state.view).toBe("default")
+    expect(state.targetId).toBe("opencode:default")
+    expect(state.request).toBe("catalogue")
+
+    state = catalogueApplied(state, "opencode:default", TARGET_CATALOGUES["opencode:default"]!)
+    expect(state.request).toBeUndefined()
+    expect(pickerEntries(state).map((entry) => entry.model?.id)).toEqual([
+      undefined,
+      "github-copilot/claude-opus-5",
+    ])
+    const text = render(state, { rows: 40, columns: 120 }).join("\n")
+    expect(text).toContain("Default model for OpenCode / default")
+    expect(text).toContain("Enter arms this model; the next screen asks who receives it.")
+    expect(text).toContain("\u2190/\u2192 reasoning effort")
+    expect(text).toContain("tab context window")
+  })
+
+  it("arms the model with its target options and then asks who receives them", () => {
+    const state = press(chooser(), "return", "down", "right", "tab")
+    expect(state.draftTargetOptions).toEqual([
+      { id: "variant", value: "low" },
+      { id: "contextWindow", value: "1m" },
+    ])
+    const armed = press(state, "return")
+    expect(armed.view).toBe("apply")
+    expect(armed.defaultChoice).toEqual({
+      model: "github-copilot/claude-opus-5",
+      targetId: "opencode:default",
+      host: "opencode",
+      options: [
+        { id: "variant", value: "low" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    })
+    expect(armed.seats.employees).toEqual({})
+    expect(armed.dirty).toBe(false)
+    expect(render(armed, { rows: 40, columns: 120 }).join("\n")).toContain(
+      "Default model > OpenCode / default > github-copilot/claude-opus-5 at low effort > Who gets it",
+    )
+  })
+
+  it("writes the same target shape a per-employee pick writes", () => {
+    const applied = press(applying(), "return")
+    expect(applied.view).toBe("menu")
+    for (const row of ROSTER) {
+      expect(applied.seats.employees[row.id]?.targets?.["opencode:default"]).toEqual({
+        host: "opencode",
+        model: "github-copilot/claude-opus-5",
+        options: [{ id: "variant", value: "low" }],
+      })
+    }
+    expect(applied.dirty).toBe(true)
+    expect(applied.targetId).toBeUndefined()
+    expect(applied.status).toContain("opencode:default")
+  })
+
+  it("counts unseated by the target it is filling, not by the whole seat", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        // A Copilot model is not an OpenCode one: this employee still has no
+        // model for the target being filled, so the unseated scope includes him.
+        "arjun-mehta": {
+          targets: { "copilot:default": { host: "copilot", model: "claude-opus-5" } },
+          skills: [{ name: "react", description: "" }],
+        },
+        "malik-johnson": {
+          targets: { "opencode:default": { host: "opencode", model: "openai/gpt-4o" } },
+        },
+      },
+    }
+    const armed = applying(seats)
+    expect(render(armed, { rows: 40, columns: 120 }).join("\n")).toContain("2 of 3 have no model here yet")
+
+    const applied = press(armed, "return")
+    expect(applied.seats.employees["arjun-mehta"]).toEqual({
+      targets: {
+        "copilot:default": { host: "copilot", model: "claude-opus-5" },
+        "opencode:default": {
+          host: "opencode",
+          model: "github-copilot/claude-opus-5",
+          options: [{ id: "variant", value: "low" }],
+        },
+      },
+      skills: [{ name: "react", description: "" }],
+    })
+    // Malik already had a model for this target, so the unseated scope left it.
+    expect(applied.seats.employees["malik-johnson"]?.targets?.["opencode:default"]).toEqual({
+      host: "opencode",
+      model: "openai/gpt-4o",
+    })
+  })
+
+  it("overwrites only this target under the all-employees scope", () => {
+    const seats: SeatsConfig = {
+      control: true,
+      employees: {
+        "arjun-mehta": {
+          targets: {
+            "copilot:default": { host: "copilot", model: "claude-haiku-4.5" },
+            "opencode:default": {
+              host: "opencode",
+              model: "openai/gpt-4o",
+              options: [{ id: "variant", value: "high" }],
+            },
+          },
+          skills: [{ name: "react", description: "" }],
+        },
+      },
+    }
+    const applied = press(applying(seats), "down", "return")
+    expect(applied.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]).toEqual({
+      host: "opencode",
+      model: "github-copilot/claude-opus-5",
+      options: [{ id: "variant", value: "low" }],
+    })
+    // The other host and the skills are nobody's business here.
+    expect(applied.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
+      host: "copilot",
+      model: "claude-haiku-4.5",
+    })
+    expect(applied.seats.employees["arjun-mehta"]?.skills).toEqual([{ name: "react", description: "" }])
+    expect(applied.status).toContain("replacing any model they had")
+  })
+
+  it("commits only the options the chosen model declares", () => {
+    // Copilot's models name their effort `effortLevel`, so nothing armed on
+    // another host's option ids can ride along into this target.
+    const state = press(chooser(), "down", "down", "return", "down", "return")
+    expect(state.defaultChoice).toEqual({
+      model: "claude-opus-5",
+      targetId: "copilot:default",
+      host: "copilot",
+    })
+  })
+
+  it("takes a searched-for model id the catalogue does not carry", () => {
+    let state = press(chooser(), "return")
+    state = type(state, "future-model")
+    expect(state.filter).toBe("future-model")
+    expect(pickerEntries(state)).toHaveLength(1)
+    state = press(state, "return")
+    expect(state.view).toBe("apply")
+    expect(state.defaultChoice).toEqual({
+      model: "future-model",
+      targetId: "opencode:default",
+      host: "opencode",
+    })
+  })
+
+  it("refuses inherit, because an employee with no target here already inherits", () => {
+    const refused = press(chooser(), "return", "return")
+    expect(refused.view).toBe("default")
+    expect(refused.status).toContain("Inherit cannot be the default")
+    expect(refused.defaultChoice).toBeUndefined()
+  })
+
+  it("unwinds apply, picker and target chooser one level at a time", () => {
+    let state = press(applying(), "escape")
+    expect(state.view).toBe("default")
+    expect(state.defaultChoice).toBeUndefined()
+    state = press(state, "escape")
+    expect(state.view).toBe("default-target")
+    expect(state.targetId).toBeUndefined()
+    state = press(state, "escape")
+    expect(state.view).toBe("menu")
+    expect(state.seats.employees).toEqual({})
+    expect(state.dirty).toBe(false)
+  })
+})
+
 describe("filtering", () => {
   it("narrows the picker and resets the cursor to the top", () => {
     let state = press(employees(), "return", "return", "down", "down", "/")

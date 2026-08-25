@@ -17,12 +17,19 @@ import {
   copilotPluginDir,
   installCopilotPlugin,
   isCopilotPluginStaged,
+  stagedCopilotPluginVersion,
   uninstallCopilotPlugin,
 } from "./copilot-plugin.js"
 import { openBrowser, diagnostics, start, status, stop } from "./daemon-control.js"
+import {
+  type HostSection,
+  type HostWarning,
+  renderInstallReport,
+} from "./install-report.js"
 import { runConfig } from "./config-ui.js"
 import { canvasUrl, detectHarness, detectSession } from "./harness.js"
 import { daemonPath, emitterPath, opencodePluginSource } from "./paths.js"
+import { buildTheme, colorSupport } from "./theme.js"
 import { VERSION } from "./version.js"
 
 const HELP = `Observer ${VERSION} - interactive canvas for running coding agents
@@ -139,6 +146,7 @@ async function main(argv: string[]): Promise<number> {
         printError(`Specify one or more hosts (${HOSTS.join(", ")}) or "all".`)
         return 1
       }
+      const sections: HostSection[] = []
       for (const host of hosts) {
         // Codex and Copilot can both take Observer as a packaged plugin
         // instead of raw hooks.
@@ -155,33 +163,39 @@ async function main(argv: string[]): Promise<number> {
             ? install(host)
             : uninstall(host)
         const label = usePlugin ? `${HOST_CAPABILITIES[host].label} (plugin)` : HOST_CAPABILITIES[host].label
-        print(`${pad(label, 20)} ${pad(result.action, 10)} ${result.path}`)
-        for (const note of result.notes) print(`  - ${note}`)
 
         // Running both integrations for one host at once would report every
         // event twice, so say so rather than silently doubling the data.
+        const warnings: HostWarning[] = []
         if (command === "install" && (host === "codex" || host === "copilot")) {
           const other = usePlugin
             ? isInstalled(host) && `observer uninstall ${host}`
             : (host === "codex" ? isCodexPluginInstalled() : isCopilotPluginStaged()) &&
               `observer uninstall ${host} --plugin`
           if (other) {
-            print(
-              `  ! ${HOST_CAPABILITIES[host].label} is also configured the other way, which would record every event twice.`,
-            )
-            print(`    Remove one with: ${other}`)
+            warnings.push({
+              message: `${HOST_CAPABILITIES[host].label} is also configured the other way, which would record every event twice.`,
+              remedyLabel: "Remove one with:",
+              remedy: other,
+            })
           }
         }
+        sections.push({ label, action: result.action, path: result.path, notes: result.notes, warnings })
       }
+
+      const footnotes: string[] = []
       if (asPlugin && !hosts.some((host) => host === "codex" || host === "copilot")) {
-        print("")
-        print("--plugin only applies to codex and copilot; other hosts were configured normally.")
+        footnotes.push("--plugin only applies to codex and copilot; other hosts were configured normally.")
       }
-      if (command === "install") {
-        print("")
-        print("Hooks bring the daemon up on their own the first time an agent runs.")
-        print("To look at the canvas now: observer start && observer open")
-      }
+      const lines = renderInstallReport(
+        { command, sections, footnotes },
+        {
+          version: VERSION,
+          theme: buildTheme(colorSupport(process.env, process.stdout.isTTY === true)),
+          ...(process.stdout.columns === undefined ? {} : { columns: process.stdout.columns }),
+        },
+      )
+      for (const line of lines) print(line)
       return 0
     }
 
@@ -266,8 +280,13 @@ async function doctor(): Promise<number> {
   print(
     `  ${pad("Copilot (plugin)", 20)} ${pad(isCopilotPluginStaged() ? "installed" : "not installed", 16)}${COPILOT_PLUGIN_NAME}`,
   )
-  if (isCopilotPluginStaged()) print(`      ${copilotPluginDir()}`)
-  else print(`      install with: observer install copilot --plugin`)
+  if (isCopilotPluginStaged()) {
+    print(`      ${copilotPluginDir()}`)
+    const staged = stagedCopilotPluginVersion()
+    if (staged !== undefined && staged !== VERSION) {
+      print(`      staged from v${staged} but Observer is v${VERSION}; reinstall with: observer install copilot --plugin`)
+    }
+  } else print(`      install with: observer install copilot --plugin`)
 
   print("")
   print("Capture settings")

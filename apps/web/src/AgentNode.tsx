@@ -151,26 +151,31 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
   const churn = churnSummary(agent)
 
   /*
-   * Two lineage colours, two different questions.
+   * Three lineage colours, three different questions.
    *
-   * `--app-lineage` is this agent's own hue, worn as the bar down its left
-   * edge and by every spawn edge leaving it: "these are mine". The parent hue
-   * marks the notch at the top of the card, right where the incoming edge
-   * lands, so the line and the node it arrives at are the same colour: "this
-   * is who made me". Handed to CSS as custom properties because the hue is
-   * data — one per spawner, unbounded — and the stylesheet only knows tokens.
+   * `--app-lineage` is this agent's own hue, worn by every spawn edge leaving
+   * it: "these are mine". The parent hue marks the notch at the top of the
+   * card, right where the incoming edge lands, so the line and the node it
+   * arrives at are the same colour: "this is who made me". `--app-lineage-family`
+   * fills the card itself, and is set only inside a nested spawn crew, so a
+   * tinted card means "we work together" and a plain one means the node is
+   * new and unremarkable. Handed to CSS as custom properties because the hue
+   * is data — one per spawner, unbounded — and the stylesheet only knows
+   * tokens.
    */
   const lineageStyle = lineage
     ? ({
         "--app-lineage": lineage.color,
         ...(lineage.parentColor ? { "--app-lineage-parent": lineage.parentColor } : {}),
+        ...(lineage.familyColor ? { "--app-lineage-family": lineage.familyColor } : {}),
       } as CSSProperties)
     : undefined
+  const inFamily = Boolean(lineage?.familyColor)
   const depthLabel = lineage ? ` Nesting level ${lineage.depth}.` : ""
 
   return (
     <div
-      className={`node employee-node status-${agent.status}${selected ? " is-selected" : ""}${live ? " is-live" : ""}${done ? " is-done" : ""}${isRoot ? " is-root" : ""}${failed ? " is-failed" : ""}`}
+      className={`node employee-node status-${agent.status}${selected ? " is-selected" : ""}${live ? " is-live" : ""}${done ? " is-done" : ""}${isRoot ? " is-root" : ""}${failed ? " is-failed" : ""}${inFamily ? " is-family" : ""}`}
       style={lineageStyle}
       tabIndex={0}
       role="button"
@@ -185,7 +190,6 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
       }}
       aria-label={`${name}, ${role.long} ${statusText}.${depthLabel} ${activityText}.${churn ? ` ${churnTitle(churn)}.` : ""} Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
     >
-      <span className="node-lineage" aria-hidden="true" />
       {!isRoot && lineage?.parentColor && <span className="node-lineage-mark" aria-hidden="true" />}
 
       {!isRoot && <Handle type="target" position={Position.Top} />}

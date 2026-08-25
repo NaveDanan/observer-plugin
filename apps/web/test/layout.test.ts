@@ -366,10 +366,9 @@ describe("layout constants against app-surfaces.css", () => {
     expect(SEATED_NODE_HEIGHT).toBeGreaterThan(NODE_HEIGHT)
   })
 
-  it("keeps the lineage accents out of the reserved height", () => {
-    // Both are absolutely positioned, so neither can push a node past the
-    // reservation the layout made for it.
-    expect(rule(".node-lineage")).toContain("position: absolute")
+  it("keeps the lineage accent out of the reserved height", () => {
+    // Absolutely positioned, so it cannot push a node past the reservation
+    // the layout made for it.
     expect(rule(".node-lineage-mark")).toContain("position: absolute")
   })
 })

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { Store } from "@observer-ai/storage"
 import type { Change } from "@observer-ai/protocol"
@@ -295,6 +298,74 @@ describe("HTTP API", () => {
       headers: { authorization: `Bearer ${config.token}` },
     })
     expect(snapshot.json().agents).toHaveLength(1)
+  })
+
+  it("serves an attachment by id and refuses one it never minted", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const broadcaster = new Broadcaster()
+    const app = await createServer({ store, pipeline, config, broadcaster, webDir: "/nonexistent" })
+    const dir = mkdtempSync(join(tmpdir(), "observer-attachment-"))
+    const file = join(dir, "shot.png")
+    writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const svg = join(dir, "diagram.svg")
+    writeFileSync(svg, "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>")
+    closers.push(() => {
+      void app.close()
+      store.close()
+      rmSync(dir, { recursive: true, force: true })
+    })
+
+    pipeline.ingestEvents([
+      {
+        host: "copilot",
+        adapter: "copilot-session-log@1",
+        workspaceRoot: "/repo",
+        sessionKey: "s1",
+        agentKey: "main",
+        at: Date.now(),
+        provenance: "reconciled",
+        body: {
+          kind: "message.user",
+          messageKey: "u1",
+          text: "look",
+          attachments: [
+            { id: "att-1", name: "shot.png", path: file, mimeType: "image/png" },
+            { id: "att-2", name: "diagram.svg", path: svg, mimeType: "image/svg+xml" },
+          ],
+        },
+      },
+    ])
+
+    const headers = { authorization: `Bearer ${config.token}` }
+    const served = await app.inject({ method: "GET", url: "/v1/attachments/att-1", headers })
+    expect(served.statusCode).toBe(200)
+    expect(served.headers["content-type"]).toBe("image/png")
+    expect(served.headers["x-content-type-options"]).toBe("nosniff")
+    expect(served.rawPayload.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+
+    // An SVG is a document, not a picture: it is never served as one from our origin.
+    const svgServed = await app.inject({ method: "GET", url: "/v1/attachments/att-2", headers })
+    expect(svgServed.statusCode).toBe(200)
+    expect(svgServed.headers["content-type"]).toBe("application/octet-stream")
+    expect(svgServed.headers["content-disposition"]).toBe('attachment; filename="diagram.svg"')
+    expect(svgServed.headers["x-content-type-options"]).toBe("nosniff")
+
+    // No message names this id, so there is no path to ask for.
+    const unknown = await app.inject({ method: "GET", url: "/v1/attachments/att-9", headers })
+    expect(unknown.statusCode).toBe(404)
+
+    // And a path is never accepted as an identifier.
+    const byPath = await app.inject({
+      method: "GET",
+      url: `/v1/attachments/${encodeURIComponent(file)}`,
+      headers,
+    })
+    expect(byPath.statusCode).toBe(404)
+
+    rmSync(file)
+    const gone = await app.inject({ method: "GET", url: "/v1/attachments/att-1", headers })
+    expect(gone.statusCode).toBe(410)
   })
 
   it("blocks requests with a foreign Host header", async () => {

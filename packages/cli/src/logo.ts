@@ -217,3 +217,24 @@ const CACHE: Record<ColorMode, string[]> = {
 export function logo(depth: ColorMode): string[] {
   return CACHE[depth]
 }
+
+/** The gap between the mark and the text set beside it. */
+const WORDMARK_GAP = "   "
+
+/**
+ * The mark with text set beside it, one line per row.
+ *
+ * Every screen that opens with the wordmark does the same thing with it — four
+ * rows of pixels, up to four lines of already-styled text to their right — and
+ * two copies of that arithmetic drift apart the moment one of them grows a
+ * line. Lines are taken styled rather than as plain strings so the caller
+ * keeps its own palette roles; a row with no text is left as the bare mark
+ * rather than padded, because trailing spaces are what a copied terminal
+ * transcript shows as ragged.
+ */
+export function wordmark(depth: ColorMode, lines: readonly string[]): string[] {
+  return logo(depth).map((glyph, at) => {
+    const beside = lines[at] ?? ""
+    return beside.length === 0 ? glyph : `${glyph}${WORDMARK_GAP}${beside}`
+  })
+}

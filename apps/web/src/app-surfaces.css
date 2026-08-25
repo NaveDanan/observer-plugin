@@ -44,10 +44,12 @@
      down here: the number of branches on a canvas is unbounded and known only
      at runtime, so there is no fixed set of tokens to name. `lineage.ts`
      generates one OKLCH hue per spawner and hands it to the node and to that
-     node's outgoing edges as `--app-lineage`. This value is only the fallback
+     node's outgoing edges as `--app-lineage`, and one to the whole of a nested
+     spawn crew as `--app-lineage-family`. These values are only the fallback
      for anything the layout has not reached yet. */
   --app-lineage: var(--app-edge-spawned);
   --app-lineage-parent: var(--app-hairline);
+  --app-lineage-family: transparent;
 
 
   @variant dark {
@@ -493,6 +495,20 @@
 .diff-add {
   color: var(--success-foreground);
 }
+.session-agents-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.session-agents-toggle:hover .diff-add {
+  text-decoration: underline;
+}
 
 /* ---------------------------------------------------------- mini roster -- */
 /* The Employees seated on the active session, nested inside its row. */
@@ -501,6 +517,9 @@
   flex-direction: column;
   gap: 2px;
   margin-top: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .agent-mini {
   display: flex;
@@ -516,6 +535,8 @@
   font-size: 12px;
   cursor: pointer;
   text-align: left;
+  height: 30px;
+  flex: none;
   transition:
     background-color 140ms ease,
     border-color 140ms ease;
@@ -837,6 +858,29 @@
 /* Status modifiers come first so the selection ring below wins on an equal
    specificity tie. They were once declared after `.is-selected` and silently
    ate the selection state. */
+/* A nested spawn crew — a subagent that spawned subagents, and the subagents
+   it spawned — is filled with one hue so it reads as a block rather than as
+   three unrelated cards. Declared before the status modifiers so a live,
+   failed or selected card still shows the border it needs to; the crew tint
+   is an identity, not a state, and states outrank it. Mixed down hard: the
+   card carries body text, and a fill loud enough to name is a fill loud
+   enough to hurt the contrast underneath it. */
+.node.is-family {
+  --app-family-tint: 12%;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--app-lineage-family) var(--app-family-tint), transparent),
+    color-mix(in srgb, var(--app-lineage-family) var(--app-family-tint), transparent)
+  );
+  border-color: color-mix(in srgb, var(--app-lineage-family) 40%, transparent);
+}
+/* A finished crew member settles down with the rest of its finished state.
+   Written as a tint variable rather than a second `background-image` rule so
+   the fill stays at one class of specificity and the selection ring further
+   down still wins the tie. */
+.node.is-done {
+  --app-family-tint: 7%;
+}
+
 .node.is-root {
   background-image: linear-gradient(
     color-mix(in srgb, var(--primary) 5%, transparent),
@@ -888,24 +932,11 @@
 }
 
 /* ---------------------------------------------------------- node lineage */
-/* Two colours, two questions. The bar down the left edge is the node's OWN
-   hue — the colour of every spawn edge leaving it — so "which of these are
-   mine?" is a colour match rather than a walk down the canvas. The notch sits
-   at the top centre, exactly where the incoming edge lands, and carries the
-   PARENT's hue, so the line and the card it arrives at read as one object.
-   Both are absolutely positioned: the reserved heights in `layout.ts` are
-   estimates of what this stylesheet renders, and neither of these may push
-   that estimate wrong. */
-.node-lineage {
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 3px;
-  border-radius: 0 9999px 9999px 0;
-  background: var(--app-lineage);
-  pointer-events: none;
-}
+/* The notch sits at the top centre, exactly where the incoming edge lands, and
+   carries the PARENT's hue, so the line and the card it arrives at read as one
+   object. Absolutely positioned: the reserved heights in `layout.ts` are
+   estimates of what this stylesheet renders, and this may not push that
+   estimate wrong. */
 .node-lineage-mark {
   position: absolute;
   top: -5px;
@@ -922,7 +953,6 @@
   pointer-events: none;
 }
 /* A finished subagent settles down; its branch colour settles with it. */
-.node.is-done .node-lineage,
 .node.is-done .node-lineage-mark {
   opacity: 0.55;
 }
@@ -1770,6 +1800,45 @@
 }
 .is-reasoning .msg-role {
   color: var(--muted-foreground);
+}
+
+/* ---------------------------------------------------------- attachments -- */
+/* Screenshots pasted into a turn. Capped rather than scaled to fit: a thumbnail
+   small enough to sit in a 400px panel is often unreadable, so the image keeps
+   its own proportions up to a ceiling and the full-size file is one click away.
+   The list itself is unstyled — this is content inside the bubble, not a
+   sidebar of chips. */
+.attachments {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attachment-image a {
+  display: block;
+  line-height: 0;
+  border: 1px solid var(--app-hairline);
+  border-radius: var(--radius-lg, 8px);
+  overflow: hidden;
+}
+.attachment-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  object-fit: contain;
+  background: var(--muted);
+}
+.attachment-name {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.attachment-file a {
+  font-size: 12px;
 }
 
 /* ------------------------------------------------------------- markdown -- */

@@ -73,6 +73,7 @@ describe("Copilot seat agents", () => {
     expect(agent).toContain("observer:copilot-seat-agent v1")
     expect(agent).toContain('model: "claude-opus-5"')
     expect(agent).toContain("You are Malik Johnson")
+    expect(agent).toContain("Use `apply_patch` instead of the legacy `edit` and `create` tools")
     expect(settings.theme).toBe("github")
     expect(settings.subagents.agents.explore).toEqual({ model: "gpt-5.6-luna" })
     expect(settings.subagents.agents["observer:observer-malik-johnson"]).toEqual({

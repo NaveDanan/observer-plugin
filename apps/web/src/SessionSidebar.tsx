@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react"
 import type { AgentEntity, SessionEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { PROVIDER_ICON, ProviderTag, providerLabel } from "./Icons"
@@ -66,6 +66,7 @@ export interface SessionSidebarProps {
  */
 export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
   const { sessions, activeSessionId, agents, matches, selectedAgentId, collapsed, now } = props
+  const [expandedAgentSessions, setExpandedAgentSessions] = useState<Set<string>>(() => new Set())
 
   return (
     <nav className={`sidebar${collapsed ? " is-collapsed" : ""}`} aria-label="Agent sessions">
@@ -111,6 +112,8 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
           {sessions.length === 0 && <p className="muted small session-empty">No agent sessions captured yet.</p>}
           {sessions.map((entry) => {
             const isActive = entry.id === activeSessionId
+            const isAgentListExpanded = expandedAgentSessions.has(entry.id)
+            const agentListId = `session-agents-${entry.id}`
             const liveCount = isActive
               ? agents.filter((a) => a.status === "running" || a.status === "starting").length
               : 0
@@ -131,17 +134,38 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
                     {updated.label}
                   </time>
                   {isActive && agents.length > 0 && (
-                    <span className="diff-badge">
-                      <span className="diff-add">
-                        {agents.length} agent{agents.length === 1 ? "" : "s"}
-                        {liveCount > 0 ? ` · ${liveCount} live` : ""}
+                    <button
+                      type="button"
+                      className="session-agents-toggle"
+                      aria-expanded={isAgentListExpanded}
+                      aria-controls={agentListId}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setExpandedAgentSessions((expanded) => {
+                          const next = new Set(expanded)
+                          if (next.has(entry.id)) next.delete(entry.id)
+                          else next.add(entry.id)
+                          return next
+                        })
+                      }}
+                    >
+                      <span className="diff-badge">
+                        <span className="diff-add">
+                          {agents.length} agent{agents.length === 1 ? "" : "s"}
+                          {liveCount > 0 ? ` · ${liveCount} live` : ""}
+                        </span>
                       </span>
-                    </span>
+                      {isAgentListExpanded ? (
+                        <ChevronDownIcon size={12} aria-hidden="true" />
+                      ) : (
+                        <ChevronRightIcon size={12} aria-hidden="true" />
+                      )}
+                    </button>
                   )}
                 </div>
 
-                {isActive && agents.length > 0 && (
-                  <div className="agent-mini-list">
+                {isActive && isAgentListExpanded && agents.length > 0 && (
+                  <div id={agentListId} className="agent-mini-list">
                     {agents.map((agent) => {
                       const match = matches.get(agent.id)
                       const name = match?.profile.fullName ?? agent.displayName ?? agent.agentType

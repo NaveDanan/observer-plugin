@@ -3,6 +3,7 @@ import type {
   Availability,
   EdgeType,
   HostId,
+  MessageAttachment,
   PromptKind,
   Provenance,
   SessionStatus,
@@ -137,6 +138,15 @@ export interface MessageEntity {
   messageKey: string
   text: string
   streaming: boolean
+  /**
+   * Files that arrived with this message.
+   *
+   * Optional and never `null`: absent means the host said nothing about
+   * attachments, which is not the same claim as "this turn had none". Only
+   * hosts that report them at all can distinguish the two, and a UI that drew
+   * "no attachments" for every Claude turn would be inventing a fact.
+   */
+  attachments?: MessageAttachment[]
   createdAt: number
   updatedAt: number
   seq: number

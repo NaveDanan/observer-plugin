@@ -59,6 +59,8 @@ const MAX_SUBAGENT_DEPTH = 2
 /** Lifetime cap per root session, including finished and pre-runtime assignments. */
 const MAX_SUBAGENTS_PER_SESSION = 15
 const INBOX_PAGE_BYTES = 64 * 1024
+/** A pasted screenshot is well under this; anything above is not a transcript. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -67,9 +69,23 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
   ".woff2": "font/woff2",
   ".ico": "image/x-icon",
   ".map": "application/json; charset=utf-8",
+}
+
+/** Raster formats only: an SVG served inline is a script that runs as Observer. */
+const INLINE_ATTACHMENT_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"])
+
+/** Header-safe and directory-free: the name is host-supplied, the header is ours. */
+function attachmentFilename(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? "attachment"
+  const safe = base.replace(/[^\w.\- ]+/g, "_").slice(0, 100)
+  return safe.length > 0 ? safe : "attachment"
 }
 
 export interface ServerOptions {
@@ -422,6 +438,42 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       promptFragments: store.listPromptFragments(agent.id),
     }
     return reply.send(detail)
+  })
+
+  /**
+   * The bytes behind one message attachment.
+   *
+   * The browser addresses an attachment by the id Observer minted for it, never
+   * by path: the daemon reads local files, and a path parameter would turn that
+   * into an arbitrary-file-read endpoint sitting on localhost. An id that no
+   * message references does not resolve, so the reachable set is exactly the
+   * files some transcript already names.
+   */
+  app.get<{ Params: { id: string } }>("/v1/attachments/:id", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    const attachment = store.getAttachment(decodeURIComponent(request.params.id))
+    if (!attachment?.path) return reply.code(404).send({ error: "not found" })
+    let size: number
+    try {
+      size = statSync(attachment.path).size
+    } catch {
+      // The host owns these files and may have cleaned them up. That is not a
+      // fault, it is an attachment whose bytes are gone.
+      return reply.code(410).send({ error: "gone" })
+    }
+    if (size > MAX_ATTACHMENT_BYTES) return reply.code(413).send({ error: "too large" })
+    // Attachment bytes are arbitrary host-side files served from Observer's own
+    // origin, so anything renderable as a document — SVG most of all — would run
+    // script next to the token that fetched it. Only raster images the UI needs
+    // inline keep their type; everything else is a download.
+    const declared = attachment.mimeType ?? MIME[extname(attachment.path).toLowerCase()]
+    const inline = declared && INLINE_ATTACHMENT_TYPES.has(declared)
+    return reply
+      .header("content-type", inline ? declared : "application/octet-stream")
+      .header("x-content-type-options", "nosniff")
+      .header("content-disposition", inline ? "inline" : `attachment; filename="${attachmentFilename(attachment.name)}"`)
+      .header("cache-control", "private, max-age=3600")
+      .send(readFileSync(attachment.path))
   })
 
   /**

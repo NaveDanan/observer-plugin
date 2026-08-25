@@ -127,14 +127,18 @@ what FIT and continuous zoom are for. Layout is now synchronous, which also
 removed the four-column grid the canvas used to flash before ELK answered.
 
 **Hue is lineage, not relationship type.** Every edge leaving one agent takes
-that agent's own hue, and so does the accent down the side of its node, so
-tracing a subagent back to its parent is a colour match rather than a walk up
-the canvas. `--app-edge-spawned` and friends survive as the fallback before the
-first layout. This is the second deliberate break of "no colour outside
-`:root`": the number of branches on a canvas is unbounded and known only at
-runtime, so there is no fixed set of tokens to name. `lineage.ts` generates one
-OKLCH hue per spawner from a golden-angle step and hands it to CSS as
-`--app-lineage`.
+that agent's own hue, and the notch where an incoming edge lands wears its
+spawner's, so tracing a subagent back to its parent is a colour match rather
+than a walk up the canvas. A node's *fill* answers a narrower question and
+usually declines to: a new node is the plain default card, and only a nested
+spawn crew — a subagent that spawned subagents, plus the subagents it spawned —
+shares one tinted fill, so a coloured card means "we work together" against a
+canvas of ordinary ones. `--app-edge-spawned` and friends survive as the
+fallback before the first layout. This is the second deliberate break of "no
+colour outside `:root`": the number of branches on a canvas is unbounded and
+known only at runtime, so there is no fixed set of tokens to name. `lineage.ts`
+generates one OKLCH hue per spawner from a golden-angle step and hands it to CSS
+as `--app-lineage` and `--app-lineage-family`.
 
 **One edge stops being a `step`.** A message between two agents that are not
 each other's ancestor is the only relationship the tree cannot draw, so it is

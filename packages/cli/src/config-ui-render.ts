@@ -22,6 +22,8 @@ import {
   type TargetRow,
   currentEmployee,
   currentTargetRow,
+  defaultUnseatedIds,
+  describeDefaultChoice,
   employeeRows,
   effortCycle,
   menuRows,
@@ -36,7 +38,7 @@ import {
   targetRows,
   unseatedIds,
 } from "./config-ui-state.js"
-import { LOGO_ROWS, logo } from "./logo.js"
+import { LOGO_ROWS, wordmark } from "./logo.js"
 import { PLAIN_THEME, type Theme, padEnd as pad, truncate, visibleLength } from "./theme.js"
 import { versionLabel } from "./version.js"
 
@@ -151,6 +153,9 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
     case "default":
       lines.push(...modelPicker(state, room, columns, theme))
       break
+    case "default-target":
+      lines.push(...defaultTargetChooser(state, room, columns, theme))
+      break
     case "apply":
       lines.push(...applyScopeChooser(state, columns, theme))
       break
@@ -177,15 +182,11 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
  * have to leave the screen they are on to find out which build drew it.
  */
 function banner(version: string | undefined, theme: Theme): string[] {
-  const text = [
+  return wordmark(theme.depth, [
     theme.title(`Observer multi-harness ${versionLabel(version ?? "dev")}`),
     theme.dim("By NJ-Labs"),
     theme.dim("host targets, model options and skills per employee"),
-  ]
-  return logo(theme.depth).map((glyph, at) => {
-    const beside = text[at] ?? ""
-    return beside.length === 0 ? glyph : `${glyph}   ${beside}`
-  })
+  ])
 }
 
 /**
@@ -307,7 +308,9 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
           ],
     employees: ["Give a person one target per host/profile, plus shared skills."],
     "default-model": [
-      `Pick a model and reasoning effort once, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no seat, or move all ${state.roster.length} onto it.`,
+      state.profiles.length > 0
+        ? `Pick a host target and one of its models, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no model there, or move all ${state.roster.length} onto it.`
+        : `Pick a model and reasoning effort once, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no seat, or move all ${state.roster.length} onto it.`,
     ],
     save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],
     exit: [],
@@ -586,6 +589,43 @@ function modelPicker(state: ConfigUIState, room: number, columns: number, theme:
 }
 
 /**
+ * Which host/profile the default is for.
+ *
+ * The same table the per-employee flow opens, minus the employee: a default is
+ * a target like any other, and picking the target first is what lets the model
+ * list below come from that host's catalogue instead of from nowhere.
+ */
+function defaultTargetChooser(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
+  const rows = targetRows(state)
+  const lines = [
+    breadcrumb(theme, "Default model", "Which target"),
+    "",
+    theme.dim(`  ${pad("Host / profile", 26)}${pad("Models", 12)}Seat control`),
+  ]
+  const window = windowOf(state.cursor["default-target"], rows.length, Math.max(2, room - 3))
+  for (let index = window.start; index < window.end; index++) {
+    const row = rows[index]
+    if (row === undefined) continue
+    const selected = index === state.cursor["default-target"]
+    const known = state.catalogues[row.id]?.models.length
+    const models = known === undefined ? "load on open" : `${known} known`
+    const verdict = targetControl(row, state.seats.control)
+    const title = `${row.hostLabel} / ${row.profileLabel}`
+    lines.push(
+      marker(selected, false, theme) +
+        (selected ? theme.focus(pad(truncate(title, 25), 26)) : pad(truncate(title, 25), 26)) +
+        theme.dim(pad(models, 12)) +
+        controlStyle(verdict.label, theme)(verdict.label),
+    )
+  }
+  if (window.end < rows.length || window.start > 0) {
+    lines.push(theme.dim(`  ${window.start + 1}-${window.end} of ${rows.length}`))
+  }
+  lines.push("", theme.dim("  The model you pick next is written into this target for every employee the scope names."))
+  return lines
+}
+
+/**
  * Who receives the default model, and what each answer costs.
  *
  * The two scopes are named rows rather than a follow-up prompt so the choice
@@ -596,13 +636,19 @@ function modelPicker(state: ConfigUIState, room: number, columns: number, theme:
  */
 function applyScopeChooser(state: ConfigUIState, columns: number, theme: Theme): string[] {
   const choice = state.defaultChoice
-  const described =
-    choice === undefined ? "" : `${choice.model}${choice.variant === undefined ? "" : ` at ${choice.variant} effort`}`
-  const unseated = unseatedIds(state).length
+  const described = choice === undefined ? "" : describeDefaultChoice(state, choice)
+  const unseated = defaultUnseatedIds(state).length
   const total = state.roster.length
+  const targeted = choice?.targetId !== undefined
+  const targetRow = currentTargetRow(state)
+  const where = targeted
+    ? `${targetRow?.hostLabel ?? choice?.host ?? "target"} / ${targetRow?.profileLabel ?? "default"}`
+    : undefined
 
   const lines = [
-    breadcrumb(theme, "Default model", described, "Who gets it"),
+    where === undefined
+      ? breadcrumb(theme, "Default model", described, "Who gets it")
+      : breadcrumb(theme, "Default model", where, described, "Who gets it"),
     "",
     theme.dim(`  ${pad("Scope", GUTTER)}Effect`),
   ]
@@ -611,14 +657,18 @@ function applyScopeChooser(state: ConfigUIState, columns: number, theme: Theme):
     const label = pad(row === "unseated" ? "Unseated only" : "All employees", GUTTER)
     const value =
       row === "unseated"
-        ? theme.accent(`${unseated} of ${total} have no seat yet`)
+        ? theme.accent(`${unseated} of ${total} ${targeted ? "have no model here yet" : "have no seat yet"}`)
         : theme.warn(`overwrites all ${total}`)
     lines.push(marker(selected, false, theme) + (selected ? theme.focus(label) : label) + value)
     if (!selected) return
     const detail =
       row === "unseated"
-        ? `Only employees without a seat receive this model. Seated employees keep theirs.`
-        : `Every employee on the roster moves onto this model, including ones you configured one by one.`
+        ? targeted
+          ? `Only employees with no model for this target receive it. Anyone who already has one keeps it, and their other targets are untouched either way.`
+          : `Only employees without a seat receive this model. Seated employees keep theirs.`
+        : targeted
+          ? `Every employee on the roster moves onto this model for this target, including ones you configured one by one. Their other targets are untouched.`
+          : `Every employee on the roster moves onto this model, including ones you configured one by one.`
     for (const line of wrapAt(detail, Math.max(24, columns - GUTTER - 2), "").split("\n")) {
       lines.push(" ".repeat(GUTTER + 2) + theme.dim(line))
     }
@@ -630,6 +680,7 @@ function applyScopeChooser(state: ConfigUIState, columns: number, theme: Theme):
 function targetModelPicker(state: ConfigUIState, room: number, columns: number, theme: Theme): string[] {
   const employee = currentEmployee(state)
   const row = currentTargetRow(state)
+  const choosingDefault = state.view === "default"
   const entries = pickerEntries(state)
   // The two rightmost columns belong to the scroll rail, so every cell is
   // measured against what is left rather than against the terminal. Sizing the
@@ -639,10 +690,13 @@ function targetModelPicker(state: ConfigUIState, room: number, columns: number, 
   const widths = targetPickerWidths(inner)
   const target = isTarget(row?.target) ? row.target : undefined
   const configuredModel = target?.model
+  const where = `${row?.hostLabel ?? "target"} / ${row?.profileLabel ?? "default"}`
   const head = [
-    theme.title(`Select model for ${row?.hostLabel ?? "target"} / ${row?.profileLabel ?? "default"}`),
+    theme.title(choosingDefault ? `Default model for ${where}` : `Select model for ${where}`),
     theme.dim(
-      `Choose the model to use when ${employee?.name ?? state.employeeId ?? "this employee"} launches matching subagents.`,
+      choosingDefault
+        ? "Enter arms this model; the next screen asks who receives it."
+        : `Choose the model to use when ${employee?.name ?? state.employeeId ?? "this employee"} launches matching subagents.`,
     ),
     "",
   ]
@@ -967,16 +1021,27 @@ function hints(state: ConfigUIState, columns: number, theme: Theme): string[] {
           )
     case "options":
       return bar(["up/down", "move"], ["left/right", "change select"], ["enter", "toggle/change"], ["esc", "back"])
+    case "default-target":
+      return bar(["up/down", "move"], ["enter", "choose models for it"], ["esc", "back"])
     case "default":
-      return bar(
-        ["up/down", "move"],
-        ["left/right", "effort"],
-        ["tab", "vendor"],
-        ["/", "filter"],
-        ["m", "type a model"],
-        ["enter", "choose who gets it"],
-        ["esc", "back"],
-      )
+      return state.targetId === undefined
+        ? bar(
+            ["up/down", "move"],
+            ["left/right", "effort"],
+            ["tab", "vendor"],
+            ["/", "filter"],
+            ["m", "type a model"],
+            ["enter", "choose who gets it"],
+            ["esc", "back"],
+          )
+        : dotted(
+            ["\u2191/\u2193", "to navigate"],
+            ["\u2190/\u2192", "reasoning effort"],
+            ["tab", "context window"],
+            ["shift+tab", groupHint(state)],
+            ["enter", "to choose who gets it"],
+            ["esc", "to cancel"],
+          )
     case "apply":
       return bar(["up/down", "move"], ["enter", "apply"], ["esc", "cancel"])
   }

@@ -191,4 +191,23 @@ export const MIGRATIONS: string[] = [
   SET parent_runtime_id = root_session_key
   WHERE parent_runtime_id IS NULL;
   `,
+  // 5: files sent with a message
+  `
+  -- Denormalised onto the message so one read serves the transcript, and
+  -- normalised into a table so the daemon can answer "may I serve this file?"
+  -- by primary key instead of scanning every message's JSON.
+  ALTER TABLE messages ADD COLUMN attachments TEXT;
+
+  CREATE TABLE message_attachments (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL,
+    message_id  TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    path        TEXT,
+    mime_type   TEXT,
+    byte_length INTEGER,
+    updated_at  INTEGER NOT NULL
+  );
+  CREATE INDEX message_attachments_by_message ON message_attachments(message_id);
+  `,
 ]

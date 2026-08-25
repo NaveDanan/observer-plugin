@@ -32,6 +32,15 @@ const EVENT_ALIASES: Record<string, string> = {
  * - No hook exposes the main agent's reply text. Observer recovers it by
  *   tailing `~/.copilot/session-state/<id>/events.jsonl` (see the session
  *   tailer in the daemon), which is why main-agent text is `reconciled`.
+ * - **User turns are not drawn from hooks either.** Copilot announces the same
+ *   first prompt twice — once as `sessionStart.initialPrompt` and again as
+ *   `userPromptSubmitted.prompt`, byte for byte, with two different timestamps
+ *   — so a hook-keyed message is duplicated for every session's opening turn.
+ *   There is no key both deliveries share, so the fix is not a better key: it
+ *   is to stop having two sources. The session log is the one place a user turn
+ *   is stated exactly once, and it is also the only place that names the files
+ *   attached to it, so the tailer owns user messages for every agent. Hooks
+ *   still drive session status, which is what they are good at.
  * - `preToolUse` has no tool call id, so one is synthesised from the tool name
  *   and a hash of its arguments. Repeated identical calls therefore merge.
  * - `subagentStart` reports only `agentName`, so concurrent subagents with the
@@ -58,8 +67,6 @@ export const copilotAdapter: Adapter = {
           source: pickString(p, "source"),
           cwd: pickString(p, "cwd"),
         })
-        const initial = pickString(p, "initialPrompt", "initial_prompt")
-        if (initial) push({ kind: "message.user", messageKey: `initial:${at}`, text: initial })
         break
       }
 
@@ -69,7 +76,6 @@ export const copilotAdapter: Adapter = {
       }
 
       case "userPromptSubmitted": {
-        push({ kind: "message.user", messageKey: `u:${at}`, text: pickString(p, "prompt") ?? "" })
         push({ kind: "session.status", status: "active" })
         break
       }

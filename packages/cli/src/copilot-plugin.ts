@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { InstallResult } from "./install.js"
 import { HOST_EVENTS } from "./install.js"
@@ -62,6 +62,26 @@ export function copilotPluginManifestPath(): string {
 
 export function isCopilotPluginStaged(): boolean {
   return existsSync(copilotPluginManifestPath())
+}
+
+/**
+ * The version recorded in the staged manifest, if there is one.
+ *
+ * Staging happens once, at `observer install copilot --plugin`; upgrading the
+ * `observer-ai` package does not revisit it. The staged directory therefore
+ * keeps whatever `emit.js` and `copilot-control.js` the *installing* release
+ * shipped, and a user who upgrades has an old plugin talking to a new daemon
+ * with nothing on screen saying so. `status` compares this against the running
+ * CLI so the drift is visible instead of silent.
+ */
+export function stagedCopilotPluginVersion(): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(copilotPluginManifestPath(), "utf8")) as unknown
+    const version = (parsed as { version?: unknown }).version
+    return typeof version === "string" && version.length > 0 ? version : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Whether Copilot itself reports the plugin as installed. */

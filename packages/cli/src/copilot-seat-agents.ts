@@ -172,6 +172,8 @@ function renderAgent(seats: SeatsConfig, employeeId: string, name: string, targe
     "",
     behaviorDirective(applySeatSkills(profile, seats)),
     "",
+    "Use `apply_patch` instead of the legacy `edit` and `create` tools for file changes so Copilot shows the unified diff interface.",
+    "",
   ].join("\n")
 }
 

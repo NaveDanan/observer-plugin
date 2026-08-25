@@ -55,6 +55,30 @@ export const TodoInput = z.object({
 })
 export type TodoInput = z.infer<typeof TodoInput>
 
+/**
+ * One file a human handed to an agent alongside a message — usually a pasted
+ * screenshot.
+ *
+ * Observer stores the *reference*, never the bytes: hosts already keep the file
+ * on disk, and copying megabytes of PNG into the event log would make the
+ * transcript unreadable and the database unbounded. `path` is the host's own
+ * absolute path, and the daemon is the only thing allowed to read it — the
+ * browser addresses an attachment by `id` alone.
+ *
+ * `id` must be derived from something stable about the file (its digest, or a
+ * hash of its path) so redelivering the same message twice does not mint a
+ * second attachment for the same image.
+ */
+export const MessageAttachment = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().max(500),
+  /** The host's own absolute path. Absent when the host names no file. */
+  path: z.string().max(4096).optional(),
+  mimeType: z.string().max(200).optional(),
+  byteLength: z.number().nonnegative().optional(),
+})
+export type MessageAttachment = z.infer<typeof MessageAttachment>
+
 export const PlanStep = z.object({
   step: z.string(),
   status: TodoStatus,
@@ -120,6 +144,8 @@ export const EventBody = z.discriminatedUnion("kind", [
     kind: z.literal("message.user"),
     messageKey: z.string(),
     text: z.string(),
+    /** Files sent with this turn. Omitted, not empty, when the host names none. */
+    attachments: z.array(MessageAttachment).max(50).optional(),
   }),
   z.object({
     kind: z.literal("message.assistant"),

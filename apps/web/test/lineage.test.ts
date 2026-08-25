@@ -105,6 +105,32 @@ describe("computeLineage", () => {
     expect(lineage.get("a1")?.color).not.toBe(lineage.get("a")?.color)
   })
 
+  it("leaves a root and its plain subagents on the default fill", () => {
+    // A new node is unremarkable and looks it. Tinting the ordinary case
+    // leaves nothing for the unusual one to stand out against.
+    expect(lineage.get("root")?.familyColor).toBeNull()
+    expect(lineage.get("b")?.familyColor).toBeNull()
+  })
+
+  it("fills a nested spawn crew with the spawner's single hue", () => {
+    // `a` spawned a crew of its own, so it and `a1` read as one block.
+    expect(lineage.get("a")?.familyColor).toBe(lineage.get("a")?.color)
+    expect(lineage.get("a1")?.familyColor).toBe(lineage.get("a")?.color)
+  })
+
+  it("gives a crew leader its own hue rather than its leader's", () => {
+    // root -> a -> a1 -> a2: `a1` leads a crew and joins one. Leading wins,
+    // otherwise a chain of spawners would collapse into a single colour and
+    // the crews it is meant to separate would merge.
+    const deep = computeLineage(
+      [...agents, agent("a2", "a1", 4)],
+      [...edges, link("a1", "a2")],
+    )
+    expect(deep.get("a1")?.familyColor).toBe(deep.get("a1")?.color)
+    expect(deep.get("a2")?.familyColor).toBe(deep.get("a1")?.color)
+    expect(deep.get("a")?.familyColor).toBe(deep.get("a")?.color)
+  })
+
   it("does not recolour anything when a later agent is spawned", () => {
     // Colours must not move under a developer mid-read, so the index a hue is
     // derived from has to be append-only. A tree-order index would renumber

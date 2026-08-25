@@ -15,6 +15,7 @@ import type {
   EdgeEntity,
   EdgeType,
   EntityStore,
+  MessageAttachment,
   MessageEntity,
   PromptFragmentEntity,
   PromptKind,
@@ -160,6 +161,7 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
         text: body.text,
         streaming: false,
         at: event.at,
+        ...(body.attachments ? { attachments: body.attachments } : {}),
       })
       const now = current(store, session)
       if (!now.goal && agent.agentKey === MAIN_AGENT_KEY && body.text.trim().length > 0) {
@@ -516,12 +518,16 @@ function upsertMessage(
     text: string
     streaming: boolean
     at: number
+    attachments?: MessageAttachment[]
   },
 ): void {
   const id = buildMessageId(agent.id, input.messageKey)
   const existing = store.getMessage(id)
   // Never let an empty late payload wipe text we already captured.
   const text = existing && input.text.length === 0 ? existing.text : input.text
+  // Same rule for attachments: a redelivery that says nothing about files is
+  // silent, not a claim that the files were withdrawn.
+  const attachments = input.attachments?.length ? input.attachments : existing?.attachments
   putMessage(store, changes, {
     id,
     sessionId: session.id,
@@ -530,6 +536,7 @@ function upsertMessage(
     messageKey: input.messageKey,
     text,
     streaming: input.streaming,
+    ...(attachments?.length ? { attachments } : {}),
     createdAt: existing?.createdAt ?? input.at,
     updatedAt: input.at,
     seq: existing?.seq ?? store.nextMessageSeq(agent.id),

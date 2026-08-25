@@ -392,8 +392,19 @@ export function getHostModels(host: string, profile?: string): Promise<HostCatal
   return request(`/v1/hosts/${encodeURIComponent(host)}/models${query}`)
 }
 
-export function streamUrl(cursor: number): string {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+/**
+ * Where an attachment's bytes live.
+ *
+ * The token rides in the query string because this URL goes into `src` on an
+ * `<img>`, and an image request carries no headers we control. `authorize`
+ * already accepts a query token for exactly this reason — the WebSocket has the
+ * same constraint.
+ */
+export function attachmentUrl(id: string): string {
+  return `/v1/attachments/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`
+}
+
+export function streamUrl(cursor: number): string {  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
   return `${protocol}//${window.location.host}/v1/stream?token=${encodeURIComponent(token)}&cursor=${cursor}`
 }
 

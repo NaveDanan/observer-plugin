@@ -1,4 +1,5 @@
 export * from "./install.js"
+export * from "./install-report.js"
 export * from "./codex-plugin.js"
 export * from "./copilot-plugin.js"
 export * from "./config-ui.js"

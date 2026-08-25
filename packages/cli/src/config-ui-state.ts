@@ -46,6 +46,8 @@ export type ConfigView =
   | "targets"
   | "models"
   | "options"
+  /** Which host/profile the default is being chosen for. Scoped to nobody. */
+  | "default-target"
   /** The default-model picker. Same table as `models`, scoped to nobody. */
   | "default"
   /** Who receives the pick made in `default`. */
@@ -127,6 +129,12 @@ export interface DefaultChoice {
   model: string
   /** The reasoning effort armed in the picker, applied alongside the model. */
   variant?: string
+  /** The host/profile the default is written to. Absent means the legacy OpenCode target. */
+  targetId?: string
+  /** The host that owns `targetId`, stored beside the model like any other target. */
+  host?: string
+  /** Options armed in the target picker, committed with the model. */
+  options?: SeatTargetOption[]
 }
 
 /** The two scopes the apply view offers, in display order. */
@@ -201,7 +209,7 @@ export function initialState(input: InitialInput): ConfigUIState {
     models: input.models,
     profiles: input.profiles ?? [],
     catalogues: input.catalogues ?? {},
-    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, default: 0, apply: 0 },
+    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, "default-target": 0, default: 0, apply: 0 },
     draftTargetOptions: [],
     filter: "",
     confirmQuit: false,
@@ -498,6 +506,8 @@ export function reduce(state: ConfigUIState, key: Key): ConfigUIState {
       return reduceModels(base, key)
     case "options":
       return reduceOptions(base, key)
+    case "default-target":
+      return reduceDefaultTarget(base, key)
     case "default":
       return reduceDefault(base, key)
     case "apply":
@@ -761,6 +771,7 @@ function reduceOptions(state: ConfigUIState, key: Key): ConfigUIState {
  * than editing any seat.
  */
 function reduceDefault(state: ConfigUIState, key: Key): ConfigUIState {
+  if (state.targetId !== undefined) return reduceDefaultTargetModels(state, key)
   const entries = pickerEntries(state)
 
   if (isUp(key)) return clampVariant({ ...state, cursor: step(state.cursor, "models", -1, entries.length) }, entries)
@@ -801,11 +812,150 @@ function chooseDefault(state: ConfigUIState, model: string, variant: string | un
   }
 }
 
+/**
+ * The host/profile chooser the default flow opens on once targets exist.
+ *
+ * A default is written into one target, exactly as a per-employee pick is, so
+ * the flow has to ask which one before it can show a model list at all: with
+ * targets configured, `state.models` is empty until a catalogue is loaded for
+ * a specific target. Asking here is what lets the picker below be the same
+ * table, fed by the same catalogue, as the per-employee one.
+ */
+function reduceDefaultTarget(state: ConfigUIState, key: Key): ConfigUIState {
+  const rows = targetRows(state)
+  if (isUp(key)) return moveCursor(state, "default-target", -1, rows.length)
+  if (isDown(key)) return moveCursor(state, "default-target", 1, rows.length)
+  if (isEscape(key)) {
+    const next = { ...state, view: "menu" as const }
+    delete next.targetId
+    return next
+  }
+  if (isEnter(key) || isSpace(key)) {
+    const row = rows[state.cursor["default-target"]]
+    if (row === undefined) return state
+    return { ...openTargetPicker(state, row), view: "default" }
+  }
+  return state
+}
+
+/**
+ * The default-model picker for one target: the per-employee target picker's
+ * table, scoped to nobody.
+ *
+ * Every key does here what it does there — the same catalogue rows, the same
+ * reasoning and context steppers, the same search — because the two are the
+ * same act with a different recipient. Enter is the only difference: it arms a
+ * `DefaultChoice` and moves to the apply view rather than editing one seat.
+ */
+function reduceDefaultTargetModels(state: ConfigUIState, key: Key): ConfigUIState {
+  const entries = pickerEntries(state)
+  if (isUp(key)) return moveTargetModelCursor(state, entries, -1)
+  if (isDown(key)) return moveTargetModelCursor(state, entries, 1)
+  if (key.name === "left") return cycleTargetPickerOption(state, "reasoning", -1)
+  if (key.name === "right") return cycleTargetPickerOption(state, "reasoning", 1)
+  if (key.name === "tab" && key.shift === true) return moveTargetGroup(state, entries)
+  if (key.name === "tab") return cycleTargetPickerOption(state, "context", 1)
+  if (key.name === "/") return { ...state, entry: { field: "filter", value: state.filter } }
+  if (key.name === "backspace") {
+    return {
+      ...state,
+      filter: state.filter.slice(0, -1),
+      cursor: { ...state.cursor, models: 0 },
+      draftTargetOptions: [],
+    }
+  }
+  if (isEscape(key)) {
+    const next: ConfigUIState = { ...state, view: "default-target", filter: "", draftTargetOptions: [] }
+    delete next.targetId
+    return next
+  }
+  if (isEnter(key)) {
+    const entry = entries[state.cursor.models]
+    if (entry === undefined) return state
+    if (entries.length === 1 && state.filter.trim().length > 0) {
+      return chooseTargetDefault(state, state.filter.trim())
+    }
+    // Inherit is not a default: an employee with no target for this host
+    // already inherits the session's model, so offering that row here would
+    // dress a no-op up as a choice.
+    if (entry.kind === "inherit") {
+      return {
+        ...state,
+        status:
+          "Inherit cannot be the default: an employee with no target for this host already inherits the session's model. Pick a model.",
+      }
+    }
+    if (barredEntry(entry)) return { ...state, status: barredStatus(entry) }
+    const model = entry.model?.id
+    return model === undefined ? state : chooseTargetDefault(state, model)
+  }
+  const char = printable(key)
+  if (char !== undefined) {
+    return {
+      ...state,
+      filter: state.filter + char,
+      cursor: { ...state.cursor, models: 0 },
+      draftTargetOptions: [],
+    }
+  }
+  return state
+}
+
+/**
+ * Arms a default for one target, options and all.
+ *
+ * The options are clamped against the catalogue the same way
+ * `assignTargetModel` clamps them, so a default cannot carry an effort the
+ * chosen model does not offer onto every employee at once.
+ */
+function chooseTargetDefault(state: ConfigUIState, model: string): ConfigUIState {
+  const row = currentTargetRow(state)
+  if (state.targetId === undefined || row === undefined) return state
+  const catalogueModel = state.catalogues[state.targetId]?.models.find((candidate) => candidate.id === model)
+  const options =
+    catalogueModel === undefined
+      ? state.draftTargetOptions
+      : clampTargetOptions(state.draftTargetOptions, catalogueModel.options)
+  return {
+    ...state,
+    view: "apply",
+    cursor: { ...state.cursor, apply: 0 },
+    defaultChoice: {
+      model,
+      targetId: state.targetId,
+      host: row.host,
+      ...(options.length === 0 ? {} : { options: options.map((option) => ({ ...option })) }),
+    },
+    status: "",
+  }
+}
+
+/**
+ * The pick, said the way the user made it.
+ *
+ * The legacy flow carries an effort in `variant`; a target's effort is one of
+ * its options, named by whichever id that host uses. Reading it back through
+ * the catalogue keeps the breadcrumb and the confirmation honest on both.
+ */
+export function describeDefaultChoice(state: ConfigUIState, choice: DefaultChoice): string {
+  if (choice.targetId === undefined) {
+    return `${choice.model}${choice.variant === undefined ? "" : ` at ${choice.variant} effort`}`
+  }
+  const descriptors = state.catalogues[choice.targetId]?.models.find((model) => model.id === choice.model)?.options ?? []
+  const reasoning = descriptors.find((descriptor) => inlineTargetOption(descriptor) === "reasoning")
+  const armed = choice.options?.find((option) => option.id === reasoning?.id)?.value
+  if (typeof armed !== "string") return choice.model
+  const label = reasoning?.choices?.find((entry) => entry.id === armed)?.label ?? armed
+  return `${choice.model} at ${label} effort`
+}
+
 function reduceApply(state: ConfigUIState, key: Key): ConfigUIState {
   if (isUp(key)) return moveCursor(state, "apply", -1, DEFAULT_APPLY_ROWS.length)
   if (isDown(key)) return moveCursor(state, "apply", 1, DEFAULT_APPLY_ROWS.length)
   if (isEscape(key)) {
-    const next: ConfigUIState = { ...state, view: "menu" }
+    // Back one level: to the picker the choice was made in when there was a
+    // target to pick it for, and to the menu when there was not.
+    const next: ConfigUIState = { ...state, view: state.targetId === undefined ? "menu" : "default" }
     delete next.defaultChoice
     return next
   }
@@ -827,32 +977,80 @@ function reduceApply(state: ConfigUIState, key: Key): ConfigUIState {
 export function applyDefault(state: ConfigUIState, scope: DefaultApplyRowKind): ConfigUIState {
   const choice = state.defaultChoice
   if (choice === undefined) return state
-  const description = `${choice.model}${choice.variant === undefined ? "" : ` at ${choice.variant} effort`}`
-  const ids = scope === "unseated" ? unseatedIds(state) : state.roster.map((row) => row.id)
+  const description = describeDefaultChoice(state, choice)
+  const ids = scope === "unseated" ? defaultUnseatedIds(state) : state.roster.map((row) => row.id)
+  const target = choice.targetId === undefined ? "" : ` for ${choice.targetId}`
 
   if (ids.length === 0) {
     return {
       ...state,
       status:
         scope === "unseated"
-          ? `Every employee already has a seat, so there is nobody unseated to give ${description} to.`
+          ? `Every employee already has a seat${target}, so there is nobody unseated to give ${description} to.`
           : "The roster is empty, so there is nobody to apply this to.",
     }
   }
 
   let next = state
   for (const id of ids) {
-    next = updateSeat(next, id, (seat) => seatWithOpencodeTarget(seat, choice.model, choice.variant))
+    next = updateSeat(next, id, (seat) =>
+      choice.targetId === undefined
+        ? seatWithOpencodeTarget(seat, choice.model, choice.variant)
+        : seatWithDefaultTarget(seat, choice),
+    )
   }
   const count = `${ids.length} employee${ids.length === 1 ? "" : "s"}`
-  return {
+  const applied: ConfigUIState = {
     ...next,
     view: "menu",
     status:
       scope === "unseated"
-        ? `${description} set for ${count} that had no seat. Press s to save.`
-        : `${description} set for all ${count}, replacing any model they had. Press s to save.`,
+        ? `${description} set${target} for ${count} that had no seat. Press s to save.`
+        : `${description} set${target} for all ${count}, replacing any model they had. Press s to save.`,
   }
+  delete applied.targetId
+  return applied
+}
+
+/**
+ * One employee's target for the host the default was chosen for.
+ *
+ * The same shape `assignTargetModel` writes, so a seat cannot tell whether its
+ * model arrived one employee at a time or as a default. Fields this UI does
+ * not own are kept; the options are replaced rather than merged, because the
+ * default is a complete statement about the model it names.
+ */
+function seatWithDefaultTarget(seat: SeatSpec, choice: DefaultChoice): SeatSpec {
+  const targetId = choice.targetId
+  if (targetId === undefined) return seat
+  const targets = seatTargets(seat)
+  const existing = targets[targetId]
+  const host = choice.host ?? targetHostFromId(targetId)
+  const target: SeatTarget =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? { ...existing, host, model: choice.model }
+      : { host, model: choice.model }
+  const options = choice.options ?? []
+  if (options.length === 0) delete target.options
+  else target.options = options.map((option) => ({ ...option }))
+  targets[targetId] = target
+  return seatWithTargets(seat, targets)
+}
+
+/**
+ * Who the "unseated only" scope means for the pick that is armed.
+ *
+ * With a target chosen, "unseated" is about that target: an employee with a
+ * Copilot model and no OpenCode one has not been given an OpenCode default,
+ * and skipping them because some other host is configured would quietly leave
+ * them out of the very batch the scope exists to fill.
+ */
+export function defaultUnseatedIds(state: ConfigUIState): string[] {
+  const targetId = state.defaultChoice?.targetId
+  if (targetId === undefined) return unseatedIds(state)
+  return state.roster
+    .filter((row) => targetModel(seatTargets(state.seats.employees[row.id])[targetId]) === undefined)
+    .map((row) => row.id)
 }
 
 /** Roster employees with no seat at all — the "unseated" scope. */
@@ -860,11 +1058,23 @@ export function unseatedIds(state: ConfigUIState): string[] {
   return state.roster.filter((row) => state.seats.employees[row.id] === undefined).map((row) => row.id)
 }
 
+/**
+ * Opens the default flow at whichever step the config has an answer for.
+ *
+ * With host targets configured there is no single model list to show, so the
+ * flow starts by asking which target — the same question the per-employee flow
+ * asks — and the catalogue for that target is what fills the picker.
+ */
 function openDefaultPicker(state: ConfigUIState): ConfigUIState {
-  const next: ConfigUIState = { ...state, view: "default", filter: "", status: "" }
+  const next: ConfigUIState = { ...state, view: "default", filter: "", status: "", draftTargetOptions: [] }
   delete next.draftVariant
+  delete next.targetId
+  // The default belongs to nobody, so it must not read a model off whichever
+  // employee happened to be open last.
+  delete next.employeeId
   next.cursor = { ...state.cursor, models: 0, apply: 0 }
-  return next
+  if (state.profiles.length === 0) return next
+  return { ...next, view: "default-target", cursor: { ...next.cursor, "default-target": 0 } }
 }
 
 function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
@@ -900,7 +1110,8 @@ function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
       // not inherit here — inherit was refused one screen earlier — so an
       // empty field changes nothing.
       const typed = entry.value.trim()
-      return typed.length === 0 ? state : chooseDefault(next, typed, next.draftVariant)
+      if (typed.length === 0) return state
+      return next.targetId === undefined ? chooseDefault(next, typed, next.draftVariant) : chooseTargetDefault(next, typed)
     }
     const typed = entry.value.trim()
     if (next.targetId !== undefined) return assignTargetModel(next, typed.length === 0 ? undefined : typed)

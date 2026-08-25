@@ -4,12 +4,18 @@ import { buildHierarchy, type HierarchyNode } from "./layout"
 /**
  * Where one agent sits in the spawn tree, and the colour that says so.
  *
- * `color` is the agent's own hue: every edge it spawns is drawn in it, and so
- * is the accent down the side of its node. So the canvas answers "who created
- * this?" by colour alone — find the node whose accent matches the line coming
- * into yours. A subagent that spawns subagents of its own gets a hue that is
- * nothing like its parent's, which is the case the hierarchy was hardest to
- * read in: three levels of green edges all looked like one fan-out.
+ * `color` is the agent's own hue: every edge it spawns is drawn in it, and the
+ * notch where an incoming edge lands wears its spawner's. So the canvas answers
+ * "who created this?" by colour alone. A subagent that spawns subagents of its
+ * own gets a hue that is nothing like its parent's, which is the case the
+ * hierarchy was hardest to read in: three levels of green edges all looked like
+ * one fan-out.
+ *
+ * `familyColor` is the separate question of how a node is *filled*, and most
+ * nodes answer it with null — a plain new node is the default card, and a
+ * canvas where everything is tinted says nothing. Only a nested spawn crew is
+ * tinted: a subagent that spawns subagents of its own, together with the
+ * subagents it spawned, share one hue so the crew reads as a block.
  */
 export interface Lineage {
   /** Nesting level. 0 is a root agent. */
@@ -20,10 +26,20 @@ export interface Lineage {
   ancestors: readonly string[]
   /** Stable index this agent's hue is derived from. */
   order: number
-  /** Colour of every edge this agent spawns, and of its own node accent. */
+  /** Colour of every edge this agent spawns. */
   color: string
   /** Colour of the edge that spawned this agent, or null for a root. */
   parentColor: string | null
+  /**
+   * Fill hue for this node's card, or null to keep the default card.
+   *
+   * Set only inside a nested spawn crew: a subagent that spawned subagents
+   * takes its own hue, and the subagents it spawned take that same hue. A root
+   * agent and its plain, childless subagents stay null — they are the ordinary
+   * case, and tinting the ordinary case would leave nothing for the unusual
+   * one to stand out against.
+   */
+  familyColor: string | null
 }
 
 /**
@@ -89,13 +105,21 @@ export function computeLineage(agents: AgentEntity[], edges: EdgeEntity[]): Map<
   const walk = (node: HierarchyNode, ancestors: readonly string[]): void => {
     const parentId = ancestors.length > 0 ? (ancestors[ancestors.length - 1] as string) : null
     const index = order.get(node.id) ?? 0
+    const parentColor = parentId === null ? null : branchColor(order.get(parentId) ?? 0)
+    // Own hue when this subagent spawned a crew of its own; otherwise the
+    // spawner's hue when it was spawned by one. Depth carries both tests: at
+    // depth 0 there is no crew to join, and at depth 1 the parent is the root,
+    // whose children are the ordinary case rather than a nested crew.
+    const familyColor =
+      node.depth >= 1 && node.children.length > 0 ? branchColor(index) : node.depth >= 2 ? parentColor : null
     lineage.set(node.id, {
       depth: node.depth,
       parentId,
       ancestors,
       order: index,
       color: branchColor(index),
-      parentColor: parentId === null ? null : branchColor(order.get(parentId) ?? 0),
+      parentColor,
+      familyColor,
     })
     if (node.children.length === 0) return
     trail.push(node.id)
