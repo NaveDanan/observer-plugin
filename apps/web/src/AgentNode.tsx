@@ -1,9 +1,11 @@
-import { useState } from "react"
+import { useState, type CSSProperties } from "react"
 import { Handle, Position } from "@xyflow/react"
 import type { NodeProps } from "@xyflow/react"
 import type { AgentEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { churnSummary, churnTitle } from "./churn"
+import { MESSAGE_SOURCE_HANDLE, MESSAGE_TARGET_HANDLE } from "./canvasEdges"
+import type { Lineage } from "./lineage"
 
 export interface AgentNodeData extends Record<string, unknown> {
   agent: AgentEntity
@@ -18,7 +20,10 @@ export interface AgentNodeData extends Record<string, unknown> {
   activity?: { tool: ToolCallEntity; elapsedMs: number }
   /** The employee seated on this node, if the matcher found one. */
   match?: EmployeeMatch
+  /** Where this agent sits in the spawn tree, and the colours that say so. */
+  lineage?: Lineage
 }
+
 
 const STATUS_LABEL: Record<AgentEntity["status"], string> = {
   starting: "starting",
@@ -104,7 +109,7 @@ function roleOf(
  * than inventing a persona.
  */
 export function AgentNode({ data }: NodeProps): JSX.Element {
-  const { agent, hostLabel, isRoot, selected, onOpen, onOpenCard, activity, match } = data as AgentNodeData
+  const { agent, hostLabel, isRoot, selected, onOpen, onOpenCard, activity, match, lineage } = data as AgentNodeData
   const live = agent.status === "running" || agent.status === "starting"
   const failed = agent.status === "failed"
   const done = isDoneNode(agent.status, isRoot)
@@ -145,9 +150,28 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
   // canvas that repaints from a live event stream.
   const churn = churnSummary(agent)
 
+  /*
+   * Two lineage colours, two different questions.
+   *
+   * `--app-lineage` is this agent's own hue, worn as the bar down its left
+   * edge and by every spawn edge leaving it: "these are mine". The parent hue
+   * marks the notch at the top of the card, right where the incoming edge
+   * lands, so the line and the node it arrives at are the same colour: "this
+   * is who made me". Handed to CSS as custom properties because the hue is
+   * data — one per spawner, unbounded — and the stylesheet only knows tokens.
+   */
+  const lineageStyle = lineage
+    ? ({
+        "--app-lineage": lineage.color,
+        ...(lineage.parentColor ? { "--app-lineage-parent": lineage.parentColor } : {}),
+      } as CSSProperties)
+    : undefined
+  const depthLabel = lineage ? ` Nesting level ${lineage.depth}.` : ""
+
   return (
     <div
       className={`node employee-node status-${agent.status}${selected ? " is-selected" : ""}${live ? " is-live" : ""}${done ? " is-done" : ""}${isRoot ? " is-root" : ""}${failed ? " is-failed" : ""}`}
+      style={lineageStyle}
       tabIndex={0}
       role="button"
       onKeyDown={(event) => {
@@ -159,9 +183,14 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
         if (event.shiftKey && employee) onOpenCard()
         else onOpen()
       }}
-      aria-label={`${name}, ${role.long} ${statusText}. ${activityText}.${churn ? ` ${churnTitle(churn)}.` : ""} Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
+      aria-label={`${name}, ${role.long} ${statusText}.${depthLabel} ${activityText}.${churn ? ` ${churnTitle(churn)}.` : ""} Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
     >
+      <span className="node-lineage" aria-hidden="true" />
+      {!isRoot && lineage?.parentColor && <span className="node-lineage-mark" aria-hidden="true" />}
+
       {!isRoot && <Handle type="target" position={Position.Top} />}
+      <Handle id={MESSAGE_TARGET_HANDLE} type="target" position={Position.Left} />
+
 
       <header className="employee-head">
         <div className={`employee-photo status-${agent.status}`}>
@@ -228,6 +257,7 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
       </footer>
 
       <Handle type="source" position={Position.Bottom} />
+      <Handle id={MESSAGE_SOURCE_HANDLE} type="source" position={Position.Right} />
     </div>
   )
 }

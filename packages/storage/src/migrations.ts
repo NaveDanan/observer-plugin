@@ -183,4 +183,12 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE tool_calls ADD COLUMN lines_removed INTEGER;
   ALTER TABLE tool_calls ADD COLUMN churn_confidence TEXT;
   `,
+  // 4: every durable subagent has an explicit parent runtime id
+  `
+  -- Earlier builds used NULL for a top-level subagent. The root session's
+  -- runtime id is its real parent; only the root agent itself has no parent.
+  UPDATE agent_assignments
+  SET parent_runtime_id = root_session_key
+  WHERE parent_runtime_id IS NULL;
+  `,
 ]

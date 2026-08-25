@@ -71,6 +71,10 @@ async function harness(
     agents?: string[]
     /** Make the agent listing fail, standing in for an unreachable host. */
     agentsUnavailable?: boolean
+    /** Reject coordination assignment writes as another plugin process would. */
+    assignmentError?: string
+    /** Make durable assignment reads unavailable. */
+    assignmentsUnavailable?: boolean
   } = {},
 ): Promise<Harness> {
   const sessions = options.sessions ?? {}
@@ -110,7 +114,9 @@ async function harness(
       })
     }
     if (href.includes("/v1/coordination/assignments")) {
+      if (options.assignmentsUnavailable) return Response.json({ error: "unavailable" }, { status: 503 })
       if (String(init?.method ?? "GET").toUpperCase() === "POST") {
+        if (options.assignmentError) return Response.json({ error: options.assignmentError }, { status: 409 })
         const next = JSON.parse(String(init?.body ?? "{}"))
         const existing =
           (next.runtimeId && [...assignments.values()].find((entry) => entry.runtimeId === next.runtimeId)) ??
@@ -473,6 +479,24 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
     expect(created[1]?.context["prompt"]).toBeUndefined()
   })
 
+  it("persists native task admission for the cap even when staffing is off", async () => {
+    const h = await harness({ sessions: { root: { id: "root" } }, guidance: false })
+    const call = taskCall("root", "unstaffed-call", "Unstaffed task", "Do work without roster guidance")
+
+    await h.hooks["tool.execute.before"](call.input, call.output)
+
+    expect([...h.assignments.values()]).toContainEqual(
+      expect.objectContaining({
+        rootSessionKey: "root",
+        runtimeId: null,
+        parentRuntimeId: "root",
+        callId: "unstaffed-call",
+        status: "starting",
+        agentType: "subagent",
+      }),
+    )
+  })
+
   it("gives each of two identical descriptions its own seat", async () => {
     const h = await harness({ sessions: { root: { id: "root" } } })
     const first = taskCall("root", "call_1", "Review the diff", "first prompt")
@@ -723,7 +747,7 @@ describe("observer opencode plugin: nesting", () => {
     })
   })
 
-  it("does not collapse a grandchild onto the root agent when the parent lookup fails", async () => {
+  it("does not emit a grandchild until its parent runtime can be resolved", async () => {
     const h = await harness({
       sessions: { root: { id: "root" }, grandchild: { id: "grandchild", parentID: "child" } },
       unreachable: ["child"],
@@ -731,10 +755,7 @@ describe("observer opencode plugin: nesting", () => {
     await h.hooks.event({ event: sessionCreated({ id: "grandchild", parentID: "child", title: "Level two" }) })
     await h.flush()
 
-    const created = h.of("session.created").at(-1)
-    expect(created?.context["agentKey"]).toBe("session:grandchild")
-    expect(created?.context["parentAgentKey"]).toBe("session:child")
-    expect(created?.context["parentAgentKey"]).not.toBe("main")
+    expect(h.of("session.created")).toEqual([])
   })
 
   it("re-resolves a session it once failed to identify instead of pinning it as a root", async () => {
@@ -785,6 +806,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     const pending = [...h.assignments.values()][0]
     expect(pending.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(pending.runtimeId).toBeNull()
+    expect(pending.parentRuntimeId).toBe("root")
 
     await h.hooks["tool.execute.after"](
       { ...call.input, args: call.output.args },
@@ -800,7 +822,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "child",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       callId: "old-call",
       agentType: "malik-johnson",
       hostAgentType: "general",
@@ -850,7 +872,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: id,
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         callId: `call-${id}`,
         agentType: "malik-johnson",
         hostAgentType: "general",
@@ -878,7 +900,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "a",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       agentType: "malik-johnson",
       hostAgentType: "general",
       status: "running",
@@ -905,7 +927,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       },
     })
     for (const assignment of [
-      { id: "assignment-parent", runtimeId: "parent", parentRuntimeId: null },
+      { id: "assignment-parent", runtimeId: "parent", parentRuntimeId: "root" },
       { id: "assignment-nested", runtimeId: "nested", parentRuntimeId: "parent" },
     ]) {
       h.assignments.set(assignment.id, {
@@ -943,7 +965,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "a",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       agentType: "malik-johnson",
       hostAgentType: "general",
       status: "running",
@@ -959,7 +981,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect([...h.assignments.values()].find((entry) => entry.runtimeId === "b")).toMatchObject({
       rootSessionKey: "root",
       runtimeId: "b",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       agentType: "subcontractor",
       hostAgentType: "general",
     })
@@ -984,7 +1006,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         host: "opencode",
         rootSessionKey,
         runtimeId: id,
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         agentType: "malik-johnson",
         hostAgentType: "general",
         status: "running",
@@ -1011,7 +1033,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       callId: "call-parent",
       agentType: "malik-johnson",
       hostAgentType: "general",
@@ -1044,7 +1066,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       agentType: "malik-johnson",
       hostAgentType: "general",
       status: "running",
@@ -1114,6 +1136,23 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.createdSessions).toHaveLength(0)
   })
 
+  it("blocks a native task call from creating a third subagent level", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        parent: { id: "parent", parentID: "root" },
+        nested: { id: "nested", parentID: "parent" },
+      },
+    })
+    const call = taskCall("nested", "call-too-deep", "Too deep", "Create a third subagent level")
+
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Subagent depth limit reached (3 session levels)",
+    )
+    expect(h.createdSessions).toHaveLength(0)
+    expect([...h.assignments.values()].some((entry) => entry.callId === "call-too-deep")).toBe(false)
+  })
+
   it("caps all subagents in a root session at 15, not just active siblings", async () => {
     const h = await harness({ sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } } })
     h.assignments.set("assignment-parent", {
@@ -1121,7 +1160,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       agentType: "malik-johnson",
       hostAgentType: "general",
       status: "running",
@@ -1133,7 +1172,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: `finished-${index}`,
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         agentType: "subcontractor",
         hostAgentType: "general",
         status: "completed",
@@ -1156,7 +1195,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       agentType: "malik-johnson",
       hostAgentType: "general",
       status: "running",
@@ -1175,6 +1214,97 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.createdSessions).toHaveLength(14)
   })
 
+  it("holds the 15-subagent cap across parallel native task reservations", async () => {
+    const h = await harness({ sessions: { root: { id: "root" } } })
+    const calls = Array.from({ length: 16 }, (_, index) =>
+      taskCall("root", `parallel-${index}`, `Parallel ${index}`, `Do parallel work ${index}`),
+    )
+
+    const results = await Promise.allSettled(
+      calls.map((call) => h.hooks["tool.execute.before"](call.input, call.output)),
+    )
+
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
+    expect(
+      results.some(
+        (result) => result.status === "rejected" && String(result.reason).includes("Subagent limit reached (15 per session)"),
+      ),
+    ).toBe(true)
+    expect(h.assignments).toHaveLength(15)
+  })
+
+  it("lets the daemon veto a cross-process native task race", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" } },
+      assignmentError: "subagent limit reached (15 per session)",
+    })
+    const call = taskCall("root", "cross-process-native", "One too many", "Do not create this")
+
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "subagent limit reached (15 per session)",
+    )
+  })
+
+  it("lets the daemon veto a cross-process agent_spawn race before session creation", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      assignmentError: "subagent limit reached (15 per session)",
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    await expect(
+      h.hooks.tool.agent_spawn.execute(
+        { description: "One too many", prompt: "Do not create this", subagent_type: "general" },
+        { sessionID: "parent", agent: "general" },
+      ),
+    ).rejects.toThrow("subagent limit reached (15 per session)")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("blocks native task creation when the durable cap cannot be verified", async () => {
+    const h = await harness({ sessions: { root: { id: "root" } }, assignmentsUnavailable: true })
+    const call = taskCall("root", "unverified-native", "Cannot verify", "Do not create this")
+
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "could not verify the durable subagent limit",
+    )
+  })
+
+  it("blocks agent_spawn when durable identity and cap state are unavailable", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      assignmentsUnavailable: true,
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Cannot verify", prompt: "Do not create this", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+    expect(result).toContain("available only inside an assigned subagent session")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
   it("enforces the overall cap on native task calls", async () => {
     const h = await harness({ sessions: { root: { id: "root" } } })
     for (let index = 0; index < 15; index++) {
@@ -1183,7 +1313,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: `child-${index}`,
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         agentType: "subcontractor",
         hostAgentType: "general",
         status: "completed",
@@ -1205,7 +1335,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: index === 0 ? "child" : `child-${index}`,
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         agentType: "subcontractor",
         hostAgentType: "general",
         status: "interrupted",

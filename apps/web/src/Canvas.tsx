@@ -4,7 +4,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-  useStore,
   useStoreApi,
   useViewport,
   type Edge,
@@ -15,9 +14,10 @@ import "@xyflow/react/dist/style.css"
 import type { AgentEntity, EdgeEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
 import { AgentNode, type AgentNodeData } from "./AgentNode"
+import { PEER_EDGE_TYPE, toFlowEdges } from "./canvasEdges"
+import { computeLineage } from "./lineage"
+import { PeerEdge } from "./PeerEdge"
 import {
-  LAYER_GAP,
-  NODE_GAP,
   NODE_HEIGHT,
   NODE_WIDTH,
   SEATED_NODE_HEIGHT,
@@ -27,6 +27,11 @@ import {
 } from "./layout"
 
 const nodeTypes = { agent: AgentNode }
+const edgeTypes = { [PEER_EDGE_TYPE]: PeerEdge }
+
+/** Where a node sits before it has ever been laid out. */
+const ORIGIN: Position = { x: 0, y: 0 }
+
 
 export interface CanvasProps {
   agents: AgentEntity[]
@@ -56,42 +61,14 @@ function snapPosition(pos: Position): Position {
   return { x: Math.round(pos.x), y: Math.round(pos.y) }
 }
 
+/**
+ * Zoom bounds, not zoom stops. Everything between them is reachable: the
+ * wheel, pinch, HUD buttons and keyboard all land on any value in range and
+ * nothing snaps back to preset levels. React Flow clamps wheel/pinch zoom to
+ * these itself via its `minZoom`/`maxZoom` props.
+ */
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 3
-
-/**
- * Zoom levels the canvas snaps to.
- *
- * ADR 0002 asks for integer zoom so pixel art stays crisp. Integers alone
- * cannot go below 1, which made the whole graph unreachable: a root agent
- * with 20 subagents lays out 6912px wide, and `fitView` respects `minZoom`,
- * so at `minZoom: 1` Fit did nothing and the only way around the graph was
- * panning. Halving steps below 1 keep the ADR's argument intact — 1/2 and
- * 1/4 are pixel-exact scale factors, so a 300px node lands on 300, 150 and
- * 75 device pixels with no resampling.
- *
- * 0.25 is the floor because it is where the graph stops being readable, not
- * because of a rendering limit. It fits roughly 20 same-depth agents across
- * an 1800px viewport; beyond that Fit tops out and panning is the answer.
- */
-const ZOOM_STEPS = [0.25, 0.5, 1, 2, 3] as const
-
-function snapZoom(value: number): number {
-  const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value))
-  let best: number = ZOOM_STEPS[0]
-  for (const step of ZOOM_STEPS) {
-    if (Math.abs(step - clamped) < Math.abs(best - clamped)) best = step
-  }
-  return best
-}
-
-/** The next snap step above or below `value`, clamped to the ends. */
-function stepZoom(value: number, direction: 1 | -1): number {
-  const current = snapZoom(value)
-  const index = ZOOM_STEPS.indexOf(current as (typeof ZOOM_STEPS)[number])
-  const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, index + direction))]
-  return next ?? current
-}
 
 /**
  * Tracks `prefers-reduced-motion`.
@@ -129,17 +106,21 @@ interface ZoomHudProps {
 /**
  * The floating zoom HUD.
  *
- * Zoom in/out step through `ZOOM_STEPS` rather than calling React Flow's
- * `zoomIn`/`zoomOut`, which multiply by 1.2 and land on fractions like 1.44 —
- * precisely the resampling ADR 0002 rules out. `zoomTo` is still React Flow's
- * own API, it is just handed a crisp target.
+ * The +/− buttons call React Flow's own `zoomIn`/`zoomOut`, which multiply the
+ * current zoom by 1.2 and clamp to the canvas bounds. Wheel, pinch, buttons
+ * and keyboard all land anywhere in [MIN_ZOOM, MAX_ZOOM]; no gesture is ever
+ * snapped back to a preset level. FIT frames the graph, 1:1 returns to 100%.
  */
 function ZoomHud(props: ZoomHudProps): JSX.Element {
   const { reducedMotion, offscreenCount, onRevealOffscreen, onDismissOffscreen } = props
   const { zoom } = useViewport()
   const flow = useReactFlow()
   const duration = reducedMotion ? 0 : 160
+  // Percent-rounded bounds absorb float noise from the multiplicative steps,
+  // so a button never disables one tick early or late.
   const percent = Math.round(zoom * 100)
+  const canZoomOut = percent > MIN_ZOOM * 100
+  const canZoomIn = percent < MAX_ZOOM * 100
 
   return (
     <div className="zoom-controls" role="group" aria-label="Zoom and framing">
@@ -169,8 +150,8 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
       <button
         type="button"
         className="pixel-btn"
-        onClick={() => flow.zoomTo(stepZoom(zoom, -1), { duration })}
-        disabled={stepZoom(zoom, -1) >= zoom}
+        onClick={() => flow.zoomOut({ duration })}
+        disabled={!canZoomOut}
         aria-label="Zoom out"
       >
         −
@@ -183,8 +164,8 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
       <button
         type="button"
         className="pixel-btn"
-        onClick={() => flow.zoomTo(stepZoom(zoom, 1), { duration })}
-        disabled={stepZoom(zoom, 1) <= zoom}
+        onClick={() => flow.zoomIn({ duration })}
+        disabled={!canZoomIn}
         aria-label="Zoom in"
       >
         +
@@ -238,7 +219,7 @@ function CanvasInner(props: CanvasProps): JSX.Element {
   /**
    * Positions the developer dragged a node to.
    *
-   * These win over the ELK layout for as long as the session is on screen, so
+   * These win over the tree layout for as long as the session is on screen, so
    * relayout on the next spawned agent does not snatch a node back out from
    * under someone who deliberately moved it. `Canvas` is keyed by session in
    * `App.tsx`, so they are dropped when the session changes.
@@ -257,6 +238,16 @@ function CanvasInner(props: CanvasProps): JSX.Element {
   const signature = graphSignature(agents, edges)
 
   /**
+   * Every agent's place in the spawn tree, and the branch colour that says so.
+   *
+   * Keyed off the same signature as the layout, so it is recomputed exactly
+   * when the shape of the hierarchy changes and never on the per-second tick
+   * that a live agent drives. `signature` stands in for `agents` and the
+   * hierarchy edges deliberately.
+   */
+  const lineage = useMemo(() => computeLineage(agents, edges), [signature])
+
+  /**
    * Reserved height per agent, growing only.
    *
    * `layout.ts` can only estimate a node's height from the stylesheet, and the
@@ -268,31 +259,16 @@ function CanvasInner(props: CanvasProps): JSX.Element {
    */
   const reserved = useRef<Map<string, number>>(new Map())
 
-  /**
-   * Changes whenever a rendered node's measured height changes bucket. Only a
-   * trigger — the effect reads the real numbers straight from the store.
-   */
-  const measuredSignature = useStore((state) => {
-    let key = ""
-    for (const [id, node] of state.nodeLookup) {
-      const height = node.measured?.height ?? 0
-      if (height > 0) key += `${id}:${Math.ceil(height / 8)};`
-    }
-    return key
-  })
-
+  /** Guards against relaying out an unchanged graph + height set. */
   const requested = useRef("")
-  /** Auto-fit is a one-shot courtesy on the first layout, never a policy. */
-  const hasFitted = useRef(false)
   /**
-   * The first ELK layout resolves a few milliseconds after mount. If the
-   * developer got to the viewport inside that window, the one-shot fit is
-   * cancelled rather than fired over the top of them.
+   * Whether the known-set has been seeded with the agents the session opened
+   * with. Everything after that arrival is "new" and announced by the HUD.
    */
-  const userMoved = useRef(false)
-  /** Agents already accounted for: either present at the first fit, or seen since. */
+  const knownSeeded = useRef(false)
+  /** Agents already accounted for: either present at seed time, or seen since. */
   const known = useRef<Set<string>>(new Set())
-  /** Agents that arrived after the first fit and have not been on screen yet. */
+  /** Agents that arrived after seeding and have not been on screen yet. */
   const pending = useRef<Set<string>>(new Set())
 
   useEffect(() => {
@@ -314,43 +290,27 @@ function CanvasInner(props: CanvasProps): JSX.Element {
     if (requested.current === key) return
     requested.current = key
 
-    void layoutGraph(agents, edges, heights).then((next) => {
-      if (requested.current !== key) return
-      const snapped = new Map<string, Position>()
-      for (const [id, pos] of next) snapped.set(id, snapPosition(pos))
-      setPositions(snapped)
+    const snapped = new Map<string, Position>()
+    for (const [id, pos] of layoutGraph(agents, edges, heights)) snapped.set(id, snapPosition(pos))
+    setPositions(snapped)
 
-      const isFirstLayout = !hasFitted.current
+    if (!knownSeeded.current) {
+      knownSeeded.current = true
+      // The graph as it stood on arrival is what the developer came to see;
+      // none of it is "new". The viewport stays at React Flow's identity
+      // transform, so the default view is always exactly 100% with the root
+      // band at the pane's top-left — the layout starts from the flow
+      // origin. Framing the graph is FIT's job, not something to spring on
+      // load.
+      for (const agent of agents) known.current.add(agent.id)
+      return
+    }
 
-      if (isFirstLayout) {
-        // Hold the one-shot fit until React Flow has measured at least one
-        // node. Framing the graph off the estimated heights and then never
-        // re-fitting would bake the estimate's error into the default view.
-        if (measuredSignature === "") return
-        hasFitted.current = true
-        // The graph as it stood on arrival is what the developer came to see;
-        // none of it is "new".
-        for (const agent of agents) known.current.add(agent.id)
-        if (userMoved.current) return
-        requestAnimationFrame(() => {
-          if (userMoved.current) return
-          // Fit then snap to a stepped zoom so the default view is crisp.
-          flow.fitView({ padding: 0.15, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM, duration: 0 })
-          requestAnimationFrame(() => {
-            const vp = flow.getViewport()
-            const z = snapZoom(vp.zoom)
-            if (z !== vp.zoom) flow.setViewport({ ...vp, zoom: z }, { duration: 0 })
-          })
-        })
-        return
-      }
-
-      // Every later layout: anything new is announced, not chased.
-      for (const agent of agents) {
-        if (!known.current.has(agent.id)) pending.current.add(agent.id)
-      }
-    })
-  }, [signature, measuredSignature, agents, edges, matches, flow, storeApi])
+    // Every later layout: anything new is announced, not chased.
+    for (const agent of agents) {
+      if (!known.current.has(agent.id)) pending.current.add(agent.id)
+    }
+  }, [signature, agents, edges, matches, storeApi])
 
   /** The visible area of the canvas, in flow coordinates. */
   const visibleRect = useCallback((): { x1: number; y1: number; x2: number; y2: number } | undefined => {
@@ -424,7 +384,7 @@ function CanvasInner(props: CanvasProps): JSX.Element {
       return
     }
     flow.setCenter(pos.x + NODE_WIDTH / 2, pos.y + height / 2, {
-      zoom: snapZoom(flow.getViewport().zoom),
+      zoom: flow.getViewport().zoom,
       duration: reducedMotion ? 0 : 240,
     })
   }, [focusAgentId, positions, manualPositions, flow, visibleRect, heightOf, reducedMotion])
@@ -451,14 +411,21 @@ function CanvasInner(props: CanvasProps): JSX.Element {
     })
   }, [])
 
+  /**
+   * The tree as it stands before any node has been measured.
+   *
+   * The reserved-height pass below runs in an effect, so it cannot land until
+   * after the first paint. Seeding from the same layout at estimated heights
+   * means that first paint is already the right shape — only the vertical
+   * pitch moves once real heights arrive. The canvas used to open on an
+   * arbitrary four-column grid and snap into a tree a frame later.
+   */
+  const seeded = useMemo(() => layoutGraph(agents, edges), [signature])
+
   const nodes: Node<AgentNodeData>[] = useMemo(
     () =>
-      agents.map((agent, index) => {
-        const fallback = {
-          x: (index % 4) * (NODE_WIDTH + NODE_GAP),
-          y: Math.floor(index / 4) * (NODE_HEIGHT + LAYER_GAP),
-        }
-        const raw = manualPositions.get(agent.id) ?? positions.get(agent.id) ?? fallback
+      agents.map((agent) => {
+        const raw = manualPositions.get(agent.id) ?? positions.get(agent.id) ?? seeded.get(agent.id) ?? ORIGIN
         const tool = runningTools.get(agent.id)
         const activity = tool ? { tool, elapsedMs: Math.max(0, now - tool.startedAt) } : undefined
         return {
@@ -472,6 +439,7 @@ function CanvasInner(props: CanvasProps): JSX.Element {
             selected: agent.id === selectedAgentId,
             activity,
             match: matches.get(agent.id),
+            lineage: lineage.get(agent.id),
             onOpen: () => onSelectAgent(agent.id),
             onOpenCard: () => onOpenCard(agent.id),
           },
@@ -482,7 +450,9 @@ function CanvasInner(props: CanvasProps): JSX.Element {
       agents,
       positions,
       manualPositions,
+      seeded,
       matches,
+      lineage,
       runningTools,
       hostLabel,
       selectedAgentId,
@@ -492,22 +462,8 @@ function CanvasInner(props: CanvasProps): JSX.Element {
     ],
   )
 
-  const flowEdges: Edge[] = useMemo(
-    () =>
-      edges.map((edge) => ({
-        id: edge.id,
-        source: edge.fromAgentId,
-        target: edge.toAgentId,
-        type: "step",
-        // The flowing dash on a spawn edge is decoration, so it goes when the
-        // developer has asked the machine to stop moving things.
-        animated: !reducedMotion && edge.edgeType === "spawned",
-        label: edge.provenance === "authoritative" ? undefined : edge.provenance,
-        className: `edge-${edge.provenance}`,
-        pathOptions: { borderRadius: 0 },
-      })),
-    [edges, reducedMotion],
-  )
+  const flowEdges = useMemo(() => toFlowEdges(edges, reducedMotion, lineage), [edges, reducedMotion, lineage])
+
 
   /**
    * Pan, zoom and fit from the keyboard.
@@ -548,11 +504,11 @@ function CanvasInner(props: CanvasProps): JSX.Element {
           break
         case "+":
         case "=":
-          flow.zoomTo(stepZoom(vp.zoom, 1), { duration })
+          flow.zoomIn({ duration })
           break
         case "-":
         case "_":
-          flow.zoomTo(stepZoom(vp.zoom, -1), { duration })
+          flow.zoomOut({ duration })
           break
         case "f":
         case "F":
@@ -595,9 +551,8 @@ function CanvasInner(props: CanvasProps): JSX.Element {
         edges={flowEdges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         colorMode="dark"
-        fitView
-        fitViewOptions={{ padding: 0.15, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM }}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         proOptions={{ hideAttribution: true }}
@@ -605,24 +560,14 @@ function CanvasInner(props: CanvasProps): JSX.Element {
          * d3 binds `dblclick.zoom` to the pane, and node events bubble to it,
          * so leaving this on zooms the graph every time a card opens — behind
          * a modal the developer cannot see past. The zoom HUD, the keyboard
-         * and the wheel all still zoom, and they snap to the integer steps
-         * ADR 0002 requires, which a d3 double-click zoom does not.
+         * and the wheel all still zoom, continuously between MIN_ZOOM and
+         * MAX_ZOOM.
          */
         zoomOnDoubleClick={false}
         onNodeDoubleClick={(_event, node) => onOpenCard(node.id)}
         onNodeClick={(_event, node) => onSelectAgent(node.id)}
-        onMoveStart={(event) => {
-          // `event` is null for our own fitView/setViewport calls, so only a
-          // real pointer or wheel gesture counts as the user taking over.
-          if (!event) return
-          userMoved.current = true
-          setPanning(true)
-        }}
-        onMoveEnd={(_event, vp) => {
-          setPanning(false)
-          const z = snapZoom(vp.zoom)
-          if (z !== vp.zoom) flow.setViewport({ ...vp, zoom: z }, { duration: 0 })
-        }}
+        onMoveStart={() => setPanning(true)}
+        onMoveEnd={() => setPanning(false)}
       >
         <Background gap={16} size={1} />
       </ReactFlow>

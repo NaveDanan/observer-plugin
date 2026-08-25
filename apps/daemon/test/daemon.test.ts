@@ -346,7 +346,7 @@ describe("HTTP API", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: id,
-      parentRuntimeId: null,
+      parentRuntimeId: "root",
       callId,
       agentType: "malik-johnson",
       hostAgentType: "general",
@@ -356,7 +356,7 @@ describe("HTTP API", () => {
     })
     for (const value of [assignment("a", "call-a"), assignment("b", "call-b")]) {
       const response = await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: value })
-      expect(response.statusCode).toBe(200)
+      expect(response.statusCode, response.body).toBe(200)
     }
     const initialEvents = store.countEvents()
     const replayedAssignment = await app.inject({
@@ -418,9 +418,193 @@ describe("HTTP API", () => {
       headers,
     })
     expect(emptyInbox.json().messages).toEqual([])
-    expect(store.listEdges("opencode:root")).toEqual([
+    expect(store.listEdges("opencode:root")).toContainEqual(
       expect.objectContaining({ edgeType: "messaged", fromAgentId: "opencode:root~session:a", toAgentId: "opencode:root~session:b" }),
-    ])
+    )
+  })
+
+  it("rejects every subagent assignment without an explicit parent runtime id", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers: { authorization: `Bearer ${config.token}` },
+      payload: {
+        id: "assignment-orphan",
+        host: "opencode",
+        rootSessionKey: "root",
+        runtimeId: "orphan",
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        status: "running",
+      },
+    })
+
+    expect(response.statusCode, response.body).toBe(400)
+    expect(store.getAgentAssignment("assignment-orphan")).toBeUndefined()
+    expect(store.getAgent("opencode:root~session:orphan")).toBeUndefined()
+  })
+
+  it("enforces two subagent levels at the coordination boundary", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const assignment = (id: string, parentRuntimeId: string) => ({
+      id: `assignment-${id}`,
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: id,
+      parentRuntimeId,
+      callId: `call-${id}`,
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+    })
+
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("level-1", "root") })).statusCode).toBe(200)
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("level-2", "level-1") })).statusCode).toBe(200)
+    const tooDeep = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: assignment("level-3", "level-2"),
+    })
+
+    expect(tooDeep.statusCode).toBe(409)
+    expect(tooDeep.json().error).toContain("depth limit reached (3 session levels)")
+    expect(store.getAgentAssignment("assignment-level-3")).toBeUndefined()
+    expect(store.getAgent("opencode:root~session:level-3")).toBeUndefined()
+  })
+
+  it("never persists more than 15 subagents for one root session", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const assignment = (index: number) => ({
+      id: `assignment-${index}`,
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: `child-${index}`,
+      parentRuntimeId: "root",
+      callId: `call-${index}`,
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: index % 2 === 0 ? "completed" : "running",
+    })
+
+    for (let index = 0; index < 15; index++) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/coordination/assignments",
+        headers,
+        payload: assignment(index),
+      })
+      expect(response.statusCode, response.body).toBe(200)
+    }
+    const sixteenth = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: assignment(15),
+    })
+
+    expect(sixteenth.statusCode).toBe(409)
+    expect(sixteenth.json().error).toBe("subagent limit reached (15 per session)")
+    expect(store.listAgentAssignments("opencode", "root")).toHaveLength(15)
+    expect(store.getAgentAssignment("assignment-15")).toBeUndefined()
+    expect(store.getAgent("opencode:root~session:child-15")).toBeUndefined()
+
+    const resumed = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: { ...assignment(0), status: "running", resumed: true },
+    })
+    expect(resumed.statusCode, resumed.body).toBe(200)
+    expect(store.listAgentAssignments("opencode", "root")).toHaveLength(15)
+  })
+
+  it("holds the 15-subagent cap across parallel coordination requests", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const responses = await Promise.all(
+      Array.from({ length: 16 }, (_, index) =>
+        app.inject({
+          method: "POST",
+          url: "/v1/coordination/assignments",
+          headers,
+          payload: {
+            id: `parallel-${index}`,
+            host: "opencode",
+            rootSessionKey: "parallel-root",
+            runtimeId: `parallel-child-${index}`,
+            parentRuntimeId: "parallel-root",
+            agentType: "subcontractor",
+            hostAgentType: "general",
+            status: "running",
+          },
+        }),
+      ),
+    )
+
+    expect(responses.filter((response) => response.statusCode === 200)).toHaveLength(15)
+    expect(responses.filter((response) => response.statusCode === 409)).toHaveLength(1)
+    expect(store.listAgentAssignments("opencode", "parallel-root")).toHaveLength(15)
+  })
+
+  it("cannot reparent an existing assignment to bypass depth enforcement", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const original = {
+      id: "assignment-child",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "child",
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+    }
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: original })).statusCode).toBe(200)
+
+    const reparented = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: { ...original, parentRuntimeId: "some-other-subagent" },
+    })
+
+    expect(reparented.statusCode).toBe(409)
+    expect(reparented.json().error).toBe("assignment parent cannot change")
+    expect(store.getAgentAssignment("assignment-child")?.parentRuntimeId).toBe("root")
   })
 
   it("applies capture and redaction policy to coordination content", async () => {
@@ -443,13 +627,14 @@ describe("HTTP API", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: "private",
+        parentRuntimeId: "root",
         agentType: "subcontractor",
         hostAgentType: "general",
         prompt: "ghp_abcdefghijklmnopqrstuvwxyz0123",
         status: "running",
       },
     })
-    expect(response.statusCode).toBe(200)
+    expect(response.statusCode, response.body).toBe(200)
     expect(store.getAgentAssignment("assignment-private")?.prompt).toBeNull()
 
     config.capture.prompts = true
@@ -462,6 +647,7 @@ describe("HTTP API", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: "private",
+        parentRuntimeId: "root",
         agentType: "subcontractor",
         hostAgentType: "general",
         prompt: "ghp_abcdefghijklmnopqrstuvwxyz0123",

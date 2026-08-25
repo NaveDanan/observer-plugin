@@ -3,7 +3,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import websocket from "@fastify/websocket"
-import { AgentStatus, HOST_CAPABILITIES, HostId, IngestBatch, PROTOCOL_VERSION } from "@observer-ai/protocol"
+import { AgentStatus, HOST_CAPABILITIES, HostId, IngestBatch, MAIN_AGENT_KEY, PROTOCOL_VERSION } from "@observer-ai/protocol"
 import type { AgentAssignment, AgentDetail, AgentMail, SessionSnapshot } from "@observer-ai/protocol"
 import { behaviorDirective, ROSTER, rankEmployees } from "@observer-ai/roster"
 import type { Store } from "@observer-ai/storage"
@@ -34,7 +34,7 @@ const AssignmentSchema = z.object({
   host: HostId,
   rootSessionKey: z.string().min(1).max(500),
   runtimeId: z.string().min(1).max(500).nullable().optional(),
-  parentRuntimeId: z.string().min(1).max(500).nullable().optional(),
+  parentRuntimeId: z.string().min(1).max(500),
   callId: z.string().min(1).max(500).nullable().optional(),
   agentType: z.string().min(1).max(200),
   hostAgentType: z.string().min(1).max(200),
@@ -54,7 +54,10 @@ const AgentMailSchema = z.object({
 })
 
 const MAIL_RATE_LIMIT = 30
-const SPAWN_RATE_LIMIT = 30
+/** Root -> subagent -> subagent: two parent edges below the root. */
+const MAX_SUBAGENT_DEPTH = 2
+/** Lifetime cap per root session, including finished and pre-runtime assignments. */
+const MAX_SUBAGENTS_PER_SESSION = 15
 const INBOX_PAGE_BYTES = 64 * 1024
 
 const MIME: Record<string, string> = {
@@ -437,8 +440,17 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     if (existing && existing.rootSessionKey !== input.rootSessionKey) {
       return reply.code(409).send({ error: "assignment belongs to another session" })
     }
+    if (existing && existing.parentRuntimeId !== input.parentRuntimeId) {
+      return reply.code(409).send({ error: "assignment parent cannot change" })
+    }
+    if (existing?.runtimeId && input.runtimeId && existing.runtimeId !== input.runtimeId) {
+      return reply.code(409).send({ error: "assignment runtime id cannot change" })
+    }
     if (input.runtimeId === input.rootSessionKey) {
       return reply.code(409).send({ error: "root session cannot be a subagent assignment" })
+    }
+    if (input.runtimeId && input.parentRuntimeId === input.runtimeId) {
+      return reply.code(409).send({ error: "subagent cannot be its own parent" })
     }
     const at = Date.now()
     const capturedDescription =
@@ -461,7 +473,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       host: input.host,
       rootSessionKey: input.rootSessionKey,
       runtimeId: input.runtimeId ?? existing?.runtimeId ?? null,
-      parentRuntimeId: input.parentRuntimeId ?? existing?.parentRuntimeId ?? null,
+      parentRuntimeId: input.parentRuntimeId,
       callId: input.callId ?? existing?.callId ?? null,
       agentType: input.agentType,
       hostAgentType: input.hostAgentType,
@@ -484,45 +496,73 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       row.status = "running"
       row.updatedAt = existing.updatedAt
     }
-    if (!existing && row.parentRuntimeId) {
+    if (!existing) {
       const assignments = store.listAgentAssignments(row.host, row.rootSessionKey)
-      const parent = assignments.find((assignment) => assignment.runtimeId === row.parentRuntimeId)
-      if (!parent) return reply.code(409).send({ error: "parent assignment not found in this session" })
+      if (assignments.length >= MAX_SUBAGENTS_PER_SESSION) {
+        return reply.code(409).send({ error: `subagent limit reached (${MAX_SUBAGENTS_PER_SESSION} per session)` })
+      }
+      const parent =
+        row.parentRuntimeId === row.rootSessionKey
+          ? undefined
+          : assignments.find((assignment) => assignment.runtimeId === row.parentRuntimeId)
+      if (row.parentRuntimeId !== row.rootSessionKey && !parent) {
+        return reply.code(409).send({ error: "parent assignment not found in this session" })
+      }
       const activeChildren = assignments.filter(
         (assignment) => assignment.parentRuntimeId === row.parentRuntimeId && ["starting", "running"].includes(assignment.status),
       )
       if (activeChildren.length >= 16) return reply.code(409).send({ error: "subagent fan-out limit reached" })
       let depth = 1
-      let cursor = parent
-      const seen = new Set<string>()
-      while (cursor.parentRuntimeId) {
-        if (seen.has(cursor.id)) return reply.code(409).send({ error: "assignment parent cycle" })
-        seen.add(cursor.id)
-        depth++
-        const next = assignments.find((assignment) => assignment.runtimeId === cursor.parentRuntimeId)
-        if (!next) break
-        cursor = next
+      if (parent) {
+        depth = 2
+        let cursor = parent
+        const seen = new Set<string>()
+        while (cursor.parentRuntimeId !== row.rootSessionKey) {
+          if (seen.has(cursor.id)) return reply.code(409).send({ error: "assignment parent cycle" })
+          seen.add(cursor.id)
+          depth++
+          const next = assignments.find((assignment) => assignment.runtimeId === cursor.parentRuntimeId)
+          if (!next) return reply.code(409).send({ error: "parent assignment not found in this session" })
+          cursor = next
+        }
       }
-      if (depth >= 8) return reply.code(409).send({ error: "subagent depth limit reached" })
-      if (store.countRecentAgentAssignments(row.host, row.rootSessionKey, at - 60_000) >= SPAWN_RATE_LIMIT) {
-        return reply.code(429).send({ error: "subagent spawn rate limit reached" })
+      if (depth > MAX_SUBAGENT_DEPTH) {
+        return reply.code(409).send({ error: `subagent depth limit reached (${MAX_SUBAGENT_DEPTH + 1} session levels)` })
       }
     }
     store.putAgentAssignment(row)
-    if (row.runtimeId && existing?.status !== row.status) {
-      pipeline.ingestEvents([
-        {
-          id: `assignment:${row.id}:${row.status}:${row.updatedAt}`,
-          host: row.host,
-          adapter: "observer-coordination@1",
-          workspaceRoot: workspaceRootFor(store, row.host, row.rootSessionKey),
-          sessionKey: row.rootSessionKey,
-          agentKey: runtimeAgentKey(row.host, row.runtimeId),
-          at: row.updatedAt,
-          provenance: "authoritative",
-          body: { kind: "agent.status", status: row.status },
-        },
-      ])
+    if (row.runtimeId) {
+      const runtimeBound = existing?.runtimeId !== row.runtimeId
+      const body = runtimeBound
+        ? {
+            kind: "agent.started" as const,
+            agentType: row.agentType,
+            runtimeId: row.runtimeId,
+            parentAgentKey:
+              row.parentRuntimeId === row.rootSessionKey
+                ? MAIN_AGENT_KEY
+                : runtimeAgentKey(row.host, row.parentRuntimeId),
+            description: row.description ?? undefined,
+            prompt: row.prompt ?? undefined,
+          }
+        : existing?.status !== row.status
+          ? ({ kind: "agent.status" as const, status: row.status })
+          : undefined
+      if (body) {
+        pipeline.ingestEvents([
+          {
+            id: `assignment:${row.id}:${body.kind}:${row.status}:${row.updatedAt}`,
+            host: row.host,
+            adapter: "observer-coordination@1",
+            workspaceRoot: workspaceRootFor(store, row.host, row.rootSessionKey),
+            sessionKey: row.rootSessionKey,
+            agentKey: runtimeAgentKey(row.host, row.runtimeId),
+            at: row.updatedAt,
+            provenance: "authoritative",
+            body,
+          },
+        ])
+      }
     }
     return reply.send({ assignment: row })
   })

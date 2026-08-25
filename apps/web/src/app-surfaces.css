@@ -35,6 +35,20 @@
   --app-hairline: color-mix(in srgb, var(--border) 70%, transparent);
 
   --app-canvas-grid: color-mix(in srgb, var(--muted-foreground) 32%, transparent);
+  --app-edge-spawned: var(--success);
+  --app-edge-delegated: var(--warning);
+  --app-edge-messaged: var(--info);
+  --app-edge-forked: var(--primary);
+
+  /* Lineage hue. The exception to rule 1 above, and the reason it is written
+     down here: the number of branches on a canvas is unbounded and known only
+     at runtime, so there is no fixed set of tokens to name. `lineage.ts`
+     generates one OKLCH hue per spawner and hands it to the node and to that
+     node's outgoing edges as `--app-lineage`. This value is only the fallback
+     for anything the layout has not reached yet. */
+  --app-lineage: var(--app-edge-spawned);
+  --app-lineage-parent: var(--app-hairline);
+
 
   @variant dark {
     --app-lift: inset 0 1px 0 rgb(255 255 255 / 4%);
@@ -681,26 +695,110 @@
   stroke: var(--primary);
   stroke-width: 1.5;
   stroke-linecap: round;
-  stroke-dasharray: 4 6;
-  animation: observer-edge-flow 1.2s linear infinite;
+  shape-rendering: crispEdges;
 }
-@keyframes observer-edge-flow {
+.react-flow__edge.edge-spawned .react-flow__edge-path {
+  stroke: var(--app-edge-spawned);
+  stroke-dasharray: 2 6;
+}
+.react-flow__edge.edge-delegated .react-flow__edge-path {
+  stroke: var(--app-edge-delegated);
+  stroke-dasharray: 8 5;
+}
+.react-flow__edge.edge-messaged .react-flow__edge-path {
+  stroke: var(--app-edge-messaged);
+  stroke-dasharray: none;
+  stroke-width: 2;
+}
+.react-flow__edge.edge-forked .react-flow__edge-path {
+  stroke: var(--app-edge-forked);
+  stroke-dasharray: 12 4 2 4;
+}
+
+/* Hue is lineage, not relationship type. Every edge leaving one spawner takes
+   that spawner's hue, so the line into a subagent matches the accent on the
+   node that created it — and a subagent that spawns subagents of its own hands
+   out a hue nothing like the one it was given. Declared after the four type
+   rules so it wins the tie, and before the selection rule so that still does.
+   Peer messages are excluded on purpose: they are not lineage, and giving them
+   a branch colour would claim a parentage that is not there. */
+.react-flow__edge.edge-lineage .react-flow__edge-path {
+  stroke: var(--app-lineage);
+}
+
+/* -------------------------------------------------------- peer messages */
+/* The only relationship the tree cannot draw, so it is the only one drawn with
+   a different geometry: a solid arc between two side handles, a diamond at its
+   midpoint, and an arrowhead at each end that has written to the other.
+   Hierarchy edges are dashed orthogonal steps that only ever run downwards, so
+   the two never have to be told apart by colour — solid-and-curved against
+   dashed-and-square carries it. `crispEdges` is dropped: it is right for the
+   steps and wrong for a curve, which it turns into a staircase. */
+.react-flow__edge.edge-peer .react-flow__edge-path {
+  stroke: var(--app-edge-messaged);
+  stroke-dasharray: none;
+  stroke-width: 2;
+  shape-rendering: geometricPrecision;
+  fill: none;
+}
+
+.peer-edge-arrow,
+.peer-edge-node {
+  fill: var(--app-edge-messaged);
+  stroke: none;
+  pointer-events: none;
+}
+.peer-edge-node {
+  fill: var(--card);
+  stroke: var(--app-edge-messaged);
+  stroke-width: 1.5;
+}
+.peer-edge-flair {
+  fill: none;
+  stroke: var(--info-foreground);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 1 99;
+  pointer-events: none;
+  filter: drop-shadow(0 0 5px var(--app-edge-messaged));
+  animation: observer-message-flair 1.5s ease-in-out infinite alternate;
+}
+.react-flow__edge.edge-peer.animated .react-flow__edge-path {
+  stroke-dasharray: none;
+  animation: none;
+}
+.react-flow__edge.edge-peer.animated .peer-edge-flair {
+  stroke-dasharray: 1 99;
+  animation: observer-message-flair 1.5s ease-in-out infinite alternate;
+}
+.react-flow__edge.edge-peer.selected .peer-edge-arrow,
+.react-flow__edge.edge-peer:hover .peer-edge-arrow,
+.react-flow__edge.edge-peer.selected .peer-edge-node,
+.react-flow__edge.edge-peer:hover .peer-edge-node {
+  stroke: var(--ring);
+}
+.react-flow__edge.edge-peer.selected .peer-edge-arrow,
+.react-flow__edge.edge-peer:hover .peer-edge-arrow {
+  fill: var(--ring);
+}
+
+@keyframes observer-message-flair {
   from {
-    stroke-dashoffset: 20;
+    stroke-dashoffset: 100;
   }
   to {
     stroke-dashoffset: 0;
   }
 }
 
-/* An inferred parent link is a guess; a reconciled one was corrected after the
-   fact. Both say so by breaking the confident rhythm. Every pattern's period
-   divides the 20px the animation walks, or the flow stutters at the loop. */
-.edge-inferred .react-flow__edge-path {
+
+/* An inferred relationship is a guess; a reconciled one was corrected after
+   the fact. Both say so by breaking the confident rhythm. */
+.react-flow__edge.edge-inferred .react-flow__edge-path {
   stroke-dasharray: 2 8;
   opacity: 0.55;
 }
-.edge-reconciled .react-flow__edge-path {
+.react-flow__edge.edge-reconciled .react-flow__edge-path {
   stroke-dasharray: 12 8;
 }
 
@@ -787,6 +885,46 @@
   cursor: grabbing;
   border-color: var(--border);
   box-shadow: var(--app-lift-floating);
+}
+
+/* ---------------------------------------------------------- node lineage */
+/* Two colours, two questions. The bar down the left edge is the node's OWN
+   hue — the colour of every spawn edge leaving it — so "which of these are
+   mine?" is a colour match rather than a walk down the canvas. The notch sits
+   at the top centre, exactly where the incoming edge lands, and carries the
+   PARENT's hue, so the line and the card it arrives at read as one object.
+   Both are absolutely positioned: the reserved heights in `layout.ts` are
+   estimates of what this stylesheet renders, and neither of these may push
+   that estimate wrong. */
+.node-lineage {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 9999px 9999px 0;
+  background: var(--app-lineage);
+  pointer-events: none;
+}
+.node-lineage-mark {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: var(--app-lineage-parent);
+  /* Sits on the card's own edge, so it needs the card's colour behind it or
+     the border reads straight through the diamond. */
+  box-shadow: 0 0 0 1px var(--card);
+  pointer-events: none;
+}
+/* A finished subagent settles down; its branch colour settles with it. */
+.node.is-done .node-lineage,
+.node.is-done .node-lineage-mark {
+  opacity: 0.55;
 }
 
 /* ------------------------------------------------------------ node innards */

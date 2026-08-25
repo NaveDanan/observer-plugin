@@ -1,18 +1,4 @@
-import ELK from "elkjs/lib/elk.bundled.js"
 import type { AgentEntity, EdgeEntity } from "@observer-ai/protocol"
-
-interface ElkResult {
-  children?: Array<{ id: string; x?: number; y?: number }>
-}
-
-/**
- * ELK is imported statically on purpose.
- *
- * It is a CommonJS bundle, and its default export does not survive Vite's
- * dynamic-import interop reliably, which silently degraded the graph to the
- * fallback layout. A slightly larger initial bundle is worth a correct graph.
- */
-const elk = new (ELK as unknown as new () => { layout(graph: unknown): Promise<ElkResult> })()
 
 /**
  * Reserved node width, in sync with `.employee-node` in `app-surfaces.css`.
@@ -20,8 +6,8 @@ const elk = new (ELK as unknown as new () => { layout(graph: unknown): Promise<E
  * Unlike height this genuinely is one number: every node is the same width by
  * CSS, and only the height varies with content. It still has to be kept in
  * step with the stylesheet by hand — if `.employee-node`'s width moves and
- * this does not, ELK reserves the wrong column and the gap between siblings
- * silently changes.
+ * this does not, the tree reserves the wrong column and the gap between
+ * siblings silently changes.
  */
 export const NODE_WIDTH = 300
 
@@ -34,8 +20,8 @@ export const NODE_WIDTH = 300
  * 30 + 54 (header) + 8 + 48 (2-line tone, with its own padding and border)
  * + 8 + 44 (two chip rows) + 8 + 20 (footer) = 220.
  *
- * Under-reserving is the visible mistake: ELK stacks the next layer LAYER_GAP
- * below the reserved bottom edge, so a node that renders taller than its
+ * Under-reserving is the visible mistake: the next depth sits LAYER_GAP below
+ * the tallest reservation in this one, so a node that renders taller than its
  * reservation eats that gap and the spawn edges kink through its neighbours.
  *
  * These are first-paint estimates only. `Canvas.tsx` feeds React Flow's
@@ -46,241 +32,306 @@ export const NODE_WIDTH = 300
 export const NODE_HEIGHT = 150
 export const SEATED_NODE_HEIGHT = 220
 
-/** Horizontal gap between two Agents at the same depth. */
+/** Horizontal gap between two leaf siblings. */
 export const NODE_GAP = 48
+
+/**
+ * Horizontal gap between two adjacent blocks when either carries children of
+ * its own.
+ *
+ * Wider than NODE_GAP so a family reads as a family: siblings sit shoulder to
+ * shoulder, but two sub-trees are held apart far enough that their fan-outs
+ * are not mistaken for one row of cousins.
+ */
+export const SUBTREE_GAP = 96
+
 /** Vertical gap between one depth band and the next. */
 export const LAYER_GAP = 90
+
+/**
+ * Horizontal gap between two independent trees.
+ *
+ * A session can hold several roots — an orphan whose spawn edge has not been
+ * reconciled is drawn as one — and they are separate graphs, not siblings.
+ */
+export const ROOT_GAP = 200
 
 export interface Position {
   x: number
   y: number
 }
 
-/**
- * ELK options for the agent graph.
- *
- * `layered` + `DOWN` is kept deliberately, against the obvious alternatives.
- * Measured on this node size (300px wide, 150-220px tall, 48/90px gaps):
- *
- * | graph              | layered     | mrtree      | rectpacking          |
- * | ------------------ | ----------- | ----------- | -------------------- |
- * | root + 20 subs     | 6912 x 570  | 6912 x 418  | 2040 x 1024, 5 bad   |
- * | depth-3 (4 then 3) | 4128 x 770  | 4128 x 686  | 1692 x 1024, 4 bad   |
- * | depth-4 (3,2,2)    | 4128 x 1080 | 4128 x 954  | 2040 x 1024, 5 bad   |
- *
- * "bad" counts parent/child pairs where the child was placed above its
- * parent. Three things fall out of that:
- *
- * 1. Width is identical for `layered` and `mrtree`. Neither wraps a wide
- *    sibling row; the width of a depth band is just its Agent count times
- *    (NODE_WIDTH + NODE_GAP). `mrtree` does not "wrap naturally" here — it is
- *    exactly the same width and merely shorter, i.e. a worse aspect ratio.
- * 2. `elk.aspectRatio` changes nothing at all under `layered`, and
- *    `elk.layered.wrapping.strategy` wraps a long *chain of layers*, not a
- *    wide layer — and when it does wrap it places a child above its parent,
- *    which destroys the one thing the canvas has to communicate.
- * 3. `rectpacking` is the only algorithm that genuinely wraps, and it inverts
- *    parents and children in every scenario measured. Depth stops reading
- *    vertically.
- *
- * So no ELK algorithm wraps a wide layer without drawing a child above its
- * parent. `layered` is kept because it is the narrowest option that never
- * inverts a parent and child, and because it reserves a uniform LAYER_GAP
- * band between depths — `mrtree` compacts subtrees independently and lets
- * that gap collapse to NODE_GAP, so "which depth is this Agent at" stops
- * being readable off the y coordinate.
- *
- * Width is solved downstream instead: `layoutGraph` keeps ELK's
- * crossing-minimised left-to-right order per depth band untouched and folds
- * each band into rows of at most MAX_BAND_COLUMNS columns itself, where the
- * depth ordering makes the parent-above-child invariant structural rather
- * than something the layout algorithm has to be talked into.
- */
-const LAYOUT_OPTIONS: Record<string, string> = {
-  "elk.algorithm": "layered",
-  "elk.direction": "DOWN",
-  "elk.layered.spacing.nodeNodeBetweenLayers": String(LAYER_GAP),
-  "elk.spacing.nodeNode": String(NODE_GAP),
-  // Keeps spawn order stable as the graph grows, so an Agent appearing does
-  // not reshuffle its siblings under a developer who is reading one of them.
-  "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+/** Communication is an overlay between peers, not evidence of parentage. */
+export function edgeAffectsHierarchy(edge: Pick<EdgeEntity, "edgeType">): boolean {
+  return edge.edgeType !== "messaged"
 }
 
 /**
- * Columns per wrapped row within one depth band.
+ * One agent in the spawn tree, with its cycles already broken.
  *
- * Since no ELK algorithm wraps a layer without inverting a parent and child
- * (see `LAYOUT_OPTIONS` above), `layoutGraph` runs ELK purely for its
- * crossing-minimised sibling order, then re-lays each depth band onto a grid
- * of at most this many columns. The wrap cannot invert anything: bands are
- * laid out strictly in depth order, so every row of band d sits entirely
- * above every row of band d+1, and depth(child) = depth(parent) + 1 is a
- * structural property of `computeDepths`, not something to re-prove per edge.
- *
- * The value is a flat cap rather than a per-band `ceil(sqrt(n · aspect))`
- * because a derived K makes every existing position in a band depend on the
- * band's population: the 21st sibling bumps K from 6 to 7 and re-chunks the
- * entire band under a developer who is reading one of its nodes. A flat cap
- * is append-only — a new sibling joins the last row that has room, or opens
- * the next one — which is the same stability rule `considerModelOrder` buys
- * upstream. Measured on the flagship fan-out, root + 20 subagents (all
- * unseated, so 150px rows), laid out under each candidate cap:
- *
- * | K | rows      | canvas      | zoom to fit a 1800x1000 pane |
- * | - | --------- | ----------- | ---------------------------- |
- * | 4 | 5 rows    | 1344 x 1182 | 0.85                         |
- * | 5 | 4 x 5     | 1692 x 984  | 1.02                         |
- * | 6 | 6,6,6,2   | 2040 x 984  | 0.88                         |
- *
- * 5 wins: five columns span 5·(NODE_WIDTH + NODE_GAP) − NODE_GAP = 1692px,
- * which fits a ~1800px canvas pane at zoom 1.0 — a full band reads without
- * any zoom-out — and it is the only cap whose wrapped flagship graph fits
- * BOTH dimensions of that pane without zooming out (aspect 1.72 ≈ 16:9,
- * versus 6912 x 570 unwrapped). Four columns goes tall enough to force
- * zoom-out anyway; six needs a wider pane than most windows give the canvas
- * once the worker card is open, and leaves a ragged row of 2.
- *
- * Rows are left-aligned, not centred: centring shifts every node in a row
- * sideways whenever that row's population changes — which during a spawn
- * burst is constantly — while left-align never moves a placed node.
- *
- * Rows inside a band are separated by NODE_GAP and depth bands by
- * LAYER_GAP, so a wrapped band still reads as ONE depth: tight vertical
- * spacing = same depth, loose = new depth. The cost of wrapping, accepted:
- * an edge from an upper row to a lower band passes behind the rows between
- * it and its child. React Flow draws edges under nodes, so that reads as a
- * line slipping behind a sibling rather than a broken graph; unwrapping to
- * avoid it was the single endless row this constant exists to fix.
+ * `depth` is the distance from this tree's root, and it is authoritative: the
+ * whole layout keys y off it, so it has to come from the same traversal that
+ * decides who is whose child. Deriving it separately by walking parent links
+ * is what used to let a parent cycle put two nodes on the same y at the same
+ * x.
  */
-export const MAX_BAND_COLUMNS = 5
-
-/** An agent ELK has placed, carrying its x as the within-band order key. */
-interface Placed {
+export interface HierarchyNode {
   id: string
-  order: number
+  depth: number
+  children: HierarchyNode[]
 }
 
 /**
- * Folds each depth band into rows of at most MAX_BAND_COLUMNS columns.
+ * Parent per agent id, from the reconciled entity field and hierarchy edges.
  *
- * `placed` arrives in any order; within a band it is sorted by `order` (the
- * ELK x coordinate, or array index on the fallback path), which preserves
- * exactly the left-to-right order the layout algorithm decided — only the
- * geometry is re-flowed. Bands are laid out strictly in depth order and rows
- * are assigned y monotonically, so a parent can never be drawn below its
- * child: every row of band d ends above where band d+1 begins.
- *
- * Both paths (ELK and fallback) go through here, so their shapes stay
- * identical by construction.
+ * A parent that is not itself on the canvas is dropped rather than followed.
+ * The canvas only ever renders a filtered slice of a session, and an agent
+ * whose parent was filtered out has to be drawn as a root — the alternative is
+ * a child hanging one depth below nothing.
  */
-function wrapDepthBands(
-  placed: Placed[],
-  depths: Map<string, number>,
-  heightOf: (id: string) => number,
-): Map<string, Position> {
-  const bands = new Map<number, Placed[]>()
-  for (const node of placed) {
-    const depth = depths.get(node.id) ?? 0
-    const band = bands.get(depth)
-    if (band) band.push(node)
-    else bands.set(depth, [node])
+function parentMap(agents: AgentEntity[], edges: EdgeEntity[]): Map<string, string> {
+  const ids = new Set(agents.map((agent) => agent.id))
+  const parents = new Map<string, string>()
+  for (const edge of edges) {
+    if (!edgeAffectsHierarchy(edge)) continue
+    if (edge.fromAgentId === edge.toAgentId) continue
+    if (!ids.has(edge.fromAgentId) || !ids.has(edge.toAgentId)) continue
+    parents.set(edge.toAgentId, edge.fromAgentId)
   }
-
-  const positions = new Map<string, Position>()
-  let y = 0
-  for (const depth of [...bands.keys()].sort((a, b) => a - b)) {
-    const band = (bands.get(depth) ?? []).sort((a, b) => a.order - b.order)
-    for (let start = 0; start < band.length; start += MAX_BAND_COLUMNS) {
-      const row = band.slice(start, start + MAX_BAND_COLUMNS)
-      row.forEach((node, column) => {
-        positions.set(node.id, { x: Math.round(column * (NODE_WIDTH + NODE_GAP)), y: Math.round(y) })
-      })
-      // The next row starts below the tallest node in this one, so a row of
-      // seated nodes does not overlap the row beneath it.
-      const tallest = row.reduce((max, node) => Math.max(max, heightOf(node.id)), NODE_HEIGHT)
-      y += tallest + NODE_GAP
-    }
-    // The loop above left a NODE_GAP after the deepest row; widen it to the
-    // LAYER_GAP that separates this depth band from the next.
-    y += LAYER_GAP - NODE_GAP
+  // The entity field is the reconciled truth and outranks an observed edge.
+  for (const agent of agents) {
+    const parent = agent.parentAgentId
+    if (parent && parent !== agent.id && ids.has(parent)) parents.set(agent.id, parent)
   }
-  return positions
+  return parents
 }
 
 /**
- * Lays the agent graph out top-down.
+ * Append-only sibling order.
+ *
+ * Spawn time, then id as the tie-break. A subagent that appears mid-read joins
+ * the right-hand end of its row instead of shuffling the siblings a developer
+ * is in the middle of reading.
+ */
+function bySpawnOrder(a: AgentEntity, b: AgentEntity): number {
+  if (a.startedAt !== b.startedAt) return a.startedAt - b.startedAt
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/**
+ * Builds the spawn forest: one `HierarchyNode` tree per root.
+ *
+ * Every agent appears exactly once. Agents caught in a parent cycle are
+ * reachable from no root, so once the real roots are planted the remaining
+ * agents are planted in spawn order — which breaks each cycle at its earliest
+ * member and keeps it on the canvas instead of dropping it.
+ */
+export function buildHierarchy(agents: AgentEntity[], edges: EdgeEntity[]): HierarchyNode[] {
+  const parents = parentMap(agents, edges)
+  const byId = new Map(agents.map((agent) => [agent.id, agent]))
+  const childrenOf = new Map<string, AgentEntity[]>()
+  const roots: AgentEntity[] = []
+
+  for (const agent of agents) {
+    const parent = parents.get(agent.id)
+    if (parent === undefined) {
+      roots.push(agent)
+      continue
+    }
+    const siblings = childrenOf.get(parent)
+    if (siblings) siblings.push(agent)
+    else childrenOf.set(parent, [agent])
+  }
+  for (const siblings of childrenOf.values()) siblings.sort(bySpawnOrder)
+  roots.sort(bySpawnOrder)
+
+  const planted = new Set<string>()
+  const build = (agent: AgentEntity, depth: number): HierarchyNode | undefined => {
+    if (planted.has(agent.id)) return undefined
+    planted.add(agent.id)
+    const children: HierarchyNode[] = []
+    for (const child of childrenOf.get(agent.id) ?? []) {
+      const subtree = build(child, depth + 1)
+      if (subtree) children.push(subtree)
+    }
+    return { id: agent.id, depth, children }
+  }
+
+  const trees: HierarchyNode[] = []
+  for (const root of roots) {
+    const tree = build(root, 0)
+    if (tree) trees.push(tree)
+  }
+  for (const agent of [...agents].sort(bySpawnOrder)) {
+    const tree = build(agent, 0)
+    if (tree) trees.push(tree)
+  }
+  return trees
+}
+
+/** Visits every node of every tree, parents before children. */
+export function forEachHierarchyNode(trees: HierarchyNode[], visit: (node: HierarchyNode) => void): void {
+  const stack = [...trees].reverse()
+  while (stack.length > 0) {
+    const node = stack.pop() as HierarchyNode
+    visit(node)
+    for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i] as HierarchyNode)
+  }
+}
+
+/**
+ * The y coordinate of every depth, shared by every node at that depth.
+ *
+ * This is the whole point of the vertical axis: a node's y says nothing except
+ * how deeply nested it is. Two agents sit on the same line if and only if they
+ * are the same number of spawns away from a root, so nesting level is legible
+ * without following a single edge. A band is as tall as its tallest reserved
+ * node, which is what keeps a seated node from eating the layer gap below it.
+ */
+function levelOffsets(trees: HierarchyNode[], heightOf: (id: string) => number): Map<number, number> {
+  const tallest = new Map<number, number>()
+  forEachHierarchyNode(trees, (node) => {
+    tallest.set(node.depth, Math.max(tallest.get(node.depth) ?? NODE_HEIGHT, heightOf(node.id)))
+  })
+
+  const offsets = new Map<number, number>()
+  let y = 0
+  for (const depth of [...tallest.keys()].sort((a, b) => a - b)) {
+    offsets.set(depth, y)
+    y += (tallest.get(depth) as number) + LAYER_GAP
+  }
+  return offsets
+}
+
+/** Wider gap once either side carries a sub-tree, so families stay distinct. */
+function siblingGap(left: number, right: number): number {
+  return left > NODE_WIDTH || right > NODE_WIDTH ? SUBTREE_GAP : NODE_GAP
+}
+
+/** Total width of the row of children, gaps included. */
+function childSpan(widths: number[]): number {
+  let span = 0
+  for (let i = 0; i < widths.length; i++) {
+    if (i > 0) span += siblingGap(widths[i - 1] as number, widths[i] as number)
+    span += widths[i] as number
+  }
+  return span
+}
+
+/**
+ * Horizontal space a sub-tree reserves: its own width, or the width of its
+ * children's row if that is wider.
+ *
+ * Every sub-tree therefore owns a horizontal band that no other sub-tree
+ * touches, which is what makes non-overlap structural. Two nodes can only
+ * collide if they share a depth, and two nodes at the same depth are always in
+ * disjoint bands.
+ */
+function measure(node: HierarchyNode, widths: Map<string, number>): number {
+  const children = node.children.map((child) => measure(child, widths))
+  const width = Math.max(NODE_WIDTH, childSpan(children))
+  widths.set(node.id, width)
+  return width
+}
+
+/**
+ * Places a sub-tree into the band starting at `left`.
+ *
+ * Children are laid out first, then the parent is centred between the first
+ * and the last of them — over the child *nodes*, not over the band they
+ * occupy. The two are the same only when a family is symmetric. When it is
+ * not — one leaf beside one deep sub-tree is the common case — centring over
+ * the band drags the parent across the canvas towards whichever branch is
+ * wider, and it stops reading as the thing that spawned both.
+ */
+function place(
+  node: HierarchyNode,
+  left: number,
+  widths: Map<string, number>,
+  offsets: Map<number, number>,
+  positions: Map<string, Position>,
+): void {
+  const width = widths.get(node.id) as number
+  const y = Math.round(offsets.get(node.depth) ?? 0)
+  if (node.children.length === 0) {
+    positions.set(node.id, { x: Math.round(left + (width - NODE_WIDTH) / 2), y })
+    return
+  }
+
+  const children = node.children.map((child) => widths.get(child.id) as number)
+  // The children's row is centred in the parent's band, so a parent with one
+  // narrow child sits directly above it rather than off to one side.
+  let cursor = left + (width - childSpan(children)) / 2
+  for (let i = 0; i < node.children.length; i++) {
+    if (i > 0) cursor += siblingGap(children[i - 1] as number, children[i] as number)
+    place(node.children[i] as HierarchyNode, cursor, widths, offsets, positions)
+    cursor += children[i] as number
+  }
+
+  const first = positions.get((node.children[0] as HierarchyNode).id) as Position
+  const last = positions.get((node.children[node.children.length - 1] as HierarchyNode).id) as Position
+  positions.set(node.id, { x: Math.round((first.x + last.x) / 2), y })
+}
+
+/**
+ * Lays the agent graph out as a hierarchy tree.
+ *
+ * Two invariants carry the whole picture, and both are structural rather than
+ * something a layout engine has to be talked into:
+ *
+ *  1. **y is nesting level, and nothing else.** Every agent at depth N shares
+ *     one y, and depth N+1 starts a full LAYER_GAP below the tallest node at
+ *     depth N. Reading a row tells you how deep it is without tracing an edge.
+ *  2. **Each sub-tree owns a horizontal band nobody else enters,** and a
+ *     parent is centred over its children's band. Nodes cannot overlap: a
+ *     collision needs a shared depth, and same-depth nodes are always in
+ *     disjoint bands.
+ *
+ * This replaced ELK. ELK was only ever run for its crossing-minimised sibling
+ * order, and its coordinates were thrown away and re-flowed into wrapped rows
+ * of five — which is what broke the tree read, because a wrapped row put half
+ * a fan-out on a second line that looked like a deeper nesting level. A tidy
+ * tree has no crossings to minimise in the first place: the hierarchy is a
+ * forest, so ordering siblings by spawn time is both crossing-free and stable.
  *
  * Agents with no recorded parent are treated as roots, which keeps orphaned
  * nodes visible: a subagent whose parent edge has not been reconciled yet must
  * still appear on the canvas rather than vanish.
  *
- * ELK decides sibling order and crossing minimisation; its coordinates are
- * then folded into wrapped depth bands (see `MAX_BAND_COLUMNS`), because ELK
- * itself will not wrap a wide layer without drawing children above parents.
- *
  * `heights` carries the reserved height per agent id, because a seated node is
  * substantially taller than an unseated one. Anything missing falls back to
  * the unseated height.
  */
-export async function layoutGraph(
+export function layoutGraph(
   agents: AgentEntity[],
   edges: EdgeEntity[],
   heights?: ReadonlyMap<string, number>,
-): Promise<Map<string, Position>> {
+): Map<string, Position> {
   if (agents.length === 0) return new Map()
 
   const heightOf = (id: string): number => heights?.get(id) ?? NODE_HEIGHT
-  const depths = computeDepths(agents, edges)
-  const ids = new Set(agents.map((agent) => agent.id))
-  const graph = {
-    id: "root",
-    layoutOptions: LAYOUT_OPTIONS,
-    children: agents.map((agent) => ({ id: agent.id, width: NODE_WIDTH, height: heightOf(agent.id) })),
-    edges: edges
-      .filter((edge) => ids.has(edge.fromAgentId) && ids.has(edge.toAgentId))
-      .map((edge) => ({ id: edge.id, sources: [edge.fromAgentId], targets: [edge.toAgentId] })),
-  }
+  const trees = buildHierarchy(agents, edges)
+  const offsets = levelOffsets(trees, heightOf)
+  const widths = new Map<string, number>()
+  for (const tree of trees) measure(tree, widths)
 
-  try {
-    const result = await elk.layout(graph)
-    const placed: Placed[] = (result.children ?? []).map((child) => ({
-      id: child.id,
-      order: child.x ?? 0,
-    }))
-    if (placed.length !== agents.length) throw new Error("incomplete layout")
-    return wrapDepthBands(placed, depths, heightOf)
-  } catch {
-    // Layout must never blank the canvas. Fall back to depth-ordered rows so
-    // the parent/child structure stays readable even without ELK, wrapped by
-    // the same bands as the ELK path. Array order stands in for ELK's x.
-    const placed: Placed[] = agents.map((agent, index) => ({ id: agent.id, order: index }))
-    return wrapDepthBands(placed, depths, heightOf)
+  const positions = new Map<string, Position>()
+  let cursor = 0
+  for (const tree of trees) {
+    place(tree, cursor, widths, offsets, positions)
+    cursor += (widths.get(tree.id) as number) + ROOT_GAP
   }
+  return positions
 }
 
-/** Distance from a root agent. Used by the fallback layout and by tests. */
+/** Distance from a root agent, taken from the same forest the layout uses. */
 export function computeDepths(agents: AgentEntity[], edges: EdgeEntity[]): Map<string, number> {
-  const parents = new Map<string, string>()
-  for (const edge of edges) parents.set(edge.toAgentId, edge.fromAgentId)
-  for (const agent of agents) {
-    if (agent.parentAgentId) parents.set(agent.id, agent.parentAgentId)
-  }
   const depths = new Map<string, number>()
-  for (const agent of agents) {
-    let depth = 0
-    let cursor: string | undefined = parents.get(agent.id)
-    const seen = new Set<string>([agent.id])
-    while (cursor && !seen.has(cursor) && depth < 16) {
-      seen.add(cursor)
-      depth++
-      cursor = parents.get(cursor)
-    }
-    depths.set(agent.id, depth)
-  }
+  forEachHierarchyNode(buildHierarchy(agents, edges), (node) => depths.set(node.id, node.depth))
   return depths
 }
 
 /** Signature used to decide whether the layout must be recomputed. */
 export function graphSignature(agents: AgentEntity[], edges: EdgeEntity[]): string {
-  return `${agents.map((a) => a.id).join("|")}::${edges.map((e) => e.id).join("|")}`
+  return `${agents.map((a) => a.id).join("|")}::${edges.filter(edgeAffectsHierarchy).map((e) => e.id).join("|")}`
 }

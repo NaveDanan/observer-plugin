@@ -98,6 +98,54 @@ reach it. The exception is real, it is bounded by the `.nj-overlay` selector lis
 and its reasoning is in `0003-employee-card-carve-out.md`. Nothing else in the interface moved: the
 docked Worker card panel is unchanged, and the card's own close button is still square.
 
+## Amended: zoom is continuous, not stepped
+
+The stepped-zoom rule above was reversed after use. Five hard stops meant the
+wheel fought its operator: a gesture landed between steps and was yanked to
+the nearest one on release, and a graph wider than the pane was unreadable at
+every allowed level except zoom-out. Zoom is now continuous between 0.25x and
+3x across wheel, pinch, HUD buttons and keyboard — bounds, not stops. The
+default view holds at exactly 100% instead of fitting, and framing the whole
+graph is an explicit FIT action rather than something that happens on load.
+Where crispness can still govern, it does: node geometry stays snapped to
+integers, and the 1:1 button returns to exact pixels on demand.
+
+## Amended: the graph is a tidy tree, hue is lineage, and one edge curves
+
+Three of the rules above moved once the canvas held real, deeply nested work.
+
+**ELK is gone.** It was only ever run for crossing minimisation, and its
+coordinates were thrown away and re-flowed into wrapped rows of five columns.
+That wrap is what broke the picture: half a fan-out landed on a second line
+that read as a deeper nesting level, so the one thing the canvas exists to
+show — who spawned whom — was the one thing it got wrong. `layout.ts` now lays
+a tidy tree itself. Every agent at nesting level N shares one y; each sub-tree
+owns a horizontal band no sibling enters and its parent is centred over it.
+Both invariants are structural, so non-overlap is not something a layout engine
+has to be talked into. The tree is wider than the wrapped grid was; that is
+what FIT and continuous zoom are for. Layout is now synchronous, which also
+removed the four-column grid the canvas used to flash before ELK answered.
+
+**Hue is lineage, not relationship type.** Every edge leaving one agent takes
+that agent's own hue, and so does the accent down the side of its node, so
+tracing a subagent back to its parent is a colour match rather than a walk up
+the canvas. `--app-edge-spawned` and friends survive as the fallback before the
+first layout. This is the second deliberate break of "no colour outside
+`:root`": the number of branches on a canvas is unbounded and known only at
+runtime, so there is no fixed set of tokens to name. `lineage.ts` generates one
+OKLCH hue per spawner from a golden-angle step and hands it to CSS as
+`--app-lineage`.
+
+**One edge stops being a `step`.** A message between two agents that are not
+each other's ancestor is the only relationship the tree cannot draw, so it is
+the only one drawn with a different geometry: an arc between two side handles,
+a diamond at its midpoint and an arrowhead at the recipient, bowing above its
+row when it runs left to right and below when it runs right to left. Hierarchy
+edges are still orthogonal steps that only ever run downwards, so the two
+readings never have to be told apart by colour. A message that *does* run up or
+down a bloodline stays a step — the spawn edge beside it already says those two
+are related.
+
 Rejected for now: Playwright visual-regression snapshots. They suit pixel art unusually well, since
 exact pixel comparison has none of the antialiasing noise that normally makes screenshot tests
 flaky — worth revisiting once the look has stabilised, but premature before then.

@@ -70,9 +70,10 @@ async function turn(): Promise<void> {
   const hooks = await ObserverPlugin({
     client: {
       session: {
-        get: async () => {
-          throw new Error("host unreachable")
-        },
+        // The user turn itself identifies this as the root session. Child
+        // lookups remain outside this fixture; an unknown session is never
+        // allowed to become a provisional root merely to trigger autostart.
+        get: async () => ({ data: { id: "root" } }),
       },
     },
     directory: "/repo",

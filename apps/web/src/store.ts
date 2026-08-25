@@ -11,6 +11,7 @@ import type {
   TodoEntity,
   ToolCallEntity,
 } from "@observer-ai/protocol"
+import { MAIN_AGENT_KEY } from "@observer-ai/protocol"
 import type { EmployeeMatch, RosterProfile } from "@observer-ai/roster"
 import { matchEmployee } from "@observer-ai/roster"
 import * as api from "./api"
@@ -525,7 +526,9 @@ export function selectActiveSession(current: Readonly<State>): SessionEntity | u
 export function selectAgents(current: Readonly<State>, sessionId: string | undefined): AgentEntity[] {
   if (!sessionId) return []
   return [...current.agents.values()]
-    .filter((agent) => agent.sessionId === sessionId)
+    .filter(
+      (agent) => agent.sessionId === sessionId && (agent.agentKey === MAIN_AGENT_KEY || agent.parentAgentId !== null),
+    )
     .sort((a, b) => a.startedAt - b.startedAt)
 }
 

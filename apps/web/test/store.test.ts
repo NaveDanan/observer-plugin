@@ -3,7 +3,9 @@ import type { AgentEntity, EdgeEntity, SessionEntity, ToolCallEntity } from "@ob
 import {
   agentMatchesFilter,
   isFinishedStatus,
+  selectAgents,
   selectCurrentActivity,
+  selectEdges,
   selectEmployeeMatch,
   selectFilterCounts,
   selectSessions,
@@ -230,6 +232,44 @@ describe("depth", () => {
       ],
     )
     expect(depths.get("g")).toBe(2)
+  })
+})
+
+describe("session edges", () => {
+  it("selects peer-message edges alongside hierarchy edges", () => {
+    const graphEdge = (id: string, sessionId: string, edgeType: EdgeEntity["edgeType"]): EdgeEntity => ({
+      id,
+      sessionId,
+      fromAgentId: `${sessionId}~session:a`,
+      toAgentId: `${sessionId}~session:b`,
+      edgeType,
+      label: null,
+      provenance: "authoritative",
+      createdAt: 1,
+    })
+    const edges = [
+      graphEdge("spawn", "opencode:s1", "spawned"),
+      graphEdge("message", "opencode:s1", "messaged"),
+      graphEdge("other", "opencode:s2", "messaged"),
+    ]
+    const state = { edges: new Map(edges.map((edge) => [edge.id, edge])) } as unknown as Parameters<
+      typeof selectEdges
+    >[0]
+
+    expect(selectEdges(state, "opencode:s1").map((edge) => edge.id)).toEqual(["spawn", "message"])
+  })
+})
+
+describe("session agents", () => {
+  it("hides parentless placeholders instead of drawing extra roots", () => {
+    const root = agent({ id: "root", agentKey: "main", parentAgentId: null })
+    const child = agent({ id: "child", parentAgentId: "root" })
+    const orphan = agent({ id: "orphan", agentKey: "session:orphan", parentAgentId: null })
+    const state = { agents: new Map([root, child, orphan].map((entry) => [entry.id, entry])) } as unknown as Parameters<
+      typeof selectAgents
+    >[0]
+
+    expect(selectAgents(state, "opencode:s1").map((entry) => entry.id)).toEqual(["root", "child"])
   })
 })
 

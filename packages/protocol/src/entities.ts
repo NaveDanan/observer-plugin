@@ -91,7 +91,8 @@ export interface AgentAssignment {
   rootSessionKey: string
   /** Host-owned stable subagent id. For OpenCode this is the task_id. */
   runtimeId: string | null
-  parentRuntimeId: string | null
+  /** Required host-owned runtime id of the agent that spawned this subagent. */
+  parentRuntimeId: string
   callId: string | null
   agentType: string
   hostAgentType: string

@@ -1,44 +1,23 @@
 import { readFileSync } from "node:fs"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import type { AgentEntity, EdgeEntity } from "@observer-ai/protocol"
 import {
   LAYER_GAP,
-  MAX_BAND_COLUMNS,
   NODE_GAP,
   NODE_HEIGHT,
   NODE_WIDTH,
+  ROOT_GAP,
   SEATED_NODE_HEIGHT,
+  SUBTREE_GAP,
+  buildHierarchy,
   computeDepths,
+  edgeAffectsHierarchy,
   graphSignature,
   layoutGraph,
   type Position,
 } from "../src/layout"
 
-/**
- * Wraps the real ELK bundle behind a fault switch so the no-ELK fallback path
- * can be exercised on demand. When `elkState.fail` is false this delegates to
- * the genuine implementation, so every other test measures real behaviour.
- */
-const elkState = vi.hoisted(() => ({ fail: false }))
-
-vi.mock("elkjs/lib/elk.bundled.js", async (importOriginal) => {
-  type ElkLike = new () => { layout(graph: unknown): Promise<unknown> }
-  const actual = await importOriginal<{ default: ElkLike }>()
-  class TestElk {
-    private inner = new actual.default()
-    async layout(graph: unknown): Promise<unknown> {
-      if (elkState.fail) throw new Error("simulated ELK outage")
-      return this.inner.layout(graph)
-    }
-  }
-  return { default: TestElk }
-})
-
-afterEach(() => {
-  elkState.fail = false
-})
-
-function agent(id: string, parentAgentId: string | null): AgentEntity {
+function agent(id: string, parentAgentId: string | null, startedAt = 0): AgentEntity {
   return {
     id,
     sessionId: "opencode:s1",
@@ -52,7 +31,7 @@ function agent(id: string, parentAgentId: string | null): AgentEntity {
     description: null,
     delegationPrompt: null,
     summary: null,
-    startedAt: 0,
+    startedAt,
     endedAt: null,
     updatedAt: 0,
     totalTokens: null,
@@ -60,13 +39,13 @@ function agent(id: string, parentAgentId: string | null): AgentEntity {
   }
 }
 
-function edge(from: string, to: string): EdgeEntity {
+function edge(from: string, to: string, edgeType: EdgeEntity["edgeType"] = "spawned"): EdgeEntity {
   return {
     id: `${from}->${to}`,
     sessionId: "opencode:s1",
     fromAgentId: from,
     toAgentId: to,
-    edgeType: "spawned",
+    edgeType,
     label: null,
     provenance: "authoritative",
     createdAt: 0,
@@ -91,6 +70,22 @@ function depthThree(): { agents: AgentEntity[]; edges: EdgeEntity[] } {
   return { agents, edges }
 }
 
+/** Root -> `width` subagents, each with `kids` of its own. */
+function fanOut(width: number, kids = 0): { agents: AgentEntity[]; edges: EdgeEntity[] } {
+  const agents = [agent("root", null)]
+  const edges: EdgeEntity[] = []
+  for (let i = 0; i < width; i++) {
+    const sub = `s${i}`
+    agents.push(agent(sub, "root", i + 1))
+    edges.push(edge("root", sub))
+    for (let j = 0; j < kids; j++) {
+      agents.push(agent(`${sub}k${j}`, sub, 100 + i * 10 + j))
+      edges.push(edge(sub, `${sub}k${j}`))
+    }
+  }
+  return { agents, edges }
+}
+
 /** Alternates seated and unseated so the layout is exercised with mixed heights. */
 function mixedHeights(agents: AgentEntity[]): Map<string, number> {
   return new Map(agents.map((a, index) => [a.id, index % 2 === 0 ? SEATED_NODE_HEIGHT : NODE_HEIGHT]))
@@ -102,83 +97,74 @@ function overlaps(a: { pos: Position; h: number }, b: { pos: Position; h: number
   return overlapX > 0 && overlapY > 0
 }
 
+function collisions(agents: AgentEntity[], positions: Map<string, Position>, heights: Map<string, number>): string[] {
+  const boxes = agents.map((a) => ({
+    id: a.id,
+    pos: positions.get(a.id) as Position,
+    h: heights.get(a.id) as number,
+  }))
+  const found: string[] = []
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const first = boxes[i] as (typeof boxes)[number]
+      const second = boxes[j] as (typeof boxes)[number]
+      if (overlaps(first, second)) found.push(`${first.id}/${second.id}`)
+    }
+  }
+  return found
+}
+
+/** Horizontal centre of a node, which is what a parent is centred against. */
+function centre(positions: Map<string, Position>, id: string): number {
+  return (positions.get(id) as Position).x + NODE_WIDTH / 2
+}
+
 describe("layoutGraph", () => {
-  it("places every agent exactly once", async () => {
+  it("places every agent exactly once", () => {
     const { agents, edges } = depthThree()
-    const positions = await layoutGraph(agents, edges, mixedHeights(agents))
+    const positions = layoutGraph(agents, edges, mixedHeights(agents))
     expect(positions.size).toBe(agents.length)
     for (const a of agents) expect(positions.get(a.id)).toBeDefined()
   })
 
-  it("never overlaps two nodes in a depth-3 graph with mixed heights", async () => {
+  it("never overlaps two nodes in a depth-3 graph with mixed heights", () => {
     const { agents, edges } = depthThree()
     const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
-
-    const boxes = agents.map((a) => ({
-      id: a.id,
-      pos: positions.get(a.id) as Position,
-      h: heights.get(a.id) as number,
-    }))
-    const collisions: string[] = []
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const first = boxes[i] as (typeof boxes)[number]
-        const second = boxes[j] as (typeof boxes)[number]
-        if (overlaps(first, second)) collisions.push(`${first.id}/${second.id}`)
-      }
-    }
-    expect(collisions).toEqual([])
+    expect(collisions(agents, layoutGraph(agents, edges, heights), heights)).toEqual([])
   })
 
-  it("keeps depth reading vertically: every subagent sits below its parent", async () => {
-    const { agents, edges } = depthThree()
+  it("never overlaps two nodes in a wide graph of nested sub-trees", () => {
+    const { agents, edges } = fanOut(14, 3)
     const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
-
-    for (const e of edges) {
-      const parent = positions.get(e.fromAgentId) as Position
-      const child = positions.get(e.toAgentId) as Position
-      const parentBottom = parent.y + (heights.get(e.fromAgentId) as number)
-      expect(child.y).toBeGreaterThanOrEqual(parentBottom)
-    }
+    expect(collisions(agents, layoutGraph(agents, edges, heights), heights)).toEqual([])
   })
 
-  it("keeps depth bands from interleaving", async () => {
-    const { agents, edges } = depthThree()
+  it("gives every agent at one nesting level the same y", () => {
+    // The whole point of the vertical axis. A node's y says how deeply nested
+    // it is and nothing else, so nesting level is legible without tracing an
+    // edge — which is exactly what wrapping a wide row onto a second line
+    // destroyed: half a fan-out looked like a deeper level.
+    const { agents, edges } = fanOut(9, 2)
     const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
+    const positions = layoutGraph(agents, edges, heights)
     const depths = computeDepths(agents, edges)
 
-    // ELK centres nodes of differing heights within a layer, so same-depth
-    // agents do not share a top edge. What has to hold for depth to read
-    // vertically is stronger and simpler: every agent at depth N+1 starts
-    // below every agent at depth N.
-    const bands = new Map<number, { top: number; bottom: number }>()
+    const rows = new Map<number, Set<number>>()
     for (const a of agents) {
       const depth = depths.get(a.id) as number
-      const pos = positions.get(a.id) as Position
-      const bottom = pos.y + (heights.get(a.id) as number)
-      const band = bands.get(depth)
-      bands.set(depth, {
-        top: Math.min(band?.top ?? Infinity, pos.y),
-        bottom: Math.max(band?.bottom ?? -Infinity, bottom),
-      })
+      const row = rows.get(depth) ?? new Set<number>()
+      row.add((positions.get(a.id) as Position).y)
+      rows.set(depth, row)
     }
 
-    const ordered = [...bands.entries()].sort((a, b) => a[0] - b[0])
-    expect(ordered.map(([depth]) => depth)).toEqual([0, 1, 2])
-    for (let i = 1; i < ordered.length; i++) {
-      const above = (ordered[i - 1] as (typeof ordered)[number])[1]
-      const below = (ordered[i] as (typeof ordered)[number])[1]
-      expect(below.top).toBeGreaterThanOrEqual(above.bottom)
-    }
+    expect([...rows.keys()].sort((x, y) => x - y)).toEqual([0, 1, 2])
+    for (const [, ys] of rows) expect(ys.size).toBe(1)
   })
 
-  it("separates depth bands by at least the configured layer gap", async () => {
-    const { agents, edges } = depthThree()
+  it("orders nesting levels down the canvas, one gap apart", () => {
+    const { agents, edges } = fanOut(6, 2)
     const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
+    const positions = layoutGraph(agents, edges, heights)
 
     for (const e of edges) {
       const parent = positions.get(e.fromAgentId) as Position
@@ -188,183 +174,124 @@ describe("layoutGraph", () => {
     }
   })
 
-  it("respects the reserved height, so a taller seated node still clears the layer below", async () => {
-    // Same graph laid out twice: once with every node short, once with the
-    // root seated and therefore much taller. The layer below has to move down.
+  it("centres a parent between its first and last child", () => {
+    const { agents, edges } = depthThree()
+    const positions = layoutGraph(agents, edges)
+
+    for (const [parent, children] of [
+      ["root", ["a0", "a1"]],
+      ["a0", ["a0b0", "a0b1"]],
+      ["a1", ["a1b0", "a1b1"]],
+    ] as const) {
+      const first = centre(positions, children[0])
+      const last = centre(positions, children[children.length - 1] as string)
+      expect(centre(positions, parent)).toBeCloseTo((first + last) / 2, 0)
+    }
+  })
+
+  it("centres a parent over its children rather than over their sub-trees", () => {
+    // One leaf beside one deep branch. Centring over the band the family
+    // occupies would drag the parent across the canvas towards the wider
+    // branch, and it would stop reading as the thing that spawned both.
+    const agents = [agent("root", null), agent("leaf", "root", 1), agent("branch", "root", 2)]
+    const edges = [edge("root", "leaf"), edge("root", "branch")]
+    for (let i = 0; i < 6; i++) {
+      agents.push(agent(`k${i}`, "branch", 10 + i))
+      edges.push(edge("branch", `k${i}`))
+    }
+    const positions = layoutGraph(agents, edges)
+
+    expect(centre(positions, "root")).toBeCloseTo(
+      (centre(positions, "leaf") + centre(positions, "branch")) / 2,
+      0,
+    )
+  })
+
+  it("sits a parent directly above an only child", () => {
+    const agents = [agent("root", null), agent("only", "root")]
+    const positions = layoutGraph(agents, [edge("root", "only")])
+    expect((positions.get("root") as Position).x).toBe((positions.get("only") as Position).x)
+  })
+
+  it("keeps a fan-out on one row at its own nesting level", () => {
+    const { agents, edges } = fanOut(20)
+    const positions = layoutGraph(agents, edges)
+
+    const subs = agents.slice(1).map((a) => positions.get(a.id) as Position)
+    expect(new Set(subs.map((p) => p.y)).size).toBe(1)
+    expect(subs.map((p) => p.x).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 20 }, (_, i) => i * (NODE_WIDTH + NODE_GAP)),
+    )
+  })
+
+  it("holds two sub-trees further apart than two leaves", () => {
+    // Siblings sit shoulder to shoulder; a family gets room around it, so a
+    // fan-out is never mistaken for one long row of cousins.
+    const { agents, edges } = fanOut(2, 2)
+    const positions = layoutGraph(agents, edges)
+
+    const leftEdge = (id: string): number => (positions.get(id) as Position).x
+    const rightEdge = (id: string): number => leftEdge(id) + NODE_WIDTH
+    expect(leftEdge("s0k1") - rightEdge("s0k0")).toBe(NODE_GAP)
+    expect(leftEdge("s1k0") - rightEdge("s0k1")).toBe(SUBTREE_GAP)
+  })
+
+  it("gives every sub-tree a horizontal band no sibling sub-tree enters", () => {
+    // This is why non-overlap is structural rather than a swept assertion:
+    // a collision needs a shared nesting level, and same-level nodes are
+    // always inside disjoint bands.
+    const { agents, edges } = fanOut(5, 3)
+    const positions = layoutGraph(agents, edges)
+
+    const extent = (root: string, members: string[]): { left: number; right: number } => {
+      const xs = [root, ...members].map((id) => (positions.get(id) as Position).x)
+      return { left: Math.min(...xs), right: Math.max(...xs) + NODE_WIDTH }
+    }
+    const bands = Array.from({ length: 5 }, (_, i) =>
+      extent(`s${i}`, [`s${i}k0`, `s${i}k1`, `s${i}k2`]),
+    ).sort((a, b) => a.left - b.left)
+
+    for (let i = 1; i < bands.length; i++) {
+      expect((bands[i] as (typeof bands)[number]).left).toBeGreaterThanOrEqual(
+        (bands[i - 1] as (typeof bands)[number]).right,
+      )
+    }
+  })
+
+  it("orders siblings by spawn time, so a new subagent joins the right-hand end", () => {
+    const agents = [agent("root", null), agent("late", "root", 20), agent("early", "root", 10)]
+    const edges = [edge("root", "late"), edge("root", "early")]
+    const positions = layoutGraph(agents, edges)
+
+    expect((positions.get("early") as Position).x).toBeLessThan((positions.get("late") as Position).x)
+  })
+
+  it("respects the reserved height, so a taller seated node still clears the layer below", () => {
     const { agents, edges } = depthThree()
     const short = new Map(agents.map((a) => [a.id, NODE_HEIGHT]))
     const tallRoot = new Map(short)
     tallRoot.set("root", SEATED_NODE_HEIGHT)
 
-    const shortPositions = await layoutGraph(agents, edges, short)
-    const tallPositions = await layoutGraph(agents, edges, tallRoot)
-
-    const shortChild = (shortPositions.get("a0") as Position).y
-    const tallChild = (tallPositions.get("a0") as Position).y
+    const shortChild = (layoutGraph(agents, edges, short).get("a0") as Position).y
+    const tallChild = (layoutGraph(agents, edges, tallRoot).get("a0") as Position).y
     expect(tallChild - shortChild).toBe(SEATED_NODE_HEIGHT - NODE_HEIGHT)
   })
 
-  it("wraps the 20-sibling fan-out into four rows of five", async () => {
-    // The product's central scenario, once pinned as a single 6912px row that
-    // needed zoom 0.26 to frame. Wrapped into rows of MAX_BAND_COLUMNS it
-    // fits a ~1800px pane at zoom 1.
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < 20; i++) {
-      agents.push(agent(`a${i}`, "root"))
-      edges.push(edge("root", `a${i}`))
-    }
-    const positions = await layoutGraph(agents, edges, new Map(agents.map((a) => [a.id, NODE_HEIGHT])))
-
-    const subs = agents.slice(1).map((a) => positions.get(a.id) as Position)
-    const rows = [...new Set(subs.map((p) => p.y))].sort((a, b) => a - b).map((y) => subs.filter((p) => p.y === y))
-    expect(rows).toHaveLength(4)
-    for (const row of rows) expect(row).toHaveLength(MAX_BAND_COLUMNS)
-
-    // Uniform row pitch inside the band: tallest node in the row + NODE_GAP.
-    for (let i = 1; i < rows.length; i++) {
-      expect((rows[i] as Position[])[0]?.y).toBe((rows[i - 1] as Position[])[0]?.y + NODE_HEIGHT + NODE_GAP)
-    }
-    // Depth band separation below the root's row.
-    expect(rows[0]?.[0]?.y).toBe(NODE_HEIGHT + LAYER_GAP)
-
-    const xs = subs.map((p) => p.x)
-    expect(Math.max(...xs)).toBe((MAX_BAND_COLUMNS - 1) * (NODE_WIDTH + NODE_GAP))
-    // The whole point: no sideways scroll at default zoom.
-    expect(Math.max(...xs) + NODE_WIDTH).toBeLessThanOrEqual(1800)
-  })
-
-  it("keeps a band of MAX_BAND_COLUMNS or fewer on one row", async () => {
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < MAX_BAND_COLUMNS; i++) {
-      agents.push(agent(`a${i}`, "root"))
-      edges.push(edge("root", `a${i}`))
-    }
-    const positions = await layoutGraph(agents, edges)
-
-    const subs = agents.slice(1).map((a) => positions.get(a.id) as Position)
-    expect(new Set(subs.map((p) => p.y)).size).toBe(1)
-    expect(subs.map((p) => p.x).sort((a, b) => a - b)).toEqual(
-      Array.from({ length: MAX_BAND_COLUMNS }, (_, i) => i * (NODE_WIDTH + NODE_GAP)),
-    )
-  })
-
-  it("wraps a 14-sibling band into more than one row", async () => {
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < 14; i++) {
-      agents.push(agent(`a${i}`, "root"))
-      edges.push(edge("root", `a${i}`))
-    }
-    const positions = await layoutGraph(agents, edges)
-
-    const subs = agents.slice(1).map((a) => positions.get(a.id) as Position)
-    const rowSizes = [...new Set(subs.map((p) => p.y))].map((y) => subs.filter((p) => p.y === y).length)
-    expect(rowSizes.length).toBeGreaterThan(1)
-    for (const size of rowSizes) expect(size).toBeLessThanOrEqual(MAX_BAND_COLUMNS)
-  })
-
-  it("keeps every parent above its child across wrapped bands", async () => {
-    // Root -> 14 subagents -> 2 each: wide enough to wrap twice over, asserted
-    // over ALL spawn edges rather than samples.
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < 14; i++) {
-      const sub = `s${i}`
-      agents.push(agent(sub, "root"))
-      edges.push(edge("root", sub))
-      for (let j = 0; j < 2; j++) {
-        const kid = `${sub}k${j}`
-        agents.push(agent(kid, sub))
-        edges.push(edge(sub, kid))
-      }
-    }
-    const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
-    expect(positions.size).toBe(agents.length)
-
-    for (const e of edges) {
-      const parent = positions.get(e.fromAgentId) as Position
-      const child = positions.get(e.toAgentId) as Position
-      expect(child.y).toBeGreaterThan(parent.y)
-    }
-  })
-
-  it("lays out identically on repeated runs", async () => {
+  it("lays out identically on repeated runs", () => {
     const { agents, edges } = depthThree()
     for (let i = 0; i < 12; i++) {
-      agents.push(agent(`f${i}`, i % 2 === 0 ? "root" : "a0"))
+      agents.push(agent(`f${i}`, i % 2 === 0 ? "root" : "a0", i + 1))
       edges.push(edge(i % 2 === 0 ? "root" : "a0", `f${i}`))
     }
     const heights = mixedHeights(agents)
 
-    const first = await layoutGraph(agents, edges, heights)
-    const second = await layoutGraph(agents, edges, heights)
+    const first = layoutGraph(agents, edges, heights)
+    const second = layoutGraph(agents, edges, heights)
     expect(second.size).toBe(first.size)
     for (const [id, pos] of first) expect(second.get(id)).toEqual(pos)
   })
 
-  it("reserves seated height when wrapping rows within a band", async () => {
-    // Ten siblings with alternating heights wrap into two rows whose top row
-    // contains seated (220px) nodes; the second row must clear them by
-    // SEATED_NODE_HEIGHT + NODE_GAP, not the unseated pitch.
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < 10; i++) {
-      agents.push(agent(`a${i}`, "root"))
-      edges.push(edge("root", `a${i}`))
-    }
-    const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
-
-    const boxes = agents.map((a) => ({
-      id: a.id,
-      pos: positions.get(a.id) as Position,
-      h: heights.get(a.id) as number,
-    }))
-    const collisions: string[] = []
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const first = boxes[i] as (typeof boxes)[number]
-        const second = boxes[j] as (typeof boxes)[number]
-        if (overlaps(first, second)) collisions.push(`${first.id}/${second.id}`)
-      }
-    }
-    expect(collisions).toEqual([])
-
-    const subs = boxes.slice(1)
-    const ys = [...new Set(subs.map((b) => b.pos.y))].sort((a, b) => a - b)
-    expect(ys).toHaveLength(2)
-    const topRow = subs.filter((b) => b.pos.y === ys[0])
-    const tallestTop = Math.max(...topRow.map((b) => b.h))
-    expect(tallestTop).toBe(SEATED_NODE_HEIGHT)
-    expect((ys[1] as number) - (ys[0] as number)).toBe(SEATED_NODE_HEIGHT + NODE_GAP)
-  })
-
-  it("wraps wide bands on the fallback path too", async () => {
-    elkState.fail = true
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < 14; i++) {
-      agents.push(agent(`a${i}`, "root"))
-      edges.push(edge("root", `a${i}`))
-    }
-
-    const positions = await layoutGraph(agents, edges)
-    expect(positions.size).toBe(agents.length)
-
-    const subs = agents.slice(1).map((a) => positions.get(a.id) as Position)
-    const ys = new Set(subs.map((p) => p.y))
-    expect(ys.size).toBeGreaterThan(1)
-    for (const y of ys) {
-      expect(subs.filter((p) => p.y === y).length).toBeLessThanOrEqual(MAX_BAND_COLUMNS)
-    }
-    const rootY = (positions.get("root") as Position).y
-    for (const sub of subs) expect(sub.y).toBeGreaterThan(rootY)
-  })
-
-  it("handles a deep chain of subagents without overlap at any depth", async () => {
+  it("handles a deep chain of subagents without overlap at any depth", () => {
     const agents: AgentEntity[] = [agent("n0", null)]
     const edges: EdgeEntity[] = []
     for (let i = 1; i < 8; i++) {
@@ -372,7 +299,7 @@ describe("layoutGraph", () => {
       edges.push(edge(`n${i - 1}`, `n${i}`))
     }
     const heights = mixedHeights(agents)
-    const positions = await layoutGraph(agents, edges, heights)
+    const positions = layoutGraph(agents, edges, heights)
 
     let previousBottom = -Infinity
     for (const a of agents) {
@@ -382,20 +309,31 @@ describe("layoutGraph", () => {
     }
   })
 
-  it("returns nothing for an empty graph", async () => {
-    expect((await layoutGraph([], [])).size).toBe(0)
+  it("returns nothing for an empty graph", () => {
+    expect(layoutGraph([], []).size).toBe(0)
   })
 
-  it("still places agents whose parent edge has not been reconciled", async () => {
-    // An orphan must not vanish from the canvas.
-    const agents = [agent("root", null), agent("orphan", null)]
-    const positions = await layoutGraph(agents, [], new Map())
+  it("still places agents whose parent edge has not been reconciled", () => {
+    // An orphan must not vanish from the canvas, and must not be drawn as
+    // though it belonged to the tree beside it.
+    const agents = [agent("root", null), agent("orphan", null, 5)]
+    const positions = layoutGraph(agents, [], new Map())
+
     expect(positions.size).toBe(2)
+    expect((positions.get("orphan") as Position).x).toBe(NODE_WIDTH + ROOT_GAP)
+    expect((positions.get("orphan") as Position).y).toBe(0)
+  })
+
+  it("draws an agent whose parent is not on the canvas as a root", () => {
+    // The canvas renders a filtered slice of a session. A child hanging one
+    // level below nothing is worse than a second root.
+    const positions = layoutGraph([agent("stray", "filtered-out")], [])
+    expect((positions.get("stray") as Position).y).toBe(0)
   })
 })
 
 /**
- * The layout constants are ELK's copy of numbers that really live in the
+ * The layout constants are a copy of numbers that really live in the
  * stylesheet, and the stylesheet is edited without this file. These pin the
  * two together so the drift is a failing test rather than overlapping nodes.
  */
@@ -427,6 +365,34 @@ describe("layout constants against app-surfaces.css", () => {
   it("reserves more for a seated node, which grows a tone block and chips", () => {
     expect(SEATED_NODE_HEIGHT).toBeGreaterThan(NODE_HEIGHT)
   })
+
+  it("keeps the lineage accents out of the reserved height", () => {
+    // Both are absolutely positioned, so neither can push a node past the
+    // reservation the layout made for it.
+    expect(rule(".node-lineage")).toContain("position: absolute")
+    expect(rule(".node-lineage-mark")).toContain("position: absolute")
+  })
+})
+
+describe("buildHierarchy", () => {
+  it("builds one tree per root, with children under their parent", () => {
+    const { agents, edges } = depthThree()
+    const [tree, ...rest] = buildHierarchy(agents, edges)
+
+    expect(rest).toEqual([])
+    expect(tree?.id).toBe("root")
+    expect(tree?.children.map((child) => child.id)).toEqual(["a0", "a1"])
+    expect(tree?.children[0]?.children.map((child) => child.id)).toEqual(["a0b0", "a0b1"])
+  })
+
+  it("prefers the reconciled parent field over an observed edge", () => {
+    const agents = [agent("root", null), agent("mid", "root", 1), agent("leaf", "mid", 2)]
+    // A stale edge claims the root spawned the leaf; the entity says otherwise.
+    const [tree] = buildHierarchy(agents, [edge("root", "mid"), edge("root", "leaf"), edge("mid", "leaf")])
+
+    expect(tree?.children.map((child) => child.id)).toEqual(["mid"])
+    expect(tree?.children[0]?.children.map((child) => child.id)).toEqual(["leaf"])
+  })
 })
 
 describe("computeDepths", () => {
@@ -438,28 +404,38 @@ describe("computeDepths", () => {
     expect(depths.get("a0b1")).toBe(2)
   })
 
-  it("still measures per-depth bands on a wide wrapped graph", () => {
-    // The wrap relies on depth(child) = depth(parent) + 1; this pins the
-    // premise on the shape the wrap exists for.
-    const agents = [agent("root", null)]
-    const edges: EdgeEntity[] = []
-    for (let i = 0; i < 14; i++) {
-      agents.push(agent(`s${i}`, "root"))
-      edges.push(edge("root", `s${i}`))
-      agents.push(agent(`s${i}k`, `s${i}`))
-      edges.push(edge(`s${i}`, `s${i}k`))
-    }
+  it("measures every agent on a wide graph of nested sub-trees", () => {
+    const { agents, edges } = fanOut(14, 1)
     const depths = computeDepths(agents, edges)
     expect(depths.size).toBe(agents.length)
     expect(depths.get("root")).toBe(0)
     expect(depths.get("s7")).toBe(1)
-    expect(depths.get("s7k")).toBe(2)
+    expect(depths.get("s7k0")).toBe(2)
   })
 
-  it("does not hang on a parent cycle", () => {
-    const a = agent("x", "y")
-    const b = agent("y", "x")
-    expect(() => computeDepths([a, b], [])).not.toThrow()
+  it("breaks a parent cycle instead of hanging or stacking its members", () => {
+    // Both agents claim the other as their parent. The forest breaks the cycle
+    // at its earliest member, which has to leave them on different levels —
+    // same level plus the same band would mean two cards on top of each other.
+    const depths = computeDepths([agent("x", "y", 1), agent("y", "x", 2)], [])
+    expect([...depths.values()].sort()).toEqual([0, 1])
+  })
+
+  it("does not turn a peer message into parentage", () => {
+    const depths = computeDepths(
+      [agent("root", null), agent("first", "root"), agent("second", null)],
+      [edge("root", "first"), edge("first", "second", "messaged")],
+    )
+
+    expect(depths.get("first")).toBe(1)
+    expect(depths.get("second")).toBe(0)
+  })
+
+  it("classifies communication separately from hierarchy edges", () => {
+    expect(edgeAffectsHierarchy(edge("a", "b", "spawned"))).toBe(true)
+    expect(edgeAffectsHierarchy(edge("a", "b", "delegated"))).toBe(true)
+    expect(edgeAffectsHierarchy(edge("a", "b", "forked"))).toBe(true)
+    expect(edgeAffectsHierarchy(edge("a", "b", "messaged"))).toBe(false)
   })
 })
 
@@ -479,6 +455,13 @@ describe("graphSignature", () => {
     const { agents, edges } = depthThree()
     const before = graphSignature(agents, edges)
     expect(graphSignature(agents, [...edges, edge("root", "a0b0")])).not.toBe(before)
+  })
+
+  it("does not relayout when a peer message is recorded", () => {
+    const { agents, edges } = depthThree()
+    const before = graphSignature(agents, edges)
+
+    expect(graphSignature(agents, [...edges, edge("a0", "a1", "messaged")])).toBe(before)
   })
 
   it("ignores status and activity churn, which must not trigger a relayout", () => {

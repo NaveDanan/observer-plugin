@@ -185,6 +185,12 @@ so Observer stores and exposes that value instead of minting a second resume sch
 mint an assignment UUID before the child exists; `tool.execute.after` binds that correlation id to
 the host session id from task metadata.
 
+Every assignment also carries the spawner's host runtime id. A top-level subagent names the root
+session id as its parent; `null` never means "parented by root". The daemon rejects an assignment
+without that id, and the plugin does not forward a child session until its parent chain resolves.
+This keeps the one root agent as the only parentless node and prevents a transient host lookup from
+creating a second root or a floating subagent.
+
 Assignments and direct messages live in SQLite. Plugin restarts reload them through the daemon,
 which removes the former dependency on in-memory title matching. Title matching remains only as a
 fallback for a live task when host metadata or the daemon is unavailable.
@@ -214,6 +220,17 @@ wildcard or per-agent task policy exists. Coordination tools check the resolved 
 they run, and nested children inherit parent restrictions. OpenCode's default depth is 1, which
 forbids a subagent from creating a child. Observer changes that default to 2 parent edges, which
 produces the three session levels, but leaves any explicit lower user value intact.
+
+These are daemon invariants as well as plugin checks. The coordination API rejects the sixteenth
+assignment for a root, rejects a parent chain deeper than two subagent edges, and does not allow an
+existing assignment to change its parent or runtime id. Finished assignments still count toward the
+15-agent lifetime cap; resuming an existing runtime id does not. The plugin reserves slots before
+parallel OpenCode creation begins, while the daemon serially checks durable assignments before each
+insert, so concurrent calls cannot all pass against the same final slot.
+New creation is fail-closed when the daemon cannot supply or persist that durable count: native
+`task` and `agent_spawn` refuse to create a child instead of trusting a process-local count that a
+plugin restart could have reset. Resuming an existing `task_id` is not creation and remains outside
+the slot reservation path.
 
 The allow-list is a named constant, `NEUTRAL_AGENT_TYPES`, and — like the
 naming rule — it exists in both `packages/cli/src/seat-agents.ts` and

@@ -58,7 +58,7 @@ describe("Store", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: "child",
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         callId: "call-upgraded",
         agentType: "subcontractor",
         hostAgentType: "general",
@@ -95,7 +95,7 @@ describe("Store", () => {
       upgraded.close()
 
       const check = new DatabaseSync(path)
-      expect((check.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3)
+      expect((check.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length)
       check.close()
     } finally {
       rmSync(directory, { recursive: true, force: true })
@@ -217,7 +217,7 @@ describe("Store", () => {
         host: "opencode",
         rootSessionKey: "root",
         runtimeId: "child",
-        parentRuntimeId: null,
+        parentRuntimeId: "root",
         callId: "call-1",
         agentType: "malik-johnson",
         hostAgentType: "general",
@@ -306,7 +306,7 @@ describe("Store", () => {
       host: "codex",
       rootSessionKey: "s1",
       runtimeId: "agent-1",
-      parentRuntimeId: null,
+      parentRuntimeId: "s1",
       callId: "call-delete",
       agentType: "reviewer",
       hostAgentType: "reviewer",

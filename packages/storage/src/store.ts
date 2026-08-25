@@ -426,6 +426,7 @@ export class Store implements EntityStore {
   }
 
   putAgentAssignment(row: AgentAssignment): void {
+    if (!row.parentRuntimeId) throw new Error("subagent assignment requires a parent runtime id")
     this.db
       .prepare(
         `INSERT INTO agent_assignments (id, host, root_session_key, runtime_id, parent_runtime_id, call_id, agent_type, host_agent_type, description, prompt, status, created_at, updated_at)
@@ -799,7 +800,7 @@ function toAgentAssignment(r: Row): AgentAssignment {
     host: str(r["host"]) as HostId,
     rootSessionKey: str(r["root_session_key"]),
     runtimeId: nstr(r["runtime_id"]),
-    parentRuntimeId: nstr(r["parent_runtime_id"]),
+    parentRuntimeId: str(r["parent_runtime_id"]),
     callId: nstr(r["call_id"]),
     agentType: str(r["agent_type"]),
     hostAgentType: str(r["host_agent_type"]),
