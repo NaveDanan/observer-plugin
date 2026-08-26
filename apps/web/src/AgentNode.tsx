@@ -60,6 +60,14 @@ export function isDoneNode(status: AgentEntity["status"], isRoot: boolean): bool
   return !isRoot && (status === "idle" || status === "completed")
 }
 
+/** The concise assigned job shown on every subagent node. */
+export function taskTitleOf(agent: AgentEntity, isRoot: boolean): string | undefined {
+  if (isRoot) return undefined
+  const source = agent.description?.trim() || agent.delegationPrompt?.trim()
+  if (!source) return undefined
+  return source.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim()
+}
+
 function formatElapsed(ms: number): string {
   const s = Math.floor(ms / 1000)
   if (s < 60) return `${s}s`
@@ -122,6 +130,7 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
   const photoSrc = employee && employee.imageUrl !== brokenPhotoUrl ? employee.imageUrl : undefined
 
   const statusText = displayStatusLabel(agent.status, isRoot)
+  const taskTitle = taskTitleOf(agent, isRoot)
 
   let activityText: string
   let activityTitle: string | undefined
@@ -175,7 +184,7 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
 
   return (
     <div
-      className={`node employee-node status-${agent.status}${selected ? " is-selected" : ""}${live ? " is-live" : ""}${done ? " is-done" : ""}${isRoot ? " is-root" : ""}${failed ? " is-failed" : ""}${inFamily ? " is-family" : ""}`}
+      className={`node employee-node status-${agent.status}${selected ? " is-selected" : ""}${live ? " is-live" : ""}${done ? " is-done" : ""}${isRoot ? " is-root" : ""}${failed ? " is-failed" : ""}${inFamily ? " is-family" : ""}${taskTitle ? " has-task" : ""}`}
       style={lineageStyle}
       tabIndex={0}
       role="button"
@@ -188,7 +197,7 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
         if (event.shiftKey && employee) onOpenCard()
         else onOpen()
       }}
-      aria-label={`${name}, ${role.long} ${statusText}.${depthLabel} ${activityText}.${churn ? ` ${churnTitle(churn)}.` : ""} Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
+      aria-label={`${name}, ${role.long} ${statusText}.${taskTitle ? ` Task: ${taskTitle}.` : ""}${depthLabel} ${activityText}.${churn ? ` ${churnTitle(churn)}.` : ""} Press Enter for details${employee ? ", Shift plus Enter for their ID card" : ""}.`}
     >
       {!isRoot && lineage?.parentColor && <span className="node-lineage-mark" aria-hidden="true" />}
 
@@ -227,6 +236,13 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
         </div>
         {isRoot && <span className="badge badge-root">root</span>}
       </header>
+
+      {taskTitle && (
+        <p className="node-task">
+          <span className="node-task-label">task</span>
+          <span className="node-task-text" title={taskTitle}>{taskTitle}</span>
+        </p>
+      )}
 
       {tone && <p className="node-tone">{tone}</p>}
 

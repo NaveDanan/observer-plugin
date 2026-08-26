@@ -20,9 +20,12 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
   for threat models). Nodes show the employee's photo, name, tone and top
   strengths; clicking a node opens a panel on the right with their profile,
   the chat transcript (tool calls interleaved), the prompt and todos.
-- **Guidance back to the model.** The OpenCode plugin offers the roster to the
-  root agent as subagent staffing: who is on the team, what each employee is
-  strong at, and when to reach for them. When a subagent is spawned it appends
+- **Guidance back to the model.** Observer offers the roster to the root agent
+  as subagent staffing: who is on the team, what each employee is strong at,
+  and when to reach for them. In Codex, explicitly invoking the Observer plugin
+  loads every employee and capability, asks the root to prefer an
+  `observer-<employee>` agent, and requires the final answer to explain any use
+  of a default agent. When an OpenCode subagent is spawned, the plugin appends
   a persona directive — name, tone, strengths — and records the seated
   employee as the node's type; a subagent run without an employee is typed
   `subcontractor` (`"guidance": false` in `~/.observer/config.json` turns this
@@ -97,6 +100,11 @@ directory (marketplace `observer-local`), and run `/hooks` inside Codex to trust
 it. The terminal equivalent of the install step is
 `codex plugin add observer@observer-local`.
 
+Explicitly invoke Observer when you want roster-guided delegation. New Codex
+subagents start from only their assigned prompt: the plugin forces
+`fork_turns: "none"`, so the root transcript and the root's list of available
+but uninstalled plugins are not inherited.
+
 Use either this or `observer install codex`, not both — the CLI warns you if you
 do, because each event would be recorded twice. See
 [docs/integrations.md](integrations/README.md).
@@ -146,6 +154,7 @@ In `~/.observer/config.json`:
 
 ```jsonc
 {
+  "passAllSkills": true,
   "seats": {
     "control": true,
     "employees": {
@@ -155,6 +164,11 @@ In `~/.observer/config.json`:
   }
 }
 ```
+
+`observer config` lists the project and global skills Codex makes available.
+**Pass All Skills** is on by default and passes that inventory to every Codex
+subagent, including subcontractors. Turn it off from the Skills screen if a
+project should keep those skills out of delegated prompts.
 
 Run `observer install opencode` and/or `observer install copilot --plugin` after
 editing, then restart the affected host.
@@ -257,7 +271,7 @@ how you adopt a generated definition as your own.
 
 ```text
 host hook / plugin
-  -> observer-emit           (tiny, dependency-free, always exits 0)
+  -> observer-emit           (telemetry; dependency-free, always exits 0)
   -> daemon /v1/hook         (adapter normalises host vocabulary)
   -> SQLite event log        (append-only, idempotent)
   -> reducer                 (projects sessions, agents, edges, messages, todos)
@@ -267,12 +281,12 @@ host hook / plugin
 
 Two rules shape the whole design:
 
-1. **Never disturb the agent.** The hook process exits 0 with empty stdout no
-   matter what happens, so Observer cannot block a tool call or be mistaken for
-   a hook decision. If the daemon is down, deliveries spool to disk and replay
-   on the next start. Seat control is the single opt-in exception, and it is
-   built to fail towards this rule: when it cannot confirm the agent it wants
-   exists, it changes nothing.
+1. **Never disturb the agent.** The telemetry process exits 0 with empty stdout
+   no matter what happens, so it cannot block a tool call or be mistaken for a
+   hook decision. If the daemon is down, deliveries spool to disk and replay on
+   the next start. Separate control hooks are narrow and fail open: Codex only
+   isolates new child context, while opt-in seat control only rewrites a neutral
+   delegation after confirming its target.
 2. **Never claim data you do not have.** Adapters translate; they do not guess.
    Anything reconstructed is marked as such and rendered differently.
 
@@ -316,7 +330,10 @@ Notable gaps, stated plainly:
   `preToolUse` hook has no call id, so repeated identical calls merge into one
   row.
 - **Codex** exposes the active model on every hook payload, but no assistant
-  deltas: replies appear when the turn ends.
+  deltas: replies appear when the turn ends. Observer reads Codex's transcript
+  paths to recover the root history and each child's own conversation. Child
+  recovery starts at its assigned prompt, so inherited bootstrap content does
+  not appear in the child node.
 - **No host** exposes its complete composed system prompt. Observer shows the
   parts that are available (agent definitions, instruction files, delegated
   task prompts) and labels the rest `unavailable`.

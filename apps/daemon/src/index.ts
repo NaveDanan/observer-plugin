@@ -5,6 +5,7 @@ import { loadConfig, saveConfig } from "./config.js"
 import { CopilotTailer } from "./copilot-tailer.js"
 import { Diagnostics } from "./diagnostics.js"
 import { Pipeline } from "./pipeline.js"
+import { SessionTitleTailer } from "./session-title-tailer.js"
 import { createServer } from "./server.js"
 import { drainSpool } from "./spool.js"
 
@@ -18,7 +19,7 @@ export interface StartedDaemon {
 export interface StartOptions {
   port?: number
   webDir?: string
-  /** Skip the Copilot session-log tailer (used by tests). */
+  /** Skip background readers for host-owned session data (used by tests). */
   tail?: boolean
 }
 
@@ -54,8 +55,12 @@ export async function startDaemon(options: StartOptions = {}): Promise<StartedDa
   const app = await createServer({ store, pipeline, config, broadcaster, diagnostics, webDir: options.webDir })
   await app.listen({ port: config.port, host: "127.0.0.1" })
 
-  const tailer = new CopilotTailer(store, pipeline)
-  if (options.tail !== false) tailer.start()
+  const copilotTailer = new CopilotTailer(store, pipeline)
+  const titleTailer = new SessionTitleTailer(store, pipeline)
+  if (options.tail !== false) {
+    copilotTailer.start()
+    titleTailer.start()
+  }
 
   // Periodic maintenance: spool sweep for hooks that raced a restart, plus
   // retention pruning.
@@ -84,7 +89,8 @@ export async function startDaemon(options: StartOptions = {}): Promise<StartedDa
     token: config.token,
     async close() {
       clearInterval(maintenance)
-      tailer.stop()
+      copilotTailer.stop()
+      titleTailer.stop()
       broadcaster.closeAll()
       await app.close()
       store.close()
@@ -176,5 +182,6 @@ export type {
   OpencodeSeatTarget,
 } from "./adapters/index.js"
 export { CopilotTailer } from "./copilot-tailer.js"
+export { SessionTitleTailer, encodeClaudeProjectPath } from "./session-title-tailer.js"
 export { drainSpool } from "./spool.js"
 export * from "./models.js"

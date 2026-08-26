@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { LOGO_COLUMNS, LOGO_ROWS, logo, logoInkIsRowConstant, xtermSlot } from "../dist/index.js"
+import { LOGO_COLUMNS, LOGO_ROWS, logo, xtermSlot } from "../dist/index.js"
 
 /**
  * The mark is a drawing, so these tests assert the two things a drawing has to
@@ -10,18 +10,16 @@ import { LOGO_COLUMNS, LOGO_ROWS, logo, logoInkIsRowConstant, xtermSlot } from "
 const SGR = /\u001B\[[0-9;]*m/g
 const strip = (text: string): string => text.replace(SGR, "")
 
-describe("the NJ mark", () => {
-  it("draws eight rows of pixels in four rows of terminal", () => {
-    expect(LOGO_ROWS).toBe(4)
-    expect(logo("plain")).toHaveLength(4)
+describe("the Observer mark", () => {
+  it("draws sixteen rows of pixels in eight rows of terminal", () => {
+    expect(LOGO_ROWS).toBe(8)
+    expect(logo("plain")).toHaveLength(8)
   })
 
-  it("is the same drawing at every colour depth", () => {
-    // The whole reason the shading is quantised to terminal rows. Strip the
-    // paint and the coloured mark has to be the plain mark exactly, or
-    // NO_COLOR gets a different, worse picture than the screen does.
-    expect(logo("truecolor").map(strip)).toEqual(logo("plain"))
-    expect(logo("256").map(strip)).toEqual(logo("plain"))
+  it("occupies the same cells at every colour depth", () => {
+    const occupied = (row: string): string => strip(row).replace(/[\u2580\u2584\u2588]/g, "#")
+    expect(logo("truecolor").map(occupied)).toEqual(logo("plain").map(occupied))
+    expect(logo("256").map(occupied)).toEqual(logo("plain").map(occupied))
   })
 
   it("keeps every row the same width, so text beside it stays in a column", () => {
@@ -29,31 +27,22 @@ describe("the NJ mark", () => {
     for (const row of logo("truecolor")) expect(strip(row).length).toBe(LOGO_COLUMNS)
   })
 
-  it("draws an N and a J out of half blocks", () => {
+  it("draws the supplied framed diagonal mark", () => {
     expect(logo("plain")).toEqual([
-      "\u2588\u2588\u2580\u2588\u2584      \u2588\u2588       \u2588\u2588",
-      "\u2588\u2588  \u2580\u2588\u2584    \u2588\u2588       \u2588\u2588",
-      "\u2588\u2588    \u2580\u2588\u2584  \u2588\u2588  \u2584    \u2588\u2588",
-      "\u2588\u2588      \u2580\u2588\u2584\u2588\u2588  \u2580\u2588\u2584\u2584\u2584\u2588\u2588",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2584        \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584      \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584    \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2584  \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588  \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588    \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588      \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588        \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ",
     ])
   })
 
-  it("moves the N's diagonal twice per terminal row", () => {
-    // A diagonal that steps once per row is the staircase the solid-block mark
-    // already drew, and the half blocks would have bought nothing.
-    const starts = logo("plain").map((row) => row.indexOf("\u2580"))
-    expect(starts).toEqual([2, 4, 6, 8])
-  })
-
-  it("never straddles a cell with two inks", () => {
-    expect(logoInkIsRowConstant()).toBe(true)
-  })
-
-  it("paints no background, so the terminal's own stays visible", () => {
-    // A TUI that fills its background repaints the user's theme. The mark is
-    // foreground only; transparent pixels are spaces, not painted blocks.
-    for (const row of logo("truecolor")) expect(row).not.toContain("\u001B[48;")
-    for (const row of logo("256")) expect(row).not.toContain("\u001B[48;")
+  it("uses foreground and background ink for split-colour cells", () => {
+    expect(logo("truecolor").join("\n")).toContain("\u001B[48;2;")
+    expect(logo("256").join("\n")).toContain("\u001B[48;5;")
   })
 
   it("emits no colour at all when the terminal takes none", () => {
@@ -61,8 +50,7 @@ describe("the NJ mark", () => {
   })
 
   it("paints a run of cells in one span rather than one escape each", () => {
-    // Four cells of the left pillar share an ink; four escape sequences to say
-    // so would quadruple the line to draw the same thing.
+    // Adjacent cells that share both inks are emitted as one span.
     const row = logo("truecolor")[0]!
     expect(row.match(SGR)?.length ?? 0).toBeLessThan(strip(row).length)
   })
@@ -93,6 +81,7 @@ describe("xtermSlot", () => {
       [80, 110, 150],
       [0, 225, 255],
       [160, 245, 255],
+      [255, 255, 255],
     ] as const) {
       expect(xtermSlot(ink)).toBeGreaterThanOrEqual(16)
     }

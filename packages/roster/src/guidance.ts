@@ -35,14 +35,14 @@ export function behaviorDirective(profile: EmployeeProfile, task?: string): stri
 export function rosterBriefing(profiles: EmployeeProfile[]): string {
   const rows = profiles
     .map((profile) => {
-      const strengths = profile.fields.slice(0, 4).join(", ")
-      return `- ${profile.fullName} — ${profile.title}: strong at ${strengths}.`
+      const strengths = profile.fields.join(", ")
+      return `- \`observer-${profile.id}\` — ${profile.fullName}, ${profile.title}: ${strengths}.`
     })
     .join("\n")
   return [
-    "## Team roster",
-    "You can delegate work to subagents. These employees are available to staff them: pick the teammate whose strengths fit the task and describe the task in their terms, so Observer seats them on the node:",
+    "## Employee roster",
+    "You can delegate work to subagents. Prefer an employee agent whose capabilities fit the delegated task instead of a default Codex agent. Give each spawn a complete, bounded instruction and set `fork_turns: \"none\"` so root chat and plugin bootstrap context stay in the root agent:",
     rows,
-    'If no teammate fits a task, delegate anyway without naming one: that subagent is recorded as a "subcontractor".',
+    'If no employee fits, a default Codex subagent is legitimate and Observer records it as a "subcontractor". In the final response, state the reason no employee agent was selected.',
   ].join("\n")
 }

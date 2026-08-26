@@ -36,6 +36,8 @@ export interface ObserverConfig {
    * it was undeclared, every `saveConfig` deleted it.
    */
   guidance: boolean
+  /** Pass Codex's project-aware enabled skill inventory to every spawned subagent. */
+  passAllSkills: boolean
   /** Per-employee model, reasoning effort and skills. See `seats.ts`. */
   seats: SeatsConfig
   /** Configured provider instances, keyed by the user's instance id. */
@@ -80,6 +82,7 @@ export const DEFAULT_CONFIG: Omit<ObserverConfig, "token"> = {
     rawEvents: false,
   },
   guidance: true,
+  passAllSkills: true,
   seats: DEFAULT_SEATS,
   providers: {},
   autostart: true,
@@ -132,6 +135,7 @@ export const ConfigSchema = z.object({
     })
     .catch(DEFAULT_CONFIG.capture),
   guidance: z.boolean().catch(DEFAULT_CONFIG.guidance),
+  passAllSkills: z.boolean().catch(DEFAULT_CONFIG.passAllSkills),
   seats: SeatsConfigSchema,
   providers: ProvidersConfigSchema,
   autostart: z.boolean().catch(DEFAULT_CONFIG.autostart),
@@ -143,6 +147,7 @@ export const ConfigPatchSchema = z
     retentionDays: z.number().int().min(0).max(3_650).optional(),
     redaction: RedactionConfigSchema.optional(),
     guidance: z.boolean().optional(),
+    passAllSkills: z.boolean().optional(),
     seats: SeatsConfigSchema.optional(),
     providers: ProvidersConfigSchema.optional(),
     autostart: z.boolean().optional(),

@@ -299,6 +299,7 @@ describe("seats survive the config round-trip", () => {
       redaction: { enabled: true, maxTextLength: 64000 },
       capture: { messages: true, reasoning: true, toolInput: true, toolOutput: true, prompts: true, rawEvents: false },
       guidance: true,
+      passAllSkills: true,
       seats: { control: true, employees },
       providers: {},
       autostart: true,

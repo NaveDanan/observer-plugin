@@ -348,6 +348,18 @@ describe("opencode adapter", () => {
     expect(normalizeHook({ host: "opencode", event: "session.idle", payload: {}, deliveryId: "d" })).toEqual([])
   })
 
+  it("inherits the root session title reported by OpenCode", () => {
+    const events = normalizeHook({
+      host: "opencode",
+      event: "session.created",
+      deliveryId: "d",
+      payload: { info: { id: "root", title: "Review the observer canvas", directory: "/repo" } },
+      context,
+    })
+
+    expect(find(events, "session.started")).toMatchObject({ title: "Review the observer canvas" })
+  })
+
   it("turns a child session into an agent node under its parent", () => {
     const events = normalizeHook({
       host: "opencode",

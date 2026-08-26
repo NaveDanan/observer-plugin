@@ -104,13 +104,14 @@ codex plugin add observer@observer-local
 Finally run `/hooks` inside Codex and trust the Observer entries. Plugin hooks
 are non-managed, so Codex skips them until reviewed.
 
-Observer asks Codex for the enabled skills visible from the project where the
-install or config save runs. Codex's merged project and global inventory becomes
-the **Default** skills pack in every generated employee definition. The pack
-stores skill names, descriptions, scopes, and `SKILL.md` paths so an employee
-can load the same skill instructions as the root agent. A failed skills probe
-does not block employee generation; the installer reports the empty pack and
-the reason.
+`observer config` asks Codex for the enabled skills visible from its current
+project. Its Skills screen labels project and global entries separately and
+turns **Pass All Skills** on by default. Observer caches that merged inventory
+for the project. The Codex pre-spawn hook then adds its names, descriptions,
+scopes, and `SKILL.md` paths to every delegated instruction, whether the target
+is an employee agent or a subcontractor. Generated employee definitions carry
+the same Default pack. A failed probe leaves the pack empty and reports a
+warning without blocking delegation.
 
 The Codex plugin observes lifecycle and tool events. It does not add the
 OpenCode-only `agent_identity`, `agent_send`, `agent_inbox`, or `agent_ack`

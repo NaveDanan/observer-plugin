@@ -4,6 +4,7 @@ import { applySeatSkills, fetchCodexSkills, seatFor, seatTargets } from "@observ
 import type { CodexAvailableSkill, CodexSkillInventory, SeatTarget, SeatsConfig } from "@observer-ai/daemon"
 import { behaviorDirective, ROSTER } from "@observer-ai/roster"
 import type { RosterProfile } from "@observer-ai/roster"
+import { rememberCodexSkills } from "./codex-skill-cache.js"
 import { codexHome, homeDir } from "./paths.js"
 
 const MARKER = "observer:employee-agent v1"
@@ -21,6 +22,8 @@ export interface CodexEmployeeAgentOptions {
   cwd?: string
   /** Injectable inventory for callers that already fetched it and for tests. */
   skillInventory?: CodexSkillInventory
+  /** Defaults on. False leaves the merged inventory out of employee definitions. */
+  passAllSkills?: boolean
 }
 
 interface ReconcileInput {
@@ -45,19 +48,36 @@ export function syncCodexEmployeeAgents(
   options: CodexEmployeeAgentOptions = {},
 ): HostEmployeeAgentSync {
   const pins = controlledTargets(seats, "codex")
-  const inventory = options.skillInventory ?? fetchCodexSkills({ cwd: options.cwd })
+  const discovered = options.skillInventory ?? fetchCodexSkills({ cwd: options.cwd })
+  const inventory: CodexSkillInventory = { skills: discovered.skills, warnings: [...discovered.warnings] }
+  try {
+    rememberCodexSkills(options.cwd ?? process.cwd(), inventory)
+  } catch (error) {
+    inventory.warnings.push(`Observer could not cache Codex skills for subagent spawns: ${describeError(error)}.`)
+  }
   const result = reconcile({
     directory: join(codexHome(), "agents"),
     extension: ".toml",
     hostLabel: "Codex",
-    render: (profile) => renderCodexAgent(profile, seats, pins.get(profile.id), inventory.skills),
+    render: (profile) => renderCodexAgent(
+      profile,
+      seats,
+      pins.get(profile.id),
+      options.passAllSkills === false ? [] : inventory.skills,
+    ),
   })
   result.notes.push(...inventory.warnings)
   result.notes.push(
-    `${DEFAULT_SKILL_PACK_NAME} skill pack gives ${inventory.skills.length} enabled Codex skill${inventory.skills.length === 1 ? "" : "s"} to every employee.`,
+    options.passAllSkills === false
+      ? `${DEFAULT_SKILL_PACK_NAME} skill pack is off; available Codex skills are not passed to employees.`
+      : `${DEFAULT_SKILL_PACK_NAME} skill pack gives ${inventory.skills.length} enabled Codex skill${inventory.skills.length === 1 ? "" : "s"} to every employee.`,
   )
   result.notes.push(pinSummary("Codex", pins.size))
   return result
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error)
 }
 
 /** Writes all roster employees as personal Claude Code subagents. */

@@ -13,7 +13,7 @@ import {
 import "@xyflow/react/dist/style.css"
 import type { AgentEntity, EdgeEntity, ToolCallEntity } from "@observer-ai/protocol"
 import type { EmployeeMatch } from "@observer-ai/roster"
-import { AgentNode, type AgentNodeData } from "./AgentNode"
+import { AgentNode, taskTitleOf, type AgentNodeData } from "./AgentNode"
 import { PEER_EDGE_TYPE, toFlowEdges } from "./canvasEdges"
 import { computeLineage } from "./lineage"
 import { PeerEdge } from "./PeerEdge"
@@ -21,6 +21,8 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   SEATED_NODE_HEIGHT,
+  SEATED_TASK_NODE_HEIGHT,
+  TASK_NODE_HEIGHT,
   graphSignature,
   layoutGraph,
   type Position,
@@ -278,7 +280,10 @@ function CanvasInner(props: CanvasProps): JSX.Element {
     const heights = new Map<string, number>()
     let heightKey = ""
     for (const agent of agents) {
-      const estimate = matches.get(agent.id) ? SEATED_NODE_HEIGHT : NODE_HEIGHT
+      const hasTask = Boolean(taskTitleOf(agent, agent.parentAgentId === null))
+      const estimate = matches.get(agent.id)
+        ? (hasTask ? SEATED_TASK_NODE_HEIGHT : SEATED_NODE_HEIGHT)
+        : (hasTask ? TASK_NODE_HEIGHT : NODE_HEIGHT)
       const measured = Math.ceil(lookup.get(agent.id)?.measured?.height ?? 0)
       const next = Math.max(reserved.current.get(agent.id) ?? 0, estimate, measured)
       reserved.current.set(agent.id, next)

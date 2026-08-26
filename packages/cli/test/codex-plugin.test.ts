@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSyn
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { EMPLOYEES } from "@observer-ai/roster"
 import {
   CODEX_PLUGIN_NAME,
   codexPluginDir,
@@ -158,6 +159,19 @@ describe("installCodexPlugin", () => {
     expect(isCodexPluginInstalled()).toBe(true)
   })
 
+  it("ships an explicit @observer skill with the complete employee roster and delegation policy", () => {
+    installCodexPlugin("1.2.3")
+
+    const skill = readFileSync(join(codexPluginDir(), "skills", "observer", "SKILL.md"), "utf8")
+    expect(skill).toContain("Use only when the user explicitly invokes @observer")
+    expect(skill).toContain('fork_turns: "none"')
+    expect(skill).toContain("state the reason")
+    for (const profile of EMPLOYEES) {
+      expect(skill).toContain(profile.fullName)
+      for (const field of profile.fields) expect(skill).toContain(field)
+    }
+  })
+
   it("references the emitter through PLUGIN_ROOT, not an absolute plugin path", () => {
     installCodexPlugin("1.0.0")
     const hooks = readJson(join(codexPluginDir(), "hooks", "hooks.json"))
@@ -198,6 +212,9 @@ describe("installCodexPlugin", () => {
     expect(Object.keys(hooks)).toContain("SubagentStart")
     expect(Object.keys(hooks)).toContain("PostToolUse")
     expect(Object.keys(hooks).length).toBeGreaterThanOrEqual(10)
+    expect(hooks["PreToolUse"][0].hooks).toHaveLength(2)
+    expect(hooks["PreToolUse"][0].hooks[0].command).toContain("codex-control.js")
+    expect(hooks["PostToolUse"][0].hooks).toHaveLength(1)
   })
 
   it("registers a home-relative path in the personal marketplace", () => {

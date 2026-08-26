@@ -92,7 +92,7 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
         <div className="session-rail">
           {sessions.map((entry) => {
             const Icon = PROVIDER_ICON[entry.host]
-            const title = entry.title ?? entry.goal ?? entry.sessionKey
+            const title = sessionTitle(entry)
             return (
               <button
                 key={entry.id}
@@ -124,7 +124,7 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
                 className={`session-item ${isActive ? "is-active" : ""}`}
                 onClick={() => props.onSelectSession(entry.id)}
               >
-                <div className="session-title">{entry.title ?? entry.goal ?? entry.sessionKey}</div>
+                <div className="session-title">{sessionTitle(entry)}</div>
                 <div className="session-meta">
                   <ProviderTag host={entry.host} />
                   {/* Rows are ordered by creation, which never moves. This says
@@ -219,6 +219,12 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
       )}
     </nav>
   )
+}
+
+/** The harness owns session naming. Observer never substitutes its goal or id. */
+export function sessionTitle(session: SessionEntity): string {
+  const title = session.title?.trim()
+  return title && title.length > 0 ? title : "Title pending from harness"
 }
 
 function initialsOf(name: string): string {

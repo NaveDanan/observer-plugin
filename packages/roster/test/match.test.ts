@@ -100,4 +100,14 @@ describe("guidance", () => {
     expect(briefing).toContain("delegate work to subagents")
     expect(briefing).toContain("subcontractor")
   })
+
+  it("prefers employee agents and requires a reason when none is selected", () => {
+    const briefing = rosterBriefing(EMPLOYEES)
+    expect(briefing).toContain("Prefer an employee agent")
+    expect(briefing).toContain('fork_turns: "none"')
+    expect(briefing).toContain("state the reason")
+    for (const profile of EMPLOYEES) {
+      for (const field of profile.fields) expect(briefing).toContain(field)
+    }
+  })
 })

@@ -6,6 +6,7 @@ import {
   type ModelCatalogue,
   type ObserverConfig,
   type SeatsConfig,
+  fetchCodexSkills,
   loadConfig,
   readOpencodeTarget,
   saveConfig,
@@ -14,6 +15,7 @@ import {
 } from "@observer-ai/daemon"
 import { ROSTER } from "@observer-ai/roster"
 import { loadTargetCatalogue, preloadCopilotCatalogues } from "./config-ui-catalogues.js"
+import { rememberCodexSkills } from "./codex-skill-cache.js"
 import { type Viewport, render, renderReport } from "./config-ui-render.js"
 import {
   type ConfigUIState,
@@ -81,6 +83,15 @@ export interface ConfigCommandOptions {
  */
 export async function runConfig(options: ConfigCommandOptions = {}): Promise<number> {
   const config = loadConfig()
+  const cwd = process.cwd()
+  const skillInventory = fetchCodexSkills({ cwd })
+  try {
+    rememberCodexSkills(cwd, skillInventory)
+  } catch (error) {
+    skillInventory.warnings.push(
+      `Observer could not cache skills for Codex subagent spawns: ${error instanceof Error ? error.message : String(error)}.`,
+    )
+  }
   const roster = rosterRows()
   const configured = Object.values(config.seats.employees)
     .map((seat) => readOpencodeTarget(seatTargets(seat)[LEGACY_TARGET_ID])?.model)
@@ -100,7 +111,9 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
   const profiles = targetProfiles(adapters)
 
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
-    for (const line of renderReport(config.seats, roster, profiles)) process.stdout.write(`${line}\n`)
+    for (const line of renderReport(config.seats, roster, profiles, skillInventory, config.passAllSkills)) {
+      process.stdout.write(`${line}\n`)
+    }
     return 0
   }
 
@@ -118,6 +131,8 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
     models: [],
     profiles,
     catalogues,
+    skillInventory,
+    passAllSkills: config.passAllSkills,
     ...(welcome === undefined ? {} : { welcome }),
   })
 
@@ -213,7 +228,7 @@ function drive(
         }
       }
       if (state.request === "save") {
-        const outcome = save(config, state.seats, sync)
+        const outcome = save(config, state.seats, state.passAllSkills, sync)
         if (outcome.saved) saves++
         state = applied(state, outcome)
       }
@@ -262,13 +277,16 @@ function targetProfiles(adapters: HostSeatAdapter[]): TargetProfile[] {
 function save(
   config: ObserverConfig,
   seats: SeatsConfig,
+  passAllSkills: boolean,
   sync: SyncSeatAgents | undefined,
 ): { saved: boolean; status: string } {
   try {
     const latest = loadConfig()
     latest.seats = seats
+    latest.passAllSkills = passAllSkills
     saveConfig(latest)
     config.seats = seats
+    config.passAllSkills = passAllSkills
   } catch (error) {
     return { saved: false, status: `Could not save: ${error instanceof Error ? error.message : String(error)}` }
   }
@@ -276,7 +294,7 @@ function save(
   // The save has already happened. Anything the apply layer does or fails to
   // do from here is reported, never rolled back: the file on disk is the
   // user's config and a generated agent definition is a cache of it.
-  return { saved: true, status: `Saved. ${applyNote(seats, sync)}` }
+  return { saved: true, status: `Saved. ${applyNote(seats, passAllSkills, sync)}` }
 }
 
 /**
@@ -292,12 +310,12 @@ function save(
  * reports `written: []`, so counting writes would tell a user "0 agent
  * definitions" about a config that is fully in force.
  */
-function applyNote(seats: SeatsConfig, sync: SyncSeatAgents | undefined): string {
+function applyNote(seats: SeatsConfig, passAllSkills: boolean, sync: SyncSeatAgents | undefined): string {
   if (sync === undefined) {
     return "Agent definitions were not regenerated: the apply layer is not present in this build."
   }
   try {
-    const result = sync(seats)
+    const result = sync(seats, { passAllSkills })
     const churn: string[] = []
     if (result.written.length > 0) churn.push(`${result.written.length} written`)
     if (result.removed.length > 0) churn.push(`${result.removed.length} removed`)

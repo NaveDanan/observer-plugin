@@ -16,6 +16,46 @@ afterEach(() => {
 })
 
 describe("Codex catalogue loading", () => {
+  it("allows a cold app-server enough time to return models and reasoning efforts", () => {
+    let receivedTimeout = 0
+    const codex = createCodexAdapter({
+      binaryPath: "codex",
+      env: {},
+      homeDir: () => "/home/tester",
+      spawn: (_binary, _args, options) => {
+        receivedTimeout = options.timeoutMs
+        if (options.timeoutMs < 10_000) return { stdout: "", status: null, timedOut: true }
+        return {
+          stdout: `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: {
+              data: [{
+                id: "gpt-cold-start",
+                supportedReasoningEfforts: ["low", "high"],
+                defaultReasoningEffort: "high",
+              }],
+            },
+          })}\n`,
+          status: 0,
+        }
+      },
+    })
+    const profiles: TargetProfile[] = codex.profiles().map((profile) => ({
+      id: profile.id,
+      host: codex.kind,
+      hostLabel: codex.label,
+      profileLabel: profile.label,
+      capabilities: codex.capabilities(profile.id),
+    }))
+
+    const catalogue = loadTargetCatalogue([codex], profiles, CODEX_DEFAULT_PROFILE)
+
+    expect(receivedTimeout).toBeGreaterThanOrEqual(10_000)
+    expect(catalogue.models.map((model) => model.id)).toEqual(["gpt-cold-start"])
+    expect(catalogue.models[0]?.options[0]?.choices?.map((choice) => choice.id)).toEqual(["low", "high"])
+  })
+
   it("keeps the app-server connection open and gives the TUI models with their reasoning efforts", () => {
     const directory = mkdtempSync(join(tmpdir(), "observer-codex-catalogue-"))
     temporaryDirectories.push(directory)

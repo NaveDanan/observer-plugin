@@ -9,11 +9,15 @@ export interface SeatControlSync {
   notes: string[]
 }
 
+export interface SeatControlSyncOptions {
+  passAllSkills?: boolean
+}
+
 /** Reconciles every host-specific artifact derived from the seat configuration. */
-export function syncSeatControl(seats: SeatsConfig): SeatControlSync {
+export function syncSeatControl(seats: SeatsConfig, options: SeatControlSyncOptions = {}): SeatControlSync {
   const opencode = syncSeatAgents(seats)
   const copilot = syncCopilotSeatAgents(seats)
-  const codex = syncCodexEmployeeAgents(seats)
+  const codex = syncCodexEmployeeAgents(seats, { passAllSkills: options.passAllSkills })
   const claude = syncClaudeEmployeeAgents(seats)
   return {
     written: [...opencode.written, ...copilot.written, ...codex.written, ...claude.written],

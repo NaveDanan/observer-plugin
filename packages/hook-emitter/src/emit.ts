@@ -4,7 +4,7 @@
  *
  * Design rules, in priority order:
  *  1. **Never break the agent.** Always exits 0 and never writes to stdout, so
- *     no host can interpret Observer's output as a hook decision.
+ *     no host can interpret telemetry as a hook decision.
  *  2. **Never block.** Hard timeout on the daemon request; failures spool to
  *     disk and are drained when the daemon next starts.
  *  3. **Zero dependencies.** It runs on whatever Node the user already has and
@@ -221,7 +221,6 @@ async function main(): Promise<void> {
     receivedAt: Date.now(),
   }
   const body = JSON.stringify(request)
-
   const config = readConfig()
   if (!config) {
     spool(body)
@@ -256,6 +255,6 @@ async function main(): Promise<void> {
 main()
   .catch((error) => debug("unexpected failure", error))
   .finally(() => {
-    // Explicit success: a non-zero exit could block or alter a host's tool call.
-    process.exit(0)
+    // Explicit success: a non-zero exit could block a host's tool call.
+    process.exitCode = 0
   })

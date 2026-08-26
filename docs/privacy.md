@@ -9,11 +9,17 @@ sensitive material, so this document states exactly what happens to it.
 | --------------------------- | ------------------------------------------------- |
 | `~/.observer/observer.db`   | Event log and projected entities (SQLite)         |
 | `~/.observer/config.json`   | Port, auth token, capture and redaction settings  |
+| `~/.observer/codex-skills.json` | Project directories and available skill metadata |
 | `~/.observer/spool/*.jsonl` | Deliveries captured while the daemon was down     |
 | `~/.observer/daemon.log`    | Daemon stdout/stderr                              |
 
 The directory is created with mode `0700` and the config file with `0600`.
 Set `OBSERVER_HOME` to relocate all of it.
+
+The Codex skills cache contains names, descriptions, scopes, and local
+`SKILL.md` paths. It never copies the contents of a skill. `observer config`
+refreshes the entry for its current project so the local pre-spawn hook can
+pass that inventory to subagents without a second Codex process.
 
 Nothing is sent anywhere. The daemon has no outbound network calls.
 
@@ -107,7 +113,9 @@ are lost when the daemon stops.
 
 - Never sends data off the machine.
 - Never stores host credentials or API keys of its own.
-- Never modifies a hook decision: the emitter writes nothing to stdout and always
-  exits 0, so it cannot allow, deny or alter a tool call.
+- Never uses telemetry to modify a hook decision: `observer-emit` writes nothing
+  to stdout and always exits 0. The separate Codex spawn controller only copies
+  a supported subagent request with `fork_turns: "none"`; it never denies a tool
+  call and returns no decision for unknown or malformed input.
 - Never writes into your root agent session. Direct subagent messaging adds a user message to the
   addressed child session so that exact subagent context can respond.

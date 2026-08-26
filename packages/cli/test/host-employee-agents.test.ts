@@ -13,13 +13,16 @@ import {
 let home: string
 let originalHome: string | undefined
 let originalCodexHome: string | undefined
+let originalObserverHome: string | undefined
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "observer-host-employees-"))
   originalHome = process.env["HOME"]
   originalCodexHome = process.env["CODEX_HOME"]
+  originalObserverHome = process.env["OBSERVER_HOME"]
   process.env["HOME"] = home
   process.env["CODEX_HOME"] = join(home, "codex")
+  process.env["OBSERVER_HOME"] = join(home, "observer")
 })
 
 afterEach(() => {
@@ -27,6 +30,8 @@ afterEach(() => {
   else process.env["HOME"] = originalHome
   if (originalCodexHome === undefined) delete process.env["CODEX_HOME"]
   else process.env["CODEX_HOME"] = originalCodexHome
+  if (originalObserverHome === undefined) delete process.env["OBSERVER_HOME"]
+  else process.env["OBSERVER_HOME"] = originalObserverHome
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -138,5 +143,21 @@ describe("native employee agents", () => {
       expect(contents).toContain(".agents\\\\skills\\\\release\\\\SKILL.md")
     }
     expect(result.notes.join(" ")).toContain("Default skill pack gives 2 enabled Codex skills to every employee")
+  })
+
+  it("leaves the Default pack out when Pass All Skills is off", () => {
+    const result = syncCodexEmployeeAgents(
+      { control: false, employees: {} },
+      {
+        passAllSkills: false,
+        skillInventory: {
+          skills: [{ name: "review", description: "Review code", path: "/review/SKILL.md", scope: "user" }],
+          warnings: [],
+        },
+      },
+    )
+    const contents = readFileSync(join(process.env["CODEX_HOME"]!, "agents", "observer-arjun-mehta.toml"), "utf8")
+    expect(contents).not.toContain("## Default skills pack")
+    expect(result.notes.join(" ")).toContain("Default skill pack is off")
   })
 })

@@ -106,6 +106,28 @@ describe("reduce", () => {
     expect(store.getSession(SESSION)?.goalStatus).toBe("derived")
   })
 
+  it("derives a missing subagent task title from its first user instruction", () => {
+    const store = new MemoryStore()
+    const childKey = "agent:a1"
+    const childId = agentId(SESSION, childKey)
+    reduce(store, event({ kind: "agent.started", agentType: "subagent", parentAgentKey: MAIN_AGENT_KEY }, { agentKey: childKey }))
+    reduce(store, event({ kind: "message.user", messageKey: "child-1", text: "Trace the payment failure." }, { agentKey: childKey }))
+    reduce(store, event({ kind: "message.user", messageKey: "child-2", text: "Also check retries." }, { agentKey: childKey }))
+
+    expect(store.getAgent(childId)?.description).toBe("Trace the payment failure.")
+  })
+
+  it("updates a harness title without changing the session status", () => {
+    const store = new MemoryStore()
+    reduce(store, event({ kind: "session.status", status: "idle" }))
+    reduce(store, event({ kind: "session.title", title: "Fix inherited sidebar titles" }))
+
+    expect(store.getSession(SESSION)).toMatchObject({
+      title: "Fix inherited sidebar titles",
+      status: "idle",
+    })
+  })
+
   it("prefers a host-reported goal over the derived one", () => {
     const store = new MemoryStore()
     reduce(store, event({ kind: "message.user", messageKey: "m1", text: "Fix the login bug" }))

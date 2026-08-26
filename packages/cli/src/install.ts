@@ -313,7 +313,8 @@ function syncSeatAgentsQuietly(): string[] {
 
 function syncCodexEmployeeAgentsQuietly(): string[] {
   try {
-    return syncCodexEmployeeAgents(loadConfig().seats).notes
+    const config = loadConfig()
+    return syncCodexEmployeeAgents(config.seats, { passAllSkills: config.passAllSkills }).notes
   } catch {
     return []
   }

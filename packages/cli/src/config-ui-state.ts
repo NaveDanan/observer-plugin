@@ -1,6 +1,8 @@
 import {
   LEGACY_TARGET_ID,
   OPENCODE_VARIANT_OPTION,
+  type CodexAvailableSkill,
+  type CodexSkillInventory,
   type CatalogueModel,
   type HostCapabilities,
   type ModelCatalogue,
@@ -46,6 +48,7 @@ export type ConfigView =
   | "targets"
   | "models"
   | "options"
+  | "skills"
   /** Which host/profile the default is being chosen for. Scoped to nobody. */
   | "default-target"
   /** The default-model picker. Same table as `models`, scoped to nobody. */
@@ -54,7 +57,7 @@ export type ConfigView =
   | "apply"
 
 /** One actionable row of the main menu, in display order. */
-export type MenuRowKind = "control" | "employees" | "default-model" | "save" | "exit"
+export type MenuRowKind = "control" | "employees" | "default-model" | "skills" | "save" | "exit"
 
 /**
  * The menu's rows for the current state.
@@ -66,7 +69,7 @@ export type MenuRowKind = "control" | "employees" | "default-model" | "save" | "
  * always re-reads this list rather than trusting the remembered cursor.
  */
 export function menuRows(state: ConfigUIState): MenuRowKind[] {
-  const rows: MenuRowKind[] = ["control", "employees", "default-model"]
+  const rows: MenuRowKind[] = ["control", "employees", "default-model", "skills"]
   if (state.dirty) rows.push("save")
   rows.push("exit")
   return rows
@@ -151,6 +154,11 @@ export interface ConfigUIState {
   profiles: TargetProfile[]
   /** Preloaded for Copilot at launch; other targets load when opened. */
   catalogues: Record<string, ModelCatalogue>
+  /** Enabled skills Codex resolved from this project and the user's global roots. */
+  availableSkills: CodexAvailableSkill[]
+  skillWarnings: string[]
+  /** Whether every Codex spawn receives `availableSkills`. Defaults on. */
+  passAllSkills: boolean
   /** One cursor per view, so backing out and re-entering keeps your place. */
   cursor: Record<ConfigView, number>
   /** The employee the `employee` and `models` views are scoped to. */
@@ -197,6 +205,8 @@ export interface InitialInput {
   models: ModelInfo[]
   profiles?: TargetProfile[]
   catalogues?: Record<string, ModelCatalogue>
+  skillInventory?: CodexSkillInventory
+  passAllSkills?: boolean
   /** Shown once on arrival, e.g. what the model catalogue managed to read. */
   welcome?: string
 }
@@ -209,7 +219,10 @@ export function initialState(input: InitialInput): ConfigUIState {
     models: input.models,
     profiles: input.profiles ?? [],
     catalogues: input.catalogues ?? {},
-    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, "default-target": 0, default: 0, apply: 0 },
+    availableSkills: input.skillInventory?.skills ?? [],
+    skillWarnings: input.skillInventory?.warnings ?? [],
+    passAllSkills: input.passAllSkills !== false,
+    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, skills: 0, "default-target": 0, default: 0, apply: 0 },
     draftTargetOptions: [],
     filter: "",
     confirmQuit: false,
@@ -506,6 +519,8 @@ export function reduce(state: ConfigUIState, key: Key): ConfigUIState {
       return reduceModels(base, key)
     case "options":
       return reduceOptions(base, key)
+    case "skills":
+      return reduceSkills(base, key)
     case "default-target":
       return reduceDefaultTarget(base, key)
     case "default":
@@ -546,6 +561,8 @@ function reduceMenu(state: ConfigUIState, key: Key): ConfigUIState {
         return { ...clamped, view: "employees", cursor: { ...clamped.cursor, employees: 0 } }
       case "default-model":
         return openDefaultPicker(clamped)
+      case "skills":
+        return { ...clamped, view: "skills", cursor: { ...clamped.cursor, skills: 0 } }
       case "save": {
         // The row says "Save & exit", so it does both: the shell performs the
         // save and `applied` turns the pending quit into a request, which is
@@ -556,6 +573,25 @@ function reduceMenu(state: ConfigUIState, key: Key): ConfigUIState {
       }
       case "exit":
         return requestQuit(clamped)
+    }
+  }
+  return state
+}
+
+function reduceSkills(state: ConfigUIState, key: Key): ConfigUIState {
+  if (isEscape(key)) return { ...state, view: "menu" }
+  const length = state.availableSkills.length + 1
+  if (isUp(key)) return moveCursor(state, "skills", -1, length)
+  if (isDown(key)) return moveCursor(state, "skills", 1, length)
+  if ((isEnter(key) || isSpace(key)) && state.cursor.skills === 0) {
+    const passAllSkills = !state.passAllSkills
+    return {
+      ...state,
+      passAllSkills,
+      dirty: true,
+      status: passAllSkills
+        ? "Pass All Skills is on. Every Codex subagent will receive this project's available skills after you save."
+        : "Pass All Skills is off. Codex subagents will keep only skills configured directly on their employee seat.",
     }
   }
   return state

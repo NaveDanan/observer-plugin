@@ -103,6 +103,10 @@ class CodexCollaboration {
     return spawn
   }
 
+  find(sessionKey: string, childAgentKey: string): PendingCollaborationSpawn | undefined {
+    return this.session(sessionKey).spawnByChild.get(childAgentKey)
+  }
+
   message(
     sessionKey: string,
     fromAgentKey: string,
@@ -193,7 +197,8 @@ function normalizedTool(tool: string): string {
 }
 
 function isCollaborationSpawn(tool: string): boolean {
-  return normalizedTool(tool) === "collaborationspawnagent"
+  const normalized = normalizedTool(tool)
+  return normalized === "collaborationspawnagent" || normalized === "spawnagent" || normalized === "agent"
 }
 
 function isCollaborationMessage(tool: string): boolean {
@@ -232,8 +237,15 @@ export const codexAdapter: Adapter = {
     const out: AdapterEvent[] = []
     const push = (body: AdapterEvent["body"], overrides: Partial<AdapterEvent> = {}) =>
       out.push({ sessionKey, agentKey, at, body, ...overrides })
-    const transcriptPath = agentId ? pickString(p, "agent_transcript_path", "transcript_path") : undefined
-    const transcriptMessages = readTranscript(transcriptPath)
+    const spawn = agentId
+      ? request.event === "SubagentStart"
+        ? collaboration.start(sessionKey, agentKey)
+        : collaboration.find(sessionKey, agentKey)
+      : undefined
+    const transcriptPath = agentId
+      ? pickString(p, "agent_transcript_path", "transcript_path")
+      : pickString(p, "transcript_path")
+    const transcriptMessages = readTranscript(transcriptPath, spawn?.prompt)
     const pushTranscript = () => {
       for (const message of transcriptMessages) {
         push(message.body, {
@@ -253,6 +265,7 @@ export const codexAdapter: Adapter = {
           cwd: pickString(p, "cwd"),
         })
         if (model) push({ kind: "agent.model", model, confidence: "authoritative" })
+        pushTranscript()
         break
       }
 
@@ -288,7 +301,6 @@ export const codexAdapter: Adapter = {
       }
 
       case "SubagentStart": {
-        const spawn = collaboration.start(sessionKey, agentKey)
         push(
           {
             kind: "agent.started",
@@ -302,6 +314,7 @@ export const codexAdapter: Adapter = {
           },
           { provenance: "reconciled" },
         )
+        pushTranscript()
         break
       }
 
@@ -381,7 +394,7 @@ export const codexAdapter: Adapter = {
     // hooks fire. Reconcile the append-only file whenever a child hook names
     // it, so the Chat tab can update during the run as well as at its end.
     // Stable source ids make previously seen records cheap duplicates.
-    if (request.event !== "SubagentStop") pushTranscript()
+    if (agentId && request.event !== "SubagentStop" && request.event !== "SubagentStart") pushTranscript()
 
     return out
   },
@@ -393,8 +406,8 @@ interface TranscriptMessage {
   body: Extract<AdapterEvent["body"], { kind: "message.user" | "message.assistant" }>
 }
 
-/** Reads the user-visible messages from one Codex subagent rollout. */
-function readTranscript(path: string | undefined): TranscriptMessage[] {
+/** Reads user-visible rollout messages, optionally starting at a subagent assignment. */
+function readTranscript(path: string | undefined, assignment: string | undefined): TranscriptMessage[] {
   if (!path) return []
 
   let source: string
@@ -408,7 +421,6 @@ function readTranscript(path: string | undefined): TranscriptMessage[] {
 
   const messages: TranscriptMessage[] = []
   for (const line of source.split(/\r?\n/)) {
-    if (messages.length >= MAX_TRANSCRIPT_MESSAGES) break
     if (line.trim().length === 0) continue
 
     let record: Record<string, unknown>
@@ -437,8 +449,14 @@ function readTranscript(path: string | undefined): TranscriptMessage[] {
           ? { kind: "message.user", messageKey, text }
           : { kind: "message.assistant", messageKey, text, final: true },
     })
+    if (messages.length > MAX_TRANSCRIPT_MESSAGES) messages.shift()
   }
-  return messages
+  if (!assignment) return messages
+  const expected = assignment.trim()
+  const boundary = messages.findLastIndex(
+    (message) => message.body.kind === "message.user" && message.body.text.trim() === expected,
+  )
+  return boundary >= 0 ? messages.slice(boundary) : messages
 }
 
 function transcriptText(content: unknown): string {

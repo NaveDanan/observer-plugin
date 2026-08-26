@@ -962,6 +962,9 @@
   width: 300px;
   min-height: 150px;
 }
+.employee-node.has-task {
+  min-height: 190px;
+}
 .employee-head {
   display: flex;
   align-items: flex-start;
@@ -1058,6 +1061,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.node-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  margin: 0;
+  padding: 7px 9px;
+  color: var(--foreground);
+  background: var(--muted);
+  border-left: 3px solid var(--primary);
+}
+.node-task-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.node-task-text {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .node-tone {
   font-size: 12px;

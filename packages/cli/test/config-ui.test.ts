@@ -23,7 +23,6 @@ import {
   LOGO_COLUMNS,
   LOGO_ROWS,
   logo,
-  logoInkIsRowConstant,
   menuRows,
   pickerEntries,
   reduce,
@@ -355,12 +354,12 @@ describe("the main menu", () => {
   })
 
   it("offers Save & exit only when there is something to save", () => {
-    expect(menuRows(start())).toEqual(["control", "employees", "default-model", "exit"])
-    expect(menuRows(press(start(), "c"))).toEqual(["control", "employees", "default-model", "save", "exit"])
+    expect(menuRows(start())).toEqual(["control", "employees", "default-model", "skills", "exit"])
+    expect(menuRows(press(start(), "c"))).toEqual(["control", "employees", "default-model", "skills", "save", "exit"])
   })
 
   it("saves and then leaves from the Save & exit row, because that is what it says", () => {
-    const onSave = press(start(), "c", "down", "down", "down")
+    const onSave = press(start(), "c", "down", "down", "down", "down")
     expect(menuRows(onSave)[onSave.cursor.menu]).toBe("save")
     const saving = press(onSave, "return")
     expect(saving.request).toBe("save")
@@ -378,10 +377,10 @@ describe("the main menu", () => {
   it("acts on the row that is on screen after a save removes one", () => {
     // The cursor is remembered per view, so a save that drops `Save & exit`
     // would otherwise leave it pointing one row past the end.
-    const onSave = press(start(), "c", "down", "down", "down")
+    const onSave = press(start(), "c", "down", "down", "down", "down")
     const saved = { ...applied(press(onSave, "return"), { saved: true, status: "Saved." }), quitAfterSave: false }
     delete saved.request
-    expect(menuRows(saved)).toEqual(["control", "employees", "default-model", "exit"])
+    expect(menuRows(saved)).toEqual(["control", "employees", "default-model", "skills", "exit"])
     expect(press(saved, "return").request).toBe("quit")
   })
 
@@ -685,8 +684,8 @@ describe("host targets", () => {
   it("says everything in the picker in words as well as in colour", () => {
     const picker = press(targets(), "return", "down")
     const viewport = { rows: 40, columns: 120 }
-    expect(strip(render(picker, { ...viewport, theme: buildTheme("truecolor") }).join("\n"))).toBe(
-      render(picker, viewport).join("\n"),
+    expect(semantic(render(picker, { ...viewport, theme: buildTheme("truecolor") }).join("\n"))).toBe(
+      semantic(render(picker, viewport).join("\n")),
     )
   })
 
@@ -1478,6 +1477,35 @@ describe("filtering", () => {
 })
 
 describe("skills", () => {
+  it("lists project and global Codex skills with Pass All Skills selected by default", () => {
+    let state = initialState({
+      seats: { control: false, employees: {} },
+      roster: ROSTER,
+      models: MODELS,
+      skillInventory: {
+        skills: [
+          { name: "project-ui", description: "Review this UI", path: "/repo/.agents/skills/ui/SKILL.md", scope: "repo" },
+          { name: "global-review", description: "Review code", path: "/home/me/.codex/skills/review/SKILL.md", scope: "user" },
+        ],
+        warnings: [],
+      },
+    })
+    state = press(state, "down", "down", "down", "return")
+    const text = render(state, { rows: 40, columns: 120 }).join("\n")
+    expect(state.view).toBe("skills")
+    expect(state.passAllSkills).toBe(true)
+    expect(text).toContain("[x] Pass All Skills")
+    expect(text).toContain("project-ui  [project]")
+    expect(text).toContain("global-review  [global]")
+  })
+
+  it("lets the user turn Pass All Skills off", () => {
+    const state = press(start(), "down", "down", "down", "return", "return")
+    expect(state.passAllSkills).toBe(false)
+    expect(state.dirty).toBe(true)
+    expect(state.status).toContain("Pass All Skills is off")
+  })
+
   it("adds comma-separated skills to the seat", () => {
     let state = press(employees(), "return", "down", "return")
     state = type(state, "react, accessibility")
@@ -1612,21 +1640,22 @@ describe("saving and quitting", () => {
 describe("the banner", () => {
   const viewport = { rows: 30, columns: 100 }
 
-  it("draws the pixel NJ above everything else", () => {
+  it("draws the Observer mark above everything else", () => {
     const lines = render(start(), viewport).slice(0, BANNER_ROWS)
-    // An N whose diagonal descends in half-rows and closes against its right
-    // pillar, then a J whose hook turns back up on the left so it cannot be
-    // read as an L.
     expect(lines.map((line) => line.slice(0, LOGO_COLUMNS))).toEqual([
-      "\u2588\u2588\u2580\u2588\u2584      \u2588\u2588       \u2588\u2588",
-      "\u2588\u2588  \u2580\u2588\u2584    \u2588\u2588       \u2588\u2588",
-      "\u2588\u2588    \u2580\u2588\u2584  \u2588\u2588  \u2584    \u2588\u2588",
-      "\u2588\u2588      \u2580\u2588\u2584\u2588\u2588  \u2580\u2588\u2584\u2584\u2584\u2588\u2588",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2584        \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584      \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584    \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588\u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2584  \u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588  \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588    \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588      \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ",
+      " \u2588\u2588\u2588\u2588\u2588\u2588        \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ",
     ])
   })
 
-  it("stays four rows tall, because every row costs the model list one", () => {
-    expect(BANNER_ROWS).toBe(4)
+  it("stays eight rows tall", () => {
+    expect(BANNER_ROWS).toBe(8)
   })
 
   it("fits beside the longest line of banner text at 80 columns", () => {
@@ -1654,7 +1683,7 @@ describe("the banner", () => {
   it("carries the same words with colour on as with colour off", () => {
     const themed = render(start(), { ...viewport, version: "0.9.6", theme: buildTheme("truecolor") })
     const plain = render(start(), { ...viewport, version: "0.9.6" })
-    expect(themed.slice(0, BANNER_ROWS).map(strip)).toEqual(plain.slice(0, BANNER_ROWS))
+    expect(themed.slice(0, BANNER_ROWS).map(semantic)).toEqual(plain.slice(0, BANNER_ROWS).map(semantic))
   })
 })
 
@@ -1858,7 +1887,7 @@ describe("colour", () => {
     // Colour repeats a distinction, never carries one: strip it and the same
     // text is left.
     const plain = render(state, viewport).join("\n")
-    expect(strip(render(state, themed).join("\n"))).toBe(plain)
+    expect(semantic(render(state, themed).join("\n"))).toBe(semantic(plain))
   })
 
   it("keeps columns aligned once cells are painted", () => {
@@ -1970,4 +1999,9 @@ function collapse(text: string): string {
 /** The text a terminal draws, with the colour taken back off. */
 function strip(text: string): string {
   return text.replace(/\u001B\[[0-9;]*m/g, "")
+}
+
+/** Compare terminal content while treating every occupied half-block cell alike. */
+function semantic(text: string): string {
+  return strip(text).replace(/[\u2580\u2584\u2588]/g, "\u2588")
 }

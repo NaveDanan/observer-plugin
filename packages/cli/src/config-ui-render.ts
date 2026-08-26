@@ -1,5 +1,6 @@
 import {
   LEGACY_TARGET_ID,
+  type CodexSkillInventory,
   type ModelOptionDescriptor,
   type SeatIssue,
   type SeatSpec,
@@ -162,6 +163,9 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
     case "options":
       lines.push(...optionEditor(state, columns, theme))
       break
+    case "skills":
+      lines.push(...skillInventory(state, room, columns, theme))
+      break
   }
 
   lines.push(...footer)
@@ -169,15 +173,12 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
 }
 
 /**
- * The wordmark: `NJ` in pixels, beside the version and the maker.
+ * The Observer mark, beside the version and the maker.
  *
  * The mark itself lives in `logo.ts`, drawn with half-block characters so that
- * eight rows of pixels fit into four rows of terminal. Height is worth arguing
- * over because every row here is a row the model list below does not get on an
- * 80x24 terminal, which is why the detail was bought with a denser glyph
- * rather than with more rows.
+ * sixteen rows of pixels fit into eight rows of terminal.
  *
- * The three text lines sit on rows 0-2 of 4. They carry what the old single
+ * The three text lines sit on rows 0-2. They carry what the old single
  * title line carried, plus the version — a user reporting a bug should not
  * have to leave the screen they are on to find out which build drew it.
  */
@@ -281,6 +282,7 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
     control: "Seat control",
     employees: "Employees",
     "default-model": "Default model",
+    skills: "Skills",
     save: "Save & exit",
     exit: "Exit",
   }
@@ -291,6 +293,7 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
       errors > 0 ? theme.alert(`, ${errors} to fix`) : ""
     }`,
     "default-model": theme.dim(`hand one model to ${unseated === state.roster.length ? "everyone" : `${unseated} unseated`} at once`),
+    skills: `${state.passAllSkills ? theme.good("Pass All Skills on") : theme.warn("Pass All Skills off")} ${theme.dim(`- ${state.availableSkills.length} available`)}`,
     save: theme.warn("write these seats to config.json"),
     exit: theme.dim("leave observer config"),
   }
@@ -312,6 +315,7 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
         ? `Pick a host target and one of its models, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no model there, or move all ${state.roster.length} onto it.`
         : `Pick a model and reasoning effort once, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no seat, or move all ${state.roster.length} onto it.`,
     ],
+    skills: ["List the enabled project and global skills Codex reported, and choose whether every subagent receives them."],
     save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],
     exit: [],
   }
@@ -340,6 +344,46 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
       theme.dim("  2. Open Employees and give someone a model."),
       theme.dim("  3. Press s to save."),
     )
+  }
+  return lines
+}
+
+function skillInventory(
+  state: ConfigUIState,
+  room: number,
+  columns: number,
+  theme: Theme,
+): string[] {
+  const count = state.availableSkills.length
+  const total = count + 1
+  const at = Math.min(state.cursor.skills, total - 1)
+  const window = windowOf(at, total, Math.max(2, room))
+  const lines = [theme.heading("Skills") + theme.dim(`   ${count} available from Codex`), ""]
+
+  for (let index = window.start; index < window.end; index++) {
+    const selected = index === at
+    if (index === 0) {
+      const checked = state.passAllSkills ? "[x]" : "[ ]"
+      lines.push(cursor(selected, theme) + (selected ? theme.focus(`${checked} Pass All Skills`) : `${checked} Pass All Skills`))
+      if (selected) {
+        lines.push(...wrapAt("Pass this merged inventory to every Codex subagent, including employee agents and subcontractors.", columns - 4, "    ").split("\n").map(theme.dim))
+      }
+      continue
+    }
+
+    const skill = state.availableSkills[index - 1]!
+    const origin = skill.scope === "repo" ? "project" : "global"
+    const label = `${skill.name}  [${origin}]`
+    lines.push(cursor(selected, theme) + (selected ? theme.focus(label) : label))
+    if (!selected) continue
+    if (skill.description.trim()) {
+      lines.push(...wrapAt(skill.description.replace(/\s+/g, " ").trim(), columns - 4, "    ").split("\n").map(theme.dim))
+    }
+    lines.push(...wrapAt(skill.path, columns - 4, "    ").split("\n").map(theme.dim))
+  }
+
+  for (const warning of state.skillWarnings) {
+    lines.push(...wrapAt(`warning: ${warning}`, columns - 2, "  ").split("\n").map(theme.warn))
   }
   return lines
 }
@@ -1021,6 +1065,8 @@ function hints(state: ConfigUIState, columns: number, theme: Theme): string[] {
           )
     case "options":
       return bar(["up/down", "move"], ["left/right", "change select"], ["enter", "toggle/change"], ["esc", "back"])
+    case "skills":
+      return bar(["up/down", "move"], ["enter", "toggle Pass All Skills"], ["s", "save"], ["esc", "back"])
     case "default-target":
       return bar(["up/down", "move"], ["enter", "choose models for it"], ["esc", "back"])
     case "default":
@@ -1056,7 +1102,13 @@ function hints(state: ConfigUIState, columns: number, theme: Theme): string[] {
  * cannot take your keystrokes. No theme reaches this function — a pipe gets
  * text, whatever the terminal it was launched from could have drawn.
  */
-export function renderReport(seats: SeatsConfig, roster: EmployeeRow[], profiles: TargetProfile[] = []): string[] {
+export function renderReport(
+  seats: SeatsConfig,
+  roster: EmployeeRow[],
+  profiles: TargetProfile[] = [],
+  skillInventory: CodexSkillInventory = { skills: [], warnings: [] },
+  passAllSkills = true,
+): string[] {
   const diagnosis = diagnoseSeats(seats)
   const issues = seatIssues(seats)
   const lines = [
@@ -1101,6 +1153,12 @@ export function renderReport(seats: SeatsConfig, roster: EmployeeRow[], profiles
       lines.push(`  ${issue.severity}: ${scope.length > 0 ? `${scope}: ` : ""}${issue.message}`)
     }
   }
+  lines.push("", `Pass All Skills: ${passAllSkills ? "on" : "off"}`)
+  if (skillInventory.skills.length === 0) lines.push("  No available Codex skills were found for this project.")
+  for (const skill of skillInventory.skills) {
+    lines.push(`  ${skill.name} [${skill.scope === "repo" ? "project" : "global"}]  ${skill.path}`)
+  }
+  for (const warning of skillInventory.warnings) lines.push(`  warning: ${warning}`)
   lines.push("", "Run `observer config` in a terminal to change any of this.")
   return lines
 }

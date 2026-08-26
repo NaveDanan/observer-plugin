@@ -54,6 +54,17 @@ describe("config round-trip", () => {
     expect(loadConfig().guidance).toBe(true)
   })
 
+  it("passes every available skill by default and preserves an explicit opt-out", () => {
+    writeRaw({ port: 4599, token: "tok" })
+    expect(loadConfig().passAllSkills).toBe(true)
+
+    writeRaw({ port: 4599, token: "tok", passAllSkills: false })
+    const config = loadConfig()
+    expect(config.passAllSkills).toBe(false)
+    saveConfig(config)
+    expect(readRaw()["passAllSkills"]).toBe(false)
+  })
+
   it("lets a declared field win over a stale copy of the same key", () => {
     // `guidance` was undeclared until now. A promoted key must be read from the
     // schema, not resurrected from the preserved-unknowns bag.

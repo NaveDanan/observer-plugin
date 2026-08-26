@@ -99,12 +99,12 @@ const DEFAULT_BINARY = "codex"
 /**
  * Whole-probe budget, spent across every page.
  *
- * Four seconds because this sits behind a TUI keystroke, not a build step: a
- * user who has no Codex installed must not watch the picker hang. Codex on a
- * warm cache answers in well under a second; anything past this is a host that
- * is not going to answer at all.
+ * Ten seconds gives a cold Codex app-server enough time to initialise before
+ * it lists models. Four seconds proved too close to the real startup time on
+ * Windows: the same install could answer on a warm run and time out on a cold
+ * one, leaving the TUI with an empty picker.
  */
-const DEFAULT_TIMEOUT_MS = 4_000
+const DEFAULT_TIMEOUT_MS = 10_000
 
 /**
  * Floor on the per-page timeout, so the last page of a nearly-spent budget

@@ -4,6 +4,7 @@ import type { InstallResult } from "./install.js"
 import { HOST_EVENTS } from "./install.js"
 import { loadConfig } from "@observer-ai/daemon"
 import { removeCodexEmployeeAgents, syncCodexEmployeeAgents } from "./host-employee-agents.js"
+import { EMPLOYEES, rosterBriefing } from "@observer-ai/roster"
 import { codexHome, codexWindowsCommand, emitterPath, homeDir, nodePath, shellQuote } from "./paths.js"
 
 /**
@@ -87,35 +88,72 @@ export function installCodexPlugin(version: string): InstallResult {
   mkdirSync(join(pluginDir, "hooks"), { recursive: true })
   const hooks: Record<string, unknown> = {}
   for (const event of HOST_EVENTS.codex) {
+    const handlers: Record<string, unknown>[] = []
+    if (event === "PreToolUse") {
+      handlers.push({
+        type: "command",
+        command: `${shellQuote(nodePath())} "$PLUGIN_ROOT/scripts/codex-control.js"`,
+        commandWindows: codexWindowsCommand(nodePath(), "scripts\\codex-control.js", "codex", event, "PLUGIN_ROOT"),
+        timeout: 5,
+        statusMessage: "Observer context isolation",
+      })
+    }
+    handlers.push({
+      type: "command",
+      // PLUGIN_ROOT resolves to the installed cache copy of this plugin,
+      // so the emitter shipped alongside is always the one that runs.
+      command: `${shellQuote(nodePath())} "$PLUGIN_ROOT/scripts/emit.js" --host codex --event ${event}`,
+      // Resolve PLUGIN_ROOT inside the encoded payload so both cmd and
+      // PowerShell runner shapes preserve a spaced cache path.
+      commandWindows: codexWindowsCommand(nodePath(), "scripts\\emit.js", "codex", event, "PLUGIN_ROOT"),
+      timeout: event === "SessionEnd" ? 3 : 5,
+      statusMessage: "Observer",
+    })
     hooks[event] = [
       {
-        hooks: [
-          {
-            type: "command",
-            // PLUGIN_ROOT resolves to the installed cache copy of this plugin,
-            // so the emitter shipped alongside is always the one that runs.
-            command: `${shellQuote(nodePath())} "$PLUGIN_ROOT/scripts/emit.js" --host codex --event ${event}`,
-            // Resolve PLUGIN_ROOT inside the encoded payload so both cmd and
-            // PowerShell runner shapes preserve a spaced cache path.
-            commandWindows: codexWindowsCommand(nodePath(), "scripts\\emit.js", "codex", event, "PLUGIN_ROOT"),
-            timeout: event === "SessionEnd" ? 3 : 5,
-            statusMessage: "Observer",
-          },
-        ],
+        hooks: handlers,
       },
     ]
   }
   writeJson(join(pluginDir, "hooks", "hooks.json"), { description: "Observer agent telemetry", hooks })
 
-  // 3. The emitter itself, so the plugin is self-contained once cached.
+  // 3. Explicit @observer guidance. The narrow description keeps this skill
+  // scoped to turns where the user asks Observer to coordinate delegation.
+  const skillDir = join(pluginDir, "skills", "observer")
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: observer",
+      "description: Use only when the user explicitly invokes @observer or asks the Observer plugin to coordinate delegated work with employee agents.",
+      "---",
+      "",
+      "# Observer delegation",
+      "",
+      rosterBriefing(EMPLOYEES),
+      "",
+      "Complete the root task after collecting the selected subagents' results. If any delegation used a default Codex agent, name that delegation and state why no employee fit it.",
+      "",
+    ].join("\n"),
+  )
+
+  // 4. The emitter itself, so the plugin is self-contained once cached.
   mkdirSync(join(pluginDir, "scripts"), { recursive: true })
   const emitter = emitterPath()
   if (!existsSync(emitter)) {
     return { host: "codex", action: "missing", path: emitter, notes: ["Hook emitter not found; reinstall Observer."] }
   }
   copyFileSync(emitter, join(pluginDir, "scripts", "emit.js"))
+  for (const file of ["codex-control.js", "codex-control-core.js"]) {
+    const source = join(dirname(emitter), file)
+    if (!existsSync(source)) {
+      return { host: "codex", action: "missing", path: source, notes: ["Codex hook control not found; rebuild Observer."] }
+    }
+    copyFileSync(source, join(pluginDir, "scripts", file))
+  }
 
-  // 4. Register in the personal marketplace, preserving anything already there.
+  // 5. Register in the personal marketplace, preserving anything already there.
   const marketplace = readJson(marketplacePath) ?? {
     name: MARKETPLACE_NAME,
     interface: { displayName: "Observer (local)" },
@@ -137,7 +175,8 @@ export function installCodexPlugin(version: string): InstallResult {
   const marketplaceName = typeof marketplace["name"] === "string" ? marketplace["name"] : MARKETPLACE_NAME
   let employeeNotes: string[] = []
   try {
-    employeeNotes = syncCodexEmployeeAgents(loadConfig().seats).notes
+    const config = loadConfig()
+    employeeNotes = syncCodexEmployeeAgents(config.seats, { passAllSkills: config.passAllSkills }).notes
   } catch (error) {
     employeeNotes = [`Codex employee agents were not generated: ${error instanceof Error ? error.message : String(error)}`]
   }

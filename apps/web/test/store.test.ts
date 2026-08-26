@@ -13,7 +13,7 @@ import {
   stripHostTitleSuffix,
 } from "../src/store"
 import { NODE_HEIGHT, SEATED_NODE_HEIGHT, computeDepths, layoutGraph } from "../src/layout"
-import { displayStatusLabel, isDoneNode } from "../src/AgentNode"
+import { displayStatusLabel, isDoneNode, taskTitleOf } from "../src/AgentNode"
 
 function session(host: SessionEntity["host"], key: string, updatedAt: number): SessionEntity {
   return {
@@ -448,6 +448,27 @@ describe("done node treatment", () => {
   it("leaves failure states unsetted — they warn, not settle", () => {
     expect(isDoneNode("failed", false)).toBe(false)
     expect(isDoneNode("interrupted", false)).toBe(false)
+  })
+})
+
+describe("subagent task title", () => {
+  it("uses the assigned short description across hosts", () => {
+    expect(
+      taskTitleOf(
+        agent({ description: "Review authentication", delegationPrompt: "A much longer implementation brief." }),
+        false,
+      ),
+    ).toBe("Review authentication")
+  })
+
+  it("falls back to the first meaningful line of the delegation prompt", () => {
+    expect(taskTitleOf(agent({ delegationPrompt: "\nTrace the payment failure.\nReturn evidence." }), false)).toBe(
+      "Trace the payment failure.",
+    )
+  })
+
+  it("does not invent a task title for the root agent", () => {
+    expect(taskTitleOf(agent({ description: "Session title" }), true)).toBeUndefined()
   })
 })
 

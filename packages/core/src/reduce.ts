@@ -66,6 +66,11 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
       break
     }
 
+    case "session.title": {
+      putSession(store, changes, { ...current(store, session), title: body.title })
+      break
+    }
+
     case "session.ended": {
       putSession(store, changes, { ...current(store, session), status: "ended", endedAt: event.at })
       // Agents that never reported a stop become "idle", not "completed": the
@@ -170,6 +175,15 @@ export function reduce(store: EntityStore, event: StoredEvent): Change[] {
           goal: deriveGoal(body.text),
           goalStatus: now.goalStatus ?? "derived",
         })
+      }
+      if (agent.agentKey !== MAIN_AGENT_KEY && body.text.trim().length > 0) {
+        const current = currentAgent(store, agent)
+        if (!current.description && !current.delegationPrompt) {
+          putAgent(store, changes, {
+            ...current,
+            description: deriveGoal(body.text),
+          })
+        }
       }
       break
     }

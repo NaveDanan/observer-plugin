@@ -31,6 +31,8 @@ export const NODE_WIDTH = 300
  */
 export const NODE_HEIGHT = 150
 export const SEATED_NODE_HEIGHT = 220
+export const TASK_NODE_HEIGHT = 190
+export const SEATED_TASK_NODE_HEIGHT = 260
 
 /** Horizontal gap between two leaf siblings. */
 export const NODE_GAP = 48

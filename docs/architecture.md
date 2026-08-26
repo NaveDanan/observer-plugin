@@ -43,6 +43,13 @@ hooks into four different hosts.
 - always exits 0, so it can never block or fail a tool call;
 - gives up after 1.5 s and spools to disk instead of waiting.
 
+Codex context isolation uses a separate synchronous executable. On
+`PreToolUse`, `observer-codex-control` recognizes only native subagent spawn
+tools, preserves their input fields, and sets `fork_turns` to `"none"`. Unknown
+tools, malformed input, and later hook events receive no response. This keeps
+the root transcript and plugin-discovery metadata out of a new child without
+turning the telemetry path into a controller.
+
 ## Making silence visible
 
 Those same rules mean every failure is swallowed. A malformed payload, an
@@ -107,6 +114,13 @@ emits no `message.user` at all. The log is the better source anyway:
 - it carries `attachments`, which hooks do not expose at all;
 - its `subagent.started` lines map a log `agentId` to an agent name, so subagent
   transcripts land on the right node instead of being dropped.
+
+Session titles follow the same rule. Observer displays the name held by the
+harness and never substitutes its derived goal or a raw session id. OpenCode
+reports the title in session events. Codex stores it in `session_index.jsonl`,
+Copilot in the session's `workspace.yaml`, and Claude in its transcript and
+session index metadata. A background reader copies those names into Observer
+and picks up later renames without writing anything back to the harness.
 
 Attachments are recorded, never copied. Observer stores the path and mints an id
 from it, and `/v1/attachments/:id` serves the bytes off disk. The browser can
@@ -313,6 +327,13 @@ user needs sits behind a key they have to be told about; `c` still toggles from
 anywhere, but it is now a shortcut rather than the only way in. Views unwind one
 level per esc — `models` -> `employee` -> `employees` -> `menu` — and only the
 menu ends the session, so backing out of a picker can never quit by accident.
+
+The Skills row opens Codex's merged inventory for the current project. Project
+and global skills remain distinguishable. **Pass All Skills** defaults on and
+is stored as `passAllSkills` in `config.json`. The screen caches the inventory
+by project directory, which lets the synchronous Codex pre-spawn hook add the
+same progressive-disclosure metadata to employee and subcontractor prompts
+without starting another Codex process inside a hook.
 
 The split is three files and holds strictly:
 

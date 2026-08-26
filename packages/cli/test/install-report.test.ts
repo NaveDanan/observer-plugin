@@ -9,6 +9,7 @@ import { LOGO_ROWS, buildTheme, renderInstallReport, type HostSection } from "..
 
 const SGR = /\u001B\[[0-9;]*m/g
 const strip = (text: string): string => text.replace(SGR, "")
+const semantic = (text: string): string => strip(text).replace(/[\u2580\u2584\u2588]/g, "\u2588")
 
 const OPENCODE: HostSection = {
   label: "OpenCode",
@@ -115,6 +116,6 @@ describe("the install report", () => {
     const coloured = renderInstallReport(report([COPILOT]), { version: "0.9.12", theme: buildTheme("truecolor") })
     for (const line of plain) expect(line).not.toContain("\u001B[38;")
     expect(coloured.some((line) => line.includes("\u001B[38;"))).toBe(true)
-    expect(coloured.map(strip)).toEqual(plain)
+    expect(coloured.map(semantic)).toEqual(plain.map(semantic))
   })
 })

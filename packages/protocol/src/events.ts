@@ -102,6 +102,10 @@ export const EventBody = z.discriminatedUnion("kind", [
     agentType: z.string().optional(),
   }),
   z.object({
+    kind: z.literal("session.title"),
+    title: z.string().min(1),
+  }),
+  z.object({
     kind: z.literal("session.ended"),
     reason: z.string().optional(),
   }),
