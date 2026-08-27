@@ -37,7 +37,7 @@ const releaseDir = join(root, "release")
 const stageDir = join(releaseDir, "package")
 
 const rootManifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
-const version = process.env.OBSERVER_VERSION ?? rootManifest.version ?? "0.1.0"
+const version = process.env.OBSERVER_VERSION ?? rootManifest.version ?? "0.9.15"
 
 /** Kept external so they install from npm rather than being inlined. */
 const EXTERNAL = ["fastify", "@fastify/websocket"]
@@ -107,6 +107,10 @@ async function main() {
   await bundle(join(root, "apps/daemon/src/main.ts"), join(stageDir, "dist/daemon.js"))
   await bundle(join(root, "packages/hook-emitter/src/emit.ts"), join(stageDir, "dist/emit.js"))
   await bundle(
+    join(root, "packages/hook-emitter/src/codex-control.ts"),
+    join(stageDir, "dist/codex-control.js"),
+  )
+  await bundle(
     join(root, "packages/hook-emitter/src/copilot-control.ts"),
     join(stageDir, "dist/copilot-control.js"),
   )
@@ -150,6 +154,7 @@ async function main() {
       observer: "dist/cli.js",
       "observer-daemon": "dist/daemon.js",
       "observer-emit": "dist/emit.js",
+      "observer-codex-control": "dist/codex-control.js",
       "observer-copilot-control": "dist/copilot-control.js",
     },
     files: ["dist", "web", "integrations", "docs", "README.md", "LICENSE"],

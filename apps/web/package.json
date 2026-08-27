@@ -1,6 +1,6 @@
 {
   "name": "@observer-ai/web",
-  "version": "0.1.0",
+  "version": "0.9.15",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@google/model-viewer": "^4.3.1",
     "@observer-ai/protocol": "workspace:*",
     "@observer-ai/roster": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",

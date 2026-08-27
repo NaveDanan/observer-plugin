@@ -69,6 +69,8 @@ async function harness(
     subagentDepth?: number
     /** Agent names the host reports. Defaults to a stock OpenCode. */
     agents?: string[]
+    /** Per-agent permission rules returned by OpenCode's live agent registry. */
+    agentPermissions?: Record<string, Array<Record<string, string>>>
     /** Make the agent listing fail, standing in for an unreachable host. */
     agentsUnavailable?: boolean
     /** Reject coordination assignment writes as another plugin process would. */
@@ -178,7 +180,7 @@ async function harness(
             name,
             mode: "subagent",
             permission:
-              name === "explore"
+              options.agentPermissions?.[name] ?? (name === "explore"
                 ? [{ permission: "*", pattern: "*", action: "deny" }]
                 : [
                     { permission: "*", pattern: "*", action: "allow" },
@@ -187,7 +189,7 @@ async function harness(
                     { permission: "agent_send", pattern: "*", action: "allow" },
                     { permission: "agent_inbox", pattern: "*", action: "allow" },
                     { permission: "agent_ack", pattern: "*", action: "allow" },
-                  ],
+                  ]),
           })),
         }
       },
@@ -687,11 +689,12 @@ describe("observer opencode plugin: the finished task call states the subagent f
 })
 
 describe("observer opencode plugin: nesting", () => {
-  it("does not rewrite OpenCode's agent permissions or depth", async () => {
+  it("enables delegation for primary agents and one nested level", async () => {
     const h = await harness()
     const config: Record<string, any> = {}
     await h.hooks.config(config)
     expect(config.agent.general.permission.task).toBe("allow")
+    expect(config.agent.build.permission.task).toBe("allow")
     expect(config.agent.explore).toBeUndefined()
     expect(config.subagent_depth).toBe(2)
   })
@@ -1136,6 +1139,37 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.createdSessions).toHaveLength(0)
   })
 
+  it("lets agent_spawn create a child when native task is denied but agent_spawn is allowed", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      agentPermissions: {
+        general: [
+          { permission: "task", pattern: "*", action: "deny" },
+          { permission: "agent_spawn", pattern: "*", action: "allow" },
+        ],
+      },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "sofia-moreno",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Design critic", prompt: "Audit the visual hierarchy", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+
+    expect(JSON.parse(result)).toMatchObject({ id: "spawned-1", task_id: "spawned-1" })
+    expect(h.createdSessions[0]).toMatchObject({ parentID: "parent", agent: "general" })
+  })
+
   it("blocks a native task call from creating a third subagent level", async () => {
     const h = await harness({
       sessions: {
@@ -1532,6 +1566,8 @@ describe("observer opencode plugin: manual activation", () => {
     await h.flush()
 
     expect(output.system.join("\n")).toContain(ROSTER_HEADING)
+    expect(output.system.join("\n")).toContain("observer-malik-johnson")
+    expect(output.system.join("\n")).toContain("Staff Backend Engineer")
     expect(output.system.join("\n")).not.toContain(ACTIVATION_SENTENCE)
   })
 })

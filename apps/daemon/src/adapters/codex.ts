@@ -540,7 +540,7 @@ function requestPage(args: {
       jsonrpc: "2.0",
       id: INITIALIZE_ID,
       method: "initialize",
-      params: { clientInfo: { name: "observer", title: "Observer", version: "0.5.0" } },
+      params: { clientInfo: { name: "observer", title: "Observer", version: "0.9.15" } },
     }),
     JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }),
     JSON.stringify({ jsonrpc: "2.0", id: MODEL_LIST_ID, method: "model/list", params }),

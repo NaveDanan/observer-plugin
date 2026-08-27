@@ -18,11 +18,12 @@ installs but cannot start. The release script therefore flattens everything:
 
 1. **Bundles the three entry points** with esbuild into standalone ESM files:
 
-   | Bundle           | Binary            | Purpose                        |
-   | ---------------- | ----------------- | ------------------------------ |
-   | `dist/cli.js`    | `observer`        | install, start, doctor         |
-   | `dist/daemon.js` | `observer-daemon` | HTTP + WebSocket service       |
-   | `dist/emit.js`   | `observer-emit`   | the process host hooks execute |
+   | Bundle                     | Binary                     | Purpose                        |
+   | -------------------------- | -------------------------- | ------------------------------ |
+   | `dist/cli.js`              | `observer`                 | install, start, doctor         |
+   | `dist/daemon.js`           | `observer-daemon`          | HTTP + WebSocket service       |
+   | `dist/emit.js`             | `observer-emit`            | the process host hooks execute |
+   | `dist/codex-control.js`    | `observer-codex-control`   | isolates Codex child context   |
 
    All first-party packages are inlined. Fastify stays external and is declared
    as a real dependency, because bundling a framework with dynamic requires is
@@ -84,7 +85,7 @@ echo '{"session_id":"t1","source":"startup","model":"claude-opus-5"}' \
 The version comes from the root `package.json`, or `OBSERVER_VERSION` if set:
 
 ```bash
-OBSERVER_VERSION=0.2.0 pnpm release
+OBSERVER_VERSION=0.9.15 pnpm release
 ```
 
 It is injected into the CLI bundle at build time and reported by
@@ -99,7 +100,7 @@ The tarball is self-contained; copy it to the target machine by any means and
 Two install traps, both hit in practice:
 
 - **Always pass the tarball with an explicit path.** Without the leading
-  `./`, npm parses `release/observer-ai-0.2.0.tgz` as a GitHub `user/repo`
+  `./`, npm parses `release/observer-ai-0.9.15.tgz` as a GitHub `user/repo`
   shorthand and fails trying to contact git.
 - **Never install the staging directory** (`npm i -g ./release/package`).
   Folder installs are symlinked, so `observer` runs from a tree that has no

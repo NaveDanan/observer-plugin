@@ -54,7 +54,7 @@ export function fetchCodexSkills(options: CodexSkillDiscoveryOptions = {}): Code
       jsonrpc: "2.0",
       id: INITIALIZE_ID,
       method: "initialize",
-      params: { clientInfo: { name: "observer", title: "Observer", version: "0.9.14" } },
+      params: { clientInfo: { name: "observer", title: "Observer", version: "0.9.15" } },
     }),
     JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }),
     JSON.stringify({

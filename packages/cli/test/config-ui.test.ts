@@ -1667,8 +1667,8 @@ describe("the banner", () => {
   })
 
   it("names the build beside the mark, so nobody has to quit to find the version", () => {
-    const lines = render(start(), { ...viewport, version: "0.9.6" }).slice(0, BANNER_ROWS)
-    expect(lines[0]).toContain("Observer multi-harness v0.9.6")
+    const lines = render(start(), { ...viewport, version: "0.9.15" }).slice(0, BANNER_ROWS)
+    expect(lines[0]).toContain("Observer multi-harness v0.9.15")
     expect(lines[1]).toContain("By NJ-Labs")
     expect(lines[2]).toContain("host targets, model options and skills per employee")
   })
@@ -1681,8 +1681,8 @@ describe("the banner", () => {
   })
 
   it("carries the same words with colour on as with colour off", () => {
-    const themed = render(start(), { ...viewport, version: "0.9.6", theme: buildTheme("truecolor") })
-    const plain = render(start(), { ...viewport, version: "0.9.6" })
+    const themed = render(start(), { ...viewport, version: "0.9.15", theme: buildTheme("truecolor") })
+    const plain = render(start(), { ...viewport, version: "0.9.15" })
     expect(themed.slice(0, BANNER_ROWS).map(semantic)).toEqual(plain.slice(0, BANNER_ROWS).map(semantic))
   })
 })

@@ -4,6 +4,7 @@ import { Canvas } from "./Canvas"
 import { EmployeeCardModal } from "./EmployeeCardModal"
 import { SessionSidebar, useSidebarCollapsed } from "./SessionSidebar"
 import { SettingsPage, isSettingsTab, type SettingsTab } from "./settings/SettingsPage"
+import { LandingPage } from "./LandingPage"
 import type { DeliveryDiagnostics } from "./api"
 import {
   closeEmployeeCard,
@@ -48,6 +49,7 @@ export function App(): JSX.Element {
   const now = Date.now()
   const settingsTab = useSettingsRoute()
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
+  const landingRequested = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("landing") === "1"
 
   useEffect(() => {
     void initialise()
@@ -89,15 +91,21 @@ export function App(): JSX.Element {
   }
 
   if (state.error && !state.ready) {
-    return (
-      <div className="fatal">
-        <h1>Observer cannot reach its daemon</h1>
-        <p className="mono">{state.error}</p>
-        <p>
-          Start it with <code>observer start</code>, then reload this page.
-        </p>
-      </div>
-    )
+    if (state.scopeSession) {
+      return (
+        <div className="fatal">
+          <h1>Observer cannot reach its daemon</h1>
+          <p className="mono">{state.error}</p>
+          <p>
+            Start it with <code>observer start</code>, then reload this page.
+          </p>
+        </div>
+      )
+    }
+  }
+
+  if ((landingRequested || !session) && !settingsTab) {
+    return <LandingPage connection={state.connection} error={state.error} onOpenSettings={() => openSettings("general")} />
   }
 
   return (

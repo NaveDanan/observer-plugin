@@ -41,8 +41,8 @@ const report = (sections: HostSection[], command: "install" | "uninstall" = "ins
 
 describe("the install report", () => {
   it("opens with the wordmark, the version and what the run is doing", () => {
-    const lines = renderInstallReport(report([OPENCODE]), { version: "0.9.12" })
-    expect(lines[0]).toContain("Observer v0.9.12")
+    const lines = renderInstallReport(report([OPENCODE]), { version: "0.9.15" })
+    expect(lines[0]).toContain("Observer v0.9.15")
     expect(lines[1]).toContain("By NJ-Labs")
     expect(lines[2]).toContain("installing into 1 host")
     // The mark occupies the banner, whatever the text beside it says.
@@ -112,8 +112,8 @@ describe("the install report", () => {
   })
 
   it("emits no ANSI without a theme, and the same text with one", () => {
-    const plain = renderInstallReport(report([COPILOT]), { version: "0.9.12" })
-    const coloured = renderInstallReport(report([COPILOT]), { version: "0.9.12", theme: buildTheme("truecolor") })
+    const plain = renderInstallReport(report([COPILOT]), { version: "0.9.15" })
+    const coloured = renderInstallReport(report([COPILOT]), { version: "0.9.15", theme: buildTheme("truecolor") })
     for (const line of plain) expect(line).not.toContain("\u001B[38;")
     expect(coloured.some((line) => line.includes("\u001B[38;"))).toBe(true)
     expect(coloured.map(semantic)).toEqual(plain.map(semantic))

@@ -1,0 +1,669 @@
+{
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v5.1.20",
+    "version": "2.0"
+  },
+  "extensionsUsed": [
+    "KHR_materials_transmission"
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "pocket_watch_button",
+      "translation": [
+        0,
+        0,
+        0.000006988981112954207
+      ]
+    },
+    {
+      "mesh": 1,
+      "name": "pocket_watch_frame"
+    },
+    {
+      "mesh": 2,
+      "name": "pocket_watch_hand_hours",
+      "translation": [
+        0,
+        0,
+        0.004288128577172756
+      ]
+    },
+    {
+      "mesh": 3,
+      "name": "pocket_watch_ring",
+      "translation": [
+        0,
+        0.036230266094207764,
+        0
+      ]
+    },
+    {
+      "mesh": 4,
+      "name": "pocket_watch_hand_secondes",
+      "translation": [
+        0,
+        0,
+        0.004774095490574837
+      ]
+    },
+    {
+      "mesh": 5,
+      "name": "pocket_watch_hand_minutes",
+      "translation": [
+        0,
+        0,
+        0.001071567414328456
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "pocket_watch",
+      "normalTexture": {
+        "index": 0
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "extensions": {
+        "KHR_materials_transmission": {
+          "transmissionFactor": 1
+        }
+      },
+      "name": "pocket_watch_glass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          0.30000001192092896
+        ],
+        "metallicRoughnessTexture": {
+          "index": 3
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "BézierCircle.006",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "BézierCircle.005",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 4,
+            "NORMAL": 5,
+            "TEXCOORD_0": 6
+          },
+          "indices": 7,
+          "material": 0
+        },
+        {
+          "attributes": {
+            "POSITION": 8,
+            "NORMAL": 9,
+            "TEXCOORD_0": 10
+          },
+          "indices": 11,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "name": "mesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 12,
+            "NORMAL": 13,
+            "TEXCOORD_0": 14
+          },
+          "indices": 15,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "BézierCircle",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 16,
+            "NORMAL": 17,
+            "TEXCOORD_0": 18
+          },
+          "indices": 19,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Plane.023",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 20,
+            "NORMAL": 21,
+            "TEXCOORD_0": 22
+          },
+          "indices": 23,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "BézierCurve.001",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 24,
+            "NORMAL": 25,
+            "TEXCOORD_0": 26
+          },
+          "indices": 27,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    },
+    {
+      "sampler": 0,
+      "source": 3
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "name": "pocket_watch_nor_gl",
+      "uri": "textures/pocket_watch_nor_gl_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "pocket_watch_diff",
+      "uri": "textures/pocket_watch_diff_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "pocket_watch_metal-pocket_watch_rough",
+      "uri": "textures/pocket_watch_arm_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "pocket_watch_glass_rough",
+      "uri": "textures/pocket_watch_glass_rough_1k.jpg"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 629,
+      "max": [
+        0.01677154004573822,
+        0.026532847434282303,
+        0.0011820796644315124
+      ],
+      "min": [
+        0.012320472858846188,
+        0.02360081672668457,
+        -0.0011820837389677763
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 629,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 629,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 2694,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 6730,
+      "max": [
+        0.028839081525802612,
+        0.04019676148891449,
+        0.005569641012698412
+      ],
+      "min": [
+        -0.028839079663157463,
+        -0.02897503413259983,
+        -0.00777216674759984
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 6730,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 6730,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5123,
+      "count": 31563,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 1201,
+      "max": [
+        0.025791918858885765,
+        0.025791918858885765,
+        0.007802366279065609
+      ],
+      "min": [
+        -0.025791918858885765,
+        -0.025791918858885765,
+        0.00456822756677866
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 1201,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 1201,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 6912,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 561,
+      "max": [
+        0.009086315520107746,
+        0.000691454391926527,
+        0.00012625208182726055
+      ],
+      "min": [
+        -0.0007103999378159642,
+        -0.014054195024073124,
+        1.9263581840789357e-9
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 561,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5126,
+      "count": 561,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 15,
+      "componentType": 5123,
+      "count": 1545,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 16,
+      "componentType": 5126,
+      "count": 468,
+      "max": [
+        0.00880507007241249,
+        0.010389525443315506,
+        0.0010621518595144153
+      ],
+      "min": [
+        -0.008799223229289055,
+        -0.0009820937411859632,
+        -0.007824322208762169
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 17,
+      "componentType": 5126,
+      "count": 468,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 18,
+      "componentType": 5126,
+      "count": 468,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 19,
+      "componentType": 5123,
+      "count": 2508,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 20,
+      "componentType": 5126,
+      "count": 238,
+      "max": [
+        0.012320282869040966,
+        0.021203406155109406,
+        1.8982950766854856e-9
+      ],
+      "min": [
+        -0.0044188848696649075,
+        -0.006676734425127506,
+        -0.00012638483894988894
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 21,
+      "componentType": 5126,
+      "count": 238,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 22,
+      "componentType": 5126,
+      "count": 238,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 23,
+      "componentType": 5123,
+      "count": 678,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 24,
+      "componentType": 5126,
+      "count": 344,
+      "max": [
+        0.0006728195585310459,
+        0.014092476107180119,
+        0.0035212829243391752
+      ],
+      "min": [
+        -0.019788416102528572,
+        -0.000685624370817095,
+        0.0033950265496969223
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 25,
+      "componentType": 5126,
+      "count": 344,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 26,
+      "componentType": 5126,
+      "count": 344,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 27,
+      "componentType": 5123,
+      "count": 945,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 7548,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 7548,
+      "byteOffset": 7548,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5032,
+      "byteOffset": 15096,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5388,
+      "byteOffset": 20128,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 80760,
+      "byteOffset": 25516,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 80760,
+      "byteOffset": 106276,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 53840,
+      "byteOffset": 187036,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 63126,
+      "byteOffset": 240876,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 14412,
+      "byteOffset": 304004,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 14412,
+      "byteOffset": 318416,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 9608,
+      "byteOffset": 332828,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 13824,
+      "byteOffset": 342436,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6732,
+      "byteOffset": 356260,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6732,
+      "byteOffset": 362992,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 4488,
+      "byteOffset": 369724,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3090,
+      "byteOffset": 374212,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5616,
+      "byteOffset": 377304,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5616,
+      "byteOffset": 382920,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3744,
+      "byteOffset": 388536,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5016,
+      "byteOffset": 392280,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 2856,
+      "byteOffset": 397296,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 2856,
+      "byteOffset": 400152,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1904,
+      "byteOffset": 403008,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1356,
+      "byteOffset": 404912,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 4128,
+      "byteOffset": 406268,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 4128,
+      "byteOffset": 410396,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 2752,
+      "byteOffset": 414524,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1890,
+      "byteOffset": 417276,
+      "target": 34963
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 419168,
+      "uri": "pocket_watch.bin"
+    }
+  ]
+}

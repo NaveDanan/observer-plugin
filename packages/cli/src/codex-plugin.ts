@@ -148,6 +148,7 @@ export function installCodexPlugin(version: string): InstallResult {
   for (const file of ["codex-control.js", "codex-control-core.js"]) {
     const source = join(dirname(emitter), file)
     if (!existsSync(source)) {
+      if (file === "codex-control-core.js") continue
       return { host: "codex", action: "missing", path: source, notes: ["Codex hook control not found; rebuild Observer."] }
     }
     copyFileSync(source, join(pluginDir, "scripts", file))

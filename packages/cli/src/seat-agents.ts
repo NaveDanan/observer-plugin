@@ -390,17 +390,14 @@ export function diagnoseOpencodeSeats(seats: SeatsConfig): SeatIssue[] {
 /**
  * One agent definition.
  *
- * The body is deliberately empty. OpenCode sets `prompt` to the trimmed file
- * body and then uses it only when truthy — `agent.prompt ? [agent.prompt] :
- * providerDefault(model)` — so an empty body leaves the generated agent with
- * exactly the prompt the built-in `general` subagent gets, which itself ships
- * with no prompt at all. The persona directive stays in the plugin, which
- * appends it to the task prompt at seating time; see the note in
- * `observer-plugin.js` for why it cannot live in both places.
+ * The body carries the employee's own behavior and the complete native roster.
+ * An employee can therefore choose a correctly named peer or nested specialist
+ * without depending on a system-transform hook or searching generated files.
  *
- * The target keeps `general`'s prompt and work permissions, then adds only the
- * task and Observer coordination tools needed for nested delegation and direct
- * messaging. It does not widen file, shell or network access.
+ * The permission block makes delegation and coordination explicit. OpenCode's
+ * built-in defaults vary by caller, so relying on an omitted rule made the
+ * registered employee visible but unusable. File, shell and network access are
+ * still inherited from the host.
  *
  * Takes the decoded target rather than the seat spec, so the file's contents
  * cannot depend on how the seat was written. `readOpencodeTarget` is the only
@@ -424,6 +421,12 @@ function renderAgent(employeeId: string, seats: SeatsConfig, target: OpencodeSea
     // denies; a live `GET /agent` diff against `general` is how to check.
     "permission:",
     `  todowrite: ${yaml("deny")}`,
+    `  task: ${yaml("allow")}`,
+    `  agent_spawn: ${yaml("allow")}`,
+    `  agent_identity: ${yaml("allow")}`,
+    `  agent_send: ${yaml("allow")}`,
+    `  agent_inbox: ${yaml("allow")}`,
+    `  agent_ack: ${yaml("allow")}`,
   ]
   if (target !== undefined) lines.push(`model: ${yaml(target.model)}`)
   if (target?.variant !== undefined) {
@@ -432,8 +435,21 @@ function renderAgent(employeeId: string, seats: SeatsConfig, target: OpencodeSea
     // ships in models.dev tomorrow.
     lines.push(`variant: ${yaml(target.variant)}`)
   }
-  lines.push("---", "", behaviorDirective(applySeatSkills(profile, seats)), "")
+  lines.push("---", "", behaviorDirective(applySeatSkills(profile, seats)), "", employeeRosterBriefing(), "")
   return lines.join("\n")
+}
+
+/** The exact native agent types and strengths every employee can delegate to. */
+function employeeRosterBriefing(): string {
+  return [
+    "## Observer employee roster",
+    "Use these exact registered types when delegating nested work with agent_spawn:",
+    ...ROSTER.map(
+      (profile) =>
+        `- \`observer-${profile.id}\` — ${profile.fullName}, ${profile.title}: ${profile.fields.join(", ")}.`,
+    ),
+    "Use agent_identity to discover stable peer IDs. Same-level peers communicate directly with agent_send, read queued mail with agent_inbox, and remove processed messages with agent_ack.",
+  ].join("\n")
 }
 
 /**

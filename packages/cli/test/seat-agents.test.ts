@@ -159,28 +159,27 @@ describe("syncSeatAgents", () => {
     expect(contents).toContain("Arjun Mehta")
   })
 
-  it("keeps general's work restriction and allows coordination tools", () => {
+  it("makes nested delegation and peer coordination explicit in every employee definition", () => {
     /**
-     * The allow-list only replaces `general`, and that is only defensible if
-     * the replacement is lossless. It very nearly was: a bare generated agent
-     * differed from `general` by exactly one permission — `general` denies
-     * `todowrite` and the generated one did not, so seating an employee
-     * silently *granted* a delegated subagent the right to rewrite the parent
-     * session's todo list. Verified against a live `opencode serve`: with this
-     * line, the generated seat does not gain todo access. Its extra permissions
-     * are limited to nested delegation and Observer coordination.
+     * Employee definitions must carry this contract themselves. Depending on
+     * the config hook made the live registry vary by caller and left employees
+     * unable to staff children even though Observer exposed agent_spawn.
      */
     syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
     const contents = read("observer-arjun-mehta.md")
     expect(contents).toContain("permission:")
     expect(contents).toContain(`  todowrite: "deny"`)
-    expect(contents).not.toContain(`  task: "allow"`)
+    expect(contents).toContain(`  task: "allow"`)
+    expect(contents).toContain(`  agent_spawn: "allow"`)
+    expect(contents).toContain(`  agent_send: "allow"`)
   })
 
   it("puts the employee behavior in the native agent body", () => {
     syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
     const [, body] = read("observer-arjun-mehta.md").split(/^---$/m).slice(1)
     expect(body).toContain("You are Arjun Mehta")
+    expect(body).toContain("observer-sofia-moreno")
+    expect(body).toContain("Interaction design")
   })
 
   it("writes no file for a seat that sets a reasoning effort but no model", () => {

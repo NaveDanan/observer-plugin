@@ -221,7 +221,7 @@ function briefingFromProfiles(profiles) {
   if (!Array.isArray(profiles) || profiles.length === 0) return undefined
   const rows = profiles.map((profile) => {
     const strengths = (profile.fields ?? []).slice(0, 4).join(", ")
-    return `- ${profile.fullName} — ${profile.title}: strong at ${strengths}.`
+    return `- \`observer-${profile.id}\` — ${profile.fullName}, ${profile.title}: ${strengths}.`
   })
   return [
     "## Team roster",
@@ -230,7 +230,7 @@ function briefingFromProfiles(profiles) {
     "When selecting a host agent directly, copy its exact registered type; never abbreviate an agent type.",
     'If no teammate fits a task, delegate anyway without naming one: that subagent is recorded as a "subcontractor".',
     "Every task result returns a stable task id. Reuse it as task_id after an interruption or when continuing the same work; omitting it creates a fresh subagent with no prior context.",
-    "Assigned subagents can call agent_identity, agent_send, and agent_inbox to address each other directly, and can call task to spawn nested subagents.",
+    "Assigned subagents can call agent_identity, agent_send, agent_inbox, and agent_ack to address each other directly. They use agent_spawn, not task, to spawn nested subagents.",
   ].join("\n")
 }
 
@@ -349,11 +349,6 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
         permissionMatches(pattern, rule?.pattern ?? "*"),
     )
     return match?.action
-  }
-
-  const taskNotAllowedFor = async (agentName, sessionID, targetName) => {
-    const action = await resolvedPermission(agentName, sessionID, "task", targetName)
-    return action === "deny" || action === "ask"
   }
 
   const coordinationAllowedFor = async (agentName, sessionID, toolName) => {
@@ -1076,7 +1071,7 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       input.agent ??= {}
       const global = input.permission && typeof input.permission === "object" ? input.permission : {}
       if (global["*"] !== undefined || global.task !== undefined) return
-      const names = ["general", ...Object.keys(input.agent).filter((name) => name.startsWith("observer-"))]
+      const names = ["build", "plan", "general", ...Object.keys(input.agent).filter((name) => name.startsWith("observer-"))]
       for (const name of names) {
         const definition = (input.agent[name] ??= {})
         const permission = definition.permission
@@ -1598,9 +1593,6 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
           }
           const requestedRosterAgent = await resolveRosterAgent(args.subagent_type)
           const requestedHostAgent = requestedRosterAgent?.hostAgentType ?? args.subagent_type
-          if (await taskNotAllowedFor(context.agent, context.sessionID, requestedHostAgent)) {
-            return `Task permission does not allow spawning ${requestedHostAgent}.`
-          }
           const assignmentId = randomUUID()
           const reserved = await reserveSubagent(context.sessionID, assignmentId)
           if (reserved.error) return reserved.error
@@ -1611,9 +1603,6 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
               : await seatFor(args.prompt)
             const selected = { subagent_type: requestedHostAgent }
             const hostAgentType = selected.subagent_type
-            if (await taskNotAllowedFor(context.agent, context.sessionID, hostAgentType)) {
-              return `Task permission does not allow spawning ${hostAgentType}.`
-            }
             const agent = await knownAgent(hostAgentType)
             if (!agent) throw new Error(`Unknown subagent type: ${hostAgentType}`)
             const parentModel = await modelForSession(context.sessionID)
