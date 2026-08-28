@@ -151,8 +151,27 @@ export class CopilotTailer {
     // hooks key the node by, so it is learned before anything is filtered on it.
     if (type === "subagent.started" && agentId) {
       const name = typeof data["agentName"] === "string" ? (data["agentName"] as string) : undefined
-      if (name) state.agentKeys.set(agentId, `sub:${name}`)
-      return undefined
+      if (!name) return undefined
+      const agentKey = `sub:${name}`
+      state.agentKeys.set(agentId, agentKey)
+      return [
+        {
+          id: `copilot-log:${id ?? `subagent:${agentId}`}`,
+          host: "copilot",
+          adapter: "copilot-session-log@1",
+          workspaceRoot,
+          sessionKey,
+          agentKey,
+          at: Number.isFinite(at) ? at : Date.now(),
+          provenance: "reconciled",
+          body: {
+            kind: "agent.started",
+            runtimeId: agentId,
+            agentType: name,
+            parentAgentKey: "main",
+          },
+        },
+      ]
     }
 
     if (!id) return undefined

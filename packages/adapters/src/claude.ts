@@ -94,6 +94,7 @@ export const claudeAdapter: Adapter = {
       case "SubagentStart": {
         push({
           kind: "agent.started",
+          runtimeId: agentId,
           agentType: pickString(p, "agent_type") ?? "subagent",
           displayName: pickString(p, "agent_type"),
         })
@@ -227,6 +228,7 @@ function emitAgentSpawn(
   push(
     {
       kind: "agent.started",
+      runtimeId: childId,
       agentType: pickString(input, "subagent_type") ?? "subagent",
       parentAgentKey,
       prompt: pickString(input, "prompt"),

@@ -134,10 +134,19 @@ function renderCodexAgent(
   const serviceTier = option(target, "serviceTier")
   if (serviceTier !== undefined) lines.push(`service_tier = ${toml(serviceTier)}`)
   lines.push(
-    `developer_instructions = ${toml(withDefaultSkillPack(behaviorDirective(applySeatSkills(profile, seats)), skills))}`,
+    `developer_instructions = ${toml(withDefaultSkillPack(withCoordination(behaviorDirective(applySeatSkills(profile, seats))), skills))}`,
     "",
   )
   return lines.join("\n")
+}
+
+function withCoordination(directive: string): string {
+  return [
+    directive,
+    "",
+    "## Observer coordination",
+    "Use agent_identity to discover your stable subagent ID and peers. Same-level peers communicate directly with agent_send, read queued mail with agent_inbox, and acknowledge processed messages with agent_ack. Do not ask the root agent to relay peer messages.",
+  ].join("\n")
 }
 
 function withDefaultSkillPack(directive: string, skills: CodexAvailableSkill[]): string {
@@ -166,7 +175,7 @@ function renderClaudeAgent(profile: RosterProfile, seats: SeatsConfig, target: S
   if (target?.model) lines.push(`model: ${yaml(target.model)}`)
   const effort = option(target, "effort")
   if (effort !== undefined) lines.push(`effort: ${yaml(effort)}`)
-  lines.push("---", "", behaviorDirective(applySeatSkills(profile, seats)), "")
+  lines.push("---", "", withCoordination(behaviorDirective(applySeatSkills(profile, seats))), "")
   return lines.join("\n")
 }
 

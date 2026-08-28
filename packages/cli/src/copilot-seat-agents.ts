@@ -188,6 +188,8 @@ function renderAgent(seats: SeatsConfig, employeeId: string, name: string, targe
     "",
     behaviorDirective(applySeatSkills(profile, seats)),
     "",
+    "Use Observer's agent_identity tool to discover your stable subagent ID and peers. Same-level peers communicate directly with agent_send, read queued mail with agent_inbox, and acknowledge processed messages with agent_ack. Do not ask the root agent to relay peer messages.",
+    "",
     "Use `apply_patch` instead of the legacy `edit` and `create` tools for file changes so Copilot shows the unified diff interface.",
     "",
   )

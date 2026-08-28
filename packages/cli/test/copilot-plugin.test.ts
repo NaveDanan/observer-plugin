@@ -66,6 +66,15 @@ describe("installCopilotPlugin", () => {
     expect(manifest["version"]).toBe("1.2.3")
     expect(manifest["hooks"]).toBe("hooks/hooks.json")
     expect(manifest["agents"]).toBe("agents/")
+    expect(manifest["mcpServers"]).toBe(".mcp.json")
+    const mcp = readJson(join(copilotPluginDir(), ".mcp.json"))["observer"]
+    expect(mcp).toMatchObject({
+      type: "local",
+      command: process.execPath,
+      args: [join(copilotPluginDir(), "scripts", "coordination-mcp.js"), "--host", "copilot"],
+      tools: ["*"],
+    })
+    expect(existsSync(join(copilotPluginDir(), "scripts", "coordination-mcp.js"))).toBe(true)
     expect(isCopilotPluginStaged()).toBe(true)
   })
 

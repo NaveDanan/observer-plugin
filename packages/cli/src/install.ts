@@ -4,6 +4,7 @@ import { loadConfig } from "@observer-ai/daemon"
 import type { HostId } from "@observer-ai/protocol"
 import {
   emitterPath,
+  coordinationMcpPath,
   hookPowershellCommand,
   hookShellCommand,
   hookWindowsCommand,
@@ -84,6 +85,11 @@ export function claudeSettingsPath(): string {
   return join(homeDir(), ".claude", "settings.json")
 }
 
+/** Claude Code's user-scoped MCP configuration. */
+export function claudeMcpConfigPath(): string {
+  return join(homeDir(), ".claude.json")
+}
+
 export function codexHooksPath(): string {
   const home = process.env["CODEX_HOME"]
   return join(home && home.length > 0 ? home : join(homeDir(), ".codex"), "hooks.json")
@@ -138,7 +144,10 @@ export function install(host: HostId): InstallResult {
 export function uninstall(host: HostId): InstallResult {
   switch (host) {
     case "claude":
-      return withRemovedEmployeeAgents(removeFromJsonHooks("claude", claudeSettingsPath()), removeClaudeEmployeeAgents())
+      return withRemovedEmployeeAgents(
+        withRemovedClaudeMcp(removeFromJsonHooks("claude", claudeSettingsPath())),
+        removeClaudeEmployeeAgents(),
+      )
     case "codex":
       return withRemovedEmployeeAgents(removeFromJsonHooks("codex", codexHooksPath()), removeCodexEmployeeAgents())
     case "copilot":
@@ -166,6 +175,10 @@ export function isInstalled(host: HostId): boolean {
 
 function installClaude(): InstallResult {
   const path = claudeSettingsPath()
+  const coordination = coordinationMcpPath()
+  if (!existsSync(coordination)) {
+    return { host: "claude", action: "missing", path: coordination, notes: ["Coordination MCP server not found; rebuild Observer."] }
+  }
   const settings = readJson(path) ?? {}
   const hooks = isRecord(settings["hooks"]) ? (settings["hooks"] as Record<string, unknown>) : {}
   const existed = isInstalled("claude")
@@ -190,12 +203,13 @@ function installClaude(): InstallResult {
 
   settings["hooks"] = hooks
   writeJson(path, settings)
+  installClaudeMcp(coordination)
   return {
     host: "claude",
     action: existed ? "updated" : "installed",
     path,
     notes: [
-      "Restart Claude Code, or start a new session, for the hooks to load.",
+      "Restart Claude Code, or start a new session, for the hooks and coordination tools to load.",
       ...syncClaudeEmployeeAgentsQuietly(),
     ],
   }
@@ -311,6 +325,20 @@ function syncSeatAgentsQuietly(): string[] {
   }
 }
 
+function installClaudeMcp(coordination: string): void {
+  const path = claudeMcpConfigPath()
+  const document = readJson(path) ?? {}
+  const servers = isRecord(document["mcpServers"]) ? (document["mcpServers"] as Record<string, unknown>) : {}
+  servers["observer-coordination"] = {
+    type: "stdio",
+    command: nodePath(),
+    args: [coordination, "--host", "claude"],
+    alwaysLoad: true,
+  }
+  document["mcpServers"] = servers
+  writeJson(path, document)
+}
+
 function syncCodexEmployeeAgentsQuietly(): string[] {
   try {
     const config = loadConfig()
@@ -400,6 +428,33 @@ function removeFile(host: HostId, path: string): InstallResult {
   rmSync(path)
   rmSync(`${path}${BACKUP_SUFFIX}`, { force: true })
   return { host, action: "removed", path, notes: [] }
+}
+
+function withRemovedClaudeMcp(result: InstallResult): InstallResult {
+  const path = claudeMcpConfigPath()
+  const document = readJson(path)
+  if (!document || !isRecord(document["mcpServers"])) return result
+  const servers = document["mcpServers"] as Record<string, unknown>
+  const observer = servers["observer-coordination"]
+  if (!isObserverCoordinationServer(observer, "claude")) return result
+
+  delete servers["observer-coordination"]
+  if (Object.keys(servers).length === 0) delete document["mcpServers"]
+  if (Object.keys(document).length === 0) rmSync(path, { force: true })
+  else writeJson(path, document)
+  rmSync(`${path}${BACKUP_SUFFIX}`, { force: true })
+  return {
+    ...result,
+    action: "removed",
+    notes: [...result.notes, "Removed the Observer coordination MCP server from Claude Code."],
+  }
+}
+
+function isObserverCoordinationServer(value: unknown, host: string): boolean {
+  if (!isRecord(value)) return false
+  const args = Array.isArray(value["args"]) ? value["args"] : []
+  return args.some((entry) => typeof entry === "string" && entry.includes("coordination-mcp")) &&
+    args.some((entry) => entry === host)
 }
 
 function withRemovedEmployeeAgents(result: InstallResult, removed: string[], extraNotes: string[] = []): InstallResult {

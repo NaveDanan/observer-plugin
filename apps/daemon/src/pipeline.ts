@@ -103,6 +103,7 @@ export class Pipeline {
           continue
         }
         changes.push(...reduce(this.store, stored))
+        this.syncObservedAssignment(stored)
         result.accepted++
         this.diagnostics?.markAccepted(event.host, stored.receivedAt)
       }
@@ -110,6 +111,59 @@ export class Pipeline {
 
     if (changes.length > 0) this.onChanges(changes)
     return result
+  }
+
+  /**
+   * Projects host-observed subagents into the durable mailbox address table.
+   *
+   * OpenCode reserves and updates assignments itself before a subagent exists.
+   * Other hosts only reveal a stable runtime id through lifecycle events, so
+   * their assignment starts here, after the reducer has materialised both the
+   * subagent and its parent.
+   */
+  private syncObservedAssignment(event: IngestEvent & { id: string; at: number }): void {
+    if (event.host === "opencode") return
+    if (event.body.kind !== "agent.started" && event.body.kind !== "agent.status" && event.body.kind !== "agent.stopped") return
+
+    const sessionId = `${event.host}:${event.sessionKey}`
+    const agent = this.store.getAgentByKey(sessionId, event.agentKey)
+    const runtimeId = agent?.runtimeId
+    if (!agent || !runtimeId) return
+
+    const existing = this.store.getAgentAssignmentByRuntime(event.host, runtimeId)
+    let parentRuntimeId = existing?.parentRuntimeId
+    let status = agent.status
+    if (event.body.kind === "agent.started") {
+      const parentAgentKey = event.body.parentAgentKey
+      // Claude's SubagentStart hook exposes the child's stable id before it
+      // exposes the immediate parent. Use the known root as a provisional
+      // mailbox ancestor; the later Agent/Task reconciliation replaces it
+      // with the exact parent without changing the child's address.
+      parentRuntimeId = parentAgentKey
+        ? parentAgentKey === "main"
+          ? event.sessionKey
+          : this.store.getAgentByKey(sessionId, parentAgentKey)?.runtimeId ?? undefined
+        : existing?.parentRuntimeId ?? event.sessionKey
+      status = "running"
+    } else {
+      status = event.body.status
+    }
+    if (!parentRuntimeId) return
+    this.store.putAgentAssignment({
+      id: existing?.id ?? `observed:${event.host}:${event.sessionKey}:${runtimeId}`,
+      host: event.host,
+      rootSessionKey: event.sessionKey,
+      runtimeId,
+      parentRuntimeId,
+      callId: existing?.callId ?? null,
+      agentType: agent.agentType,
+      hostAgentType: agent.agentType,
+      description: agent.description,
+      prompt: agent.delegationPrompt,
+      status,
+      createdAt: existing?.createdAt ?? event.at,
+      updatedAt: event.at,
+    })
   }
 
   captureCoordinationPrompt(text: string | null | undefined): string | null {

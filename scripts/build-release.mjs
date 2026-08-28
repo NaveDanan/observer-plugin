@@ -12,6 +12,7 @@
  *     dist/cli.js                          -> bin: observer
  *     dist/daemon.js                       -> bin: observer-daemon
  *     dist/emit.js                         -> bin: observer-emit
+ *     dist/coordination-mcp.js             -> bin: observer-coordination-mcp
  *     dist/copilot-control.js              -> bin: observer-copilot-control
  *     web/                                 built UI, served by the daemon
  *     integrations/opencode/observer-plugin.js
@@ -107,6 +108,10 @@ async function main() {
   await bundle(join(root, "apps/daemon/src/main.ts"), join(stageDir, "dist/daemon.js"))
   await bundle(join(root, "packages/hook-emitter/src/emit.ts"), join(stageDir, "dist/emit.js"))
   await bundle(
+    join(root, "packages/hook-emitter/src/coordination-mcp.ts"),
+    join(stageDir, "dist/coordination-mcp.js"),
+  )
+  await bundle(
     join(root, "packages/hook-emitter/src/codex-control.ts"),
     join(stageDir, "dist/codex-control.js"),
   )
@@ -154,6 +159,7 @@ async function main() {
       observer: "dist/cli.js",
       "observer-daemon": "dist/daemon.js",
       "observer-emit": "dist/emit.js",
+      "observer-coordination-mcp": "dist/coordination-mcp.js",
       "observer-codex-control": "dist/codex-control.js",
       "observer-copilot-control": "dist/copilot-control.js",
     },

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { HOST_EVENTS, hostConfigPath, install, isInstalled, seatAgentDir, syncSeatAgents, uninstall } from "../dist/index.js"
+import { claudeMcpConfigPath, HOST_EVENTS, hostConfigPath, install, isInstalled, seatAgentDir, syncSeatAgents, uninstall } from "../dist/index.js"
 
 let home: string
 let originalHome: string | undefined
@@ -51,6 +51,11 @@ describe("install", () => {
     // Exec form avoids shell quoting problems in paths.
     expect(entry.args).toContain("--host")
     expect(entry.statusMessage).toBe("Observer")
+    expect(readJson(claudeMcpConfigPath())["mcpServers"]["observer-coordination"]).toMatchObject({
+      type: "stdio",
+      args: [expect.stringContaining("coordination-mcp.js"), "--host", "claude"],
+      alwaysLoad: true,
+    })
   })
 
   it("is idempotent: reinstalling does not duplicate entries", () => {
@@ -70,6 +75,10 @@ describe("install", () => {
         hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "/usr/local/bin/guard.sh" }] }] },
       }),
     )
+    writeFileSync(
+      claudeMcpConfigPath(),
+      JSON.stringify({ mcpServers: { mine: { type: "stdio", command: "mine" } }, theme: "dark" }),
+    )
 
     install("claude")
     uninstall("claude")
@@ -79,6 +88,10 @@ describe("install", () => {
     expect(settings["hooks"]["PreToolUse"]).toEqual([
       { matcher: "Bash", hooks: [{ type: "command", command: "/usr/local/bin/guard.sh" }] },
     ])
+    expect(readJson(claudeMcpConfigPath())).toEqual({
+      mcpServers: { mine: { type: "stdio", command: "mine" } },
+      theme: "dark",
+    })
   })
 
   it("writes Copilot hooks with both bash and powershell commands", () => {

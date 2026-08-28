@@ -147,6 +147,21 @@ export function hookPowershellCommand(host: string, event: string): string {
   return `& "${nodePath()}" "${emitterPath()}" --host ${host} --event ${event}`
 }
 
+/** Absolute path to the portable Observer coordination MCP server. */
+export function coordinationMcpPath(): string {
+  const candidates = [
+    resolve(here(), "./coordination-mcp.js"), // published package
+    resolve(here(), "../../hook-emitter/dist/coordination-mcp.js"), // monorepo
+  ]
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (found) return found
+  try {
+    return require.resolve("@observer-ai/hook-emitter/dist/coordination-mcp.js")
+  } catch {
+    return candidates[0] as string
+  }
+}
+
 function powershellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }

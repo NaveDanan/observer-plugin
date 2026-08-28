@@ -500,17 +500,17 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
   })
 
   it("gives each of two identical descriptions its own seat", async () => {
-    const h = await harness({ sessions: { root: { id: "root" } } })
-    const first = taskCall("root", "call_1", "Review the diff", "first prompt")
-    const second = taskCall("root", "call_2", "Review the diff", "second prompt")
+    const h = await harness({ sessions: { firstRoot: { id: "firstRoot" }, secondRoot: { id: "secondRoot" } } })
+    const first = taskCall("firstRoot", "call_1", "Review the diff", "first prompt")
+    const second = taskCall("secondRoot", "call_2", "Review the diff", "second prompt")
     await h.hooks["tool.execute.before"](first.input, first.output)
     await h.hooks["tool.execute.before"](second.input, second.output)
 
     await h.hooks.event({
-      event: sessionCreated({ id: "child_a", parentID: "root", title: "Review the diff (@general subagent)" }),
+      event: sessionCreated({ id: "child_a", parentID: "firstRoot", title: "Review the diff (@general subagent)" }),
     })
     await h.hooks.event({
-      event: sessionCreated({ id: "child_b", parentID: "root", title: "Review the diff (@general subagent)" }),
+      event: sessionCreated({ id: "child_b", parentID: "secondRoot", title: "Review the diff (@general subagent)" }),
     })
     await h.flush()
 
@@ -1248,9 +1248,9 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.createdSessions).toHaveLength(14)
   })
 
-  it("holds the 15-subagent cap across parallel native task reservations", async () => {
+  it("admits only one coordinator across parallel native root tasks", async () => {
     const h = await harness({ sessions: { root: { id: "root" } } })
-    const calls = Array.from({ length: 16 }, (_, index) =>
+    const calls = Array.from({ length: 2 }, (_, index) =>
       taskCall("root", `parallel-${index}`, `Parallel ${index}`, `Do parallel work ${index}`),
     )
 
@@ -1261,10 +1261,26 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
     expect(
       results.some(
-        (result) => result.status === "rejected" && String(result.reason).includes("Subagent limit reached (15 per session)"),
+        (result) => result.status === "rejected" && String(result.reason).includes("Root coordinator is already being created"),
       ),
     ).toBe(true)
-    expect(h.assignments).toHaveLength(15)
+    expect(h.assignments).toHaveLength(1)
+  })
+
+  it("requires later root delegations to resume the one coordinator", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, coordinator: { id: "coordinator", parentID: "root" } } })
+    const first = taskCall("root", "coordinator-call", "Coordinate investigation", "Spawn and collect specialist work")
+    await h.hooks["tool.execute.before"](first.input, first.output)
+    await h.hooks["tool.execute.after"](
+      { ...first.input, args: first.output.args },
+      { title: "Coordinate investigation", output: "done", metadata: { sessionId: "coordinator" } },
+    )
+
+    const second = taskCall("root", "second-root-call", "Frontend investigation", "Inspect the web store")
+    await expect(h.hooks["tool.execute.before"](second.input, second.output)).rejects.toThrow(
+      "Root coordinator already exists (task_id coordinator). Resume it with task_id coordinator and have it create additional workers with agent_spawn.",
+    )
+    expect([...h.assignments.values()].filter((entry) => entry.parentRuntimeId === "root")).toHaveLength(1)
   })
 
   it("lets the daemon veto a cross-process native task race", async () => {
@@ -1339,7 +1355,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.createdSessions).toHaveLength(0)
   })
 
-  it("enforces the overall cap on native task calls", async () => {
+  it("rejects another native root task before the overall cap", async () => {
     const h = await harness({ sessions: { root: { id: "root" } } })
     for (let index = 0; index < 15; index++) {
       h.assignments.set(`assignment-${index}`, {
@@ -1357,7 +1373,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
 
     const call = taskCall("root", "call-over-limit", "One too many", "Do more work")
     await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
-      "Subagent limit reached (15 per session)",
+      "Root coordinator already exists (task_id child-0)",
     )
   })
 
@@ -1790,8 +1806,9 @@ describe("observer opencode plugin: seat control", () => {
   })
 
   it("does not inspect the host agent list for generic delegations", async () => {
-    const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agents: [...STOCK_AGENTS, MALIK] })
-    const calls = [1, 2, 3, 4].map((n) => taskCall("root", `call_${n}`, `Task ${n}`, `prompt ${n}`))
+    const sessions = Object.fromEntries([1, 2, 3, 4].map((n) => [`root-${n}`, { id: `root-${n}` }]))
+    const h = await harness({ sessions, seats: CONTROLLED, agents: [...STOCK_AGENTS, MALIK] })
+    const calls = [1, 2, 3, 4].map((n) => taskCall(`root-${n}`, `call_${n}`, `Task ${n}`, `prompt ${n}`))
     await Promise.all(calls.map((call) => h.hooks["tool.execute.before"](call.input, call.output)))
 
     expect(h.agentListCalls()).toBe(0)
@@ -1799,9 +1816,9 @@ describe("observer opencode plugin: seat control", () => {
   })
 
   it("does not query an unavailable agent list to route a seat", async () => {
-    const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agentsUnavailable: true })
-    const first = taskCall("root", "call_1", "One", "prompt one")
-    const second = taskCall("root", "call_2", "Two", "prompt two")
+    const h = await harness({ sessions: { firstRoot: { id: "firstRoot" }, secondRoot: { id: "secondRoot" } }, seats: CONTROLLED, agentsUnavailable: true })
+    const first = taskCall("firstRoot", "call_1", "One", "prompt one")
+    const second = taskCall("secondRoot", "call_2", "Two", "prompt two")
     await h.hooks["tool.execute.before"](first.input, first.output)
     await h.hooks["tool.execute.before"](second.input, second.output)
     expect(h.agentListCalls()).toBe(0)

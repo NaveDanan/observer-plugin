@@ -425,7 +425,7 @@ describe("HTTP API", () => {
       prompt: `Prompt ${id}`,
       status: "running",
     })
-    for (const value of [assignment("a", "call-a"), assignment("b", "call-b")]) {
+    for (const value of [assignment("a", "call-a"), { ...assignment("b", "call-b"), parentRuntimeId: "a" }]) {
       const response = await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: value })
       expect(response.statusCode, response.body).toBe(200)
     }
@@ -558,6 +558,41 @@ describe("HTTP API", () => {
     expect(store.getAgent("opencode:root~session:level-3")).toBeUndefined()
   })
 
+  it("admits only one top-level OpenCode coordinator per root session", async () => {
+    const config = makeConfig()
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const assignment = (id: string) => ({
+      id: `assignment-${id}`,
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: id,
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+    })
+
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("coordinator") })).statusCode).toBe(200)
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: assignment("second-root-child"),
+    })
+
+    expect(second.statusCode).toBe(409)
+    expect(second.json().error).toBe(
+      "root coordinator already exists (task_id coordinator); resume it and use agent_spawn for additional workers",
+    )
+    expect(store.listAgentAssignments("opencode", "root")).toHaveLength(1)
+  })
+
   it("never persists more than 15 subagents for one root session", async () => {
     const config = makeConfig()
     const { store, pipeline } = setup(config)
@@ -572,7 +607,7 @@ describe("HTTP API", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: `child-${index}`,
-      parentRuntimeId: "root",
+      parentRuntimeId: index === 0 ? "root" : "child-0",
       callId: `call-${index}`,
       agentType: "subcontractor",
       hostAgentType: "general",
@@ -620,8 +655,21 @@ describe("HTTP API", () => {
       store.close()
     })
     const headers = { authorization: `Bearer ${config.token}` }
+    const coordinator = {
+      id: "parallel-coordinator",
+      host: "opencode",
+      rootSessionKey: "parallel-root",
+      runtimeId: "parallel-coordinator",
+      parentRuntimeId: "parallel-root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+    }
+    expect(
+      (await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: coordinator })).statusCode,
+    ).toBe(200)
     const responses = await Promise.all(
-      Array.from({ length: 16 }, (_, index) =>
+      Array.from({ length: 15 }, (_, index) =>
         app.inject({
           method: "POST",
           url: "/v1/coordination/assignments",
@@ -631,7 +679,7 @@ describe("HTTP API", () => {
             host: "opencode",
             rootSessionKey: "parallel-root",
             runtimeId: `parallel-child-${index}`,
-            parentRuntimeId: "parallel-root",
+            parentRuntimeId: "parallel-coordinator",
             agentType: "subcontractor",
             hostAgentType: "general",
             status: "running",
@@ -640,7 +688,7 @@ describe("HTTP API", () => {
       ),
     )
 
-    expect(responses.filter((response) => response.statusCode === 200)).toHaveLength(15)
+    expect(responses.filter((response) => response.statusCode === 200)).toHaveLength(14)
     expect(responses.filter((response) => response.statusCode === 409)).toHaveLength(1)
     expect(store.listAgentAssignments("opencode", "parallel-root")).toHaveLength(15)
   })

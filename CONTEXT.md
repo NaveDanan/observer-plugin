@@ -91,9 +91,8 @@ direct-message address, and never replaces it when a failed or interrupted run r
 _Avoid_: Assignment ID (Observer's pre-spawn correlation id), agent key (canvas identity)
 
 **Direct message**:
-A durable addressed message from one subagent ID to another in the same session tree. Observer
-records it in the recipient's inbox and asks OpenCode to resume the recipient immediately. If the
-host cannot do that, the recipient can pull it later with `agent_inbox`.
+A durable addressed message from one subagent ID to another in the same session tree. It reaches
+the recipient without a parent relay; a host that cannot wake the recipient keeps it in the inbox.
 _Avoid_: Parent relay, broadcast
 
 **Detail panel**:

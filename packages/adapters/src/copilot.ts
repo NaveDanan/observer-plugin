@@ -104,9 +104,11 @@ export const copilotAdapter: Adapter = {
 
       case "subagentStart": {
         const name = pickString(p, "agentName", "agent_name") ?? "subagent"
+        const realId = pickString(p, "agentId", "agent_id")
         push(
           {
             kind: "agent.started",
+            runtimeId: realId,
             agentType: name,
             displayName: pickString(p, "agentDisplayName", "agent_display_name") ?? name,
             description: pickString(p, "agentDescription", "agent_description"),
@@ -131,6 +133,7 @@ export const copilotAdapter: Adapter = {
         push(
           {
             kind: "agent.started",
+            runtimeId: realId,
             agentType: pickString(p, "agentType", "agent_type") ?? name,
             displayName: pickString(p, "agentDisplayName", "agent_display_name") ?? name,
             parentAgentKey: MAIN_AGENT_KEY,

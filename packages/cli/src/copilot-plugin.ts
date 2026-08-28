@@ -9,7 +9,7 @@ import {
   syncCopilotSeatAgents,
 } from "./copilot-seat-agents.js"
 import { loadConfig } from "@observer-ai/daemon"
-import { copilotHome, emitterPath, nodePath, shellQuote } from "./paths.js"
+import { coordinationMcpPath, copilotHome, emitterPath, nodePath, shellQuote } from "./paths.js"
 
 /**
  * Copilot CLI plugin packaging.
@@ -122,6 +122,7 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
     category: "Productivity",
     agents: "agents/",
     hooks: "hooks/hooks.json",
+    mcpServers: ".mcp.json",
   })
 
   // 2. Lifecycle hooks, generated from the same event list the plain install
@@ -138,7 +139,27 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
   }
   writeJson(join(pluginDir, "hooks", "hooks.json"), { version: 1, hooks })
 
-  // 3. A copy of the emitter, so the installed plugin is inspectable on its own.
+  // 3. Durable peer coordination, exposed through the same MCP tool names as
+  // OpenCode's native plugin tools.
+  const coordination = coordinationMcpPath()
+  if (!existsSync(coordination)) {
+    return { host: "copilot", action: "missing", path: coordination, notes: ["Coordination MCP server not found; rebuild Observer."] }
+  }
+  mkdirSync(join(pluginDir, "scripts"), { recursive: true })
+  const coordinationTarget = join(pluginDir, "scripts", "coordination-mcp.js")
+  copyFileSync(coordination, coordinationTarget)
+  const coordinationCore = join(dirname(coordination), "coordination-mcp-core.js")
+  if (existsSync(coordinationCore)) copyFileSync(coordinationCore, join(pluginDir, "scripts", "coordination-mcp-core.js"))
+  writeJson(join(pluginDir, ".mcp.json"), {
+    observer: {
+      type: "local",
+      command: nodePath(),
+      args: [coordinationTarget, "--host", "copilot"],
+      tools: ["*"],
+    },
+  })
+
+  // 4. A copy of the emitter, so the installed plugin is inspectable on its own.
   mkdirSync(join(pluginDir, "scripts"), { recursive: true })
   copyFileSync(emitter, join(pluginDir, "scripts", "emit.js"))
 
@@ -151,7 +172,7 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
     notes.push(`Employee agents were not generated: ${error instanceof Error ? error.message : String(error)}`)
   }
 
-  // 4. Hand it to Copilot. This is the step that makes it appear in the
+  // 5. Hand it to Copilot. This is the step that makes it appear in the
   //    plugins list — staging alone is invisible to the CLI.
   const install = run(["plugin", "install", pluginDir])
   if (install.ok) {

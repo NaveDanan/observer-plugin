@@ -553,6 +553,15 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     }
     if (!existing) {
       const assignments = store.listAgentAssignments(row.host, row.rootSessionKey)
+      if (row.host === "opencode" && row.parentRuntimeId === row.rootSessionKey) {
+        const coordinator = assignments.find((assignment) => assignment.parentRuntimeId === row.rootSessionKey)
+        if (coordinator) {
+          const detail = coordinator.runtimeId
+            ? `root coordinator already exists (task_id ${coordinator.runtimeId}); resume it and use agent_spawn for additional workers`
+            : "root coordinator is already being created; wait for its task_id, then resume it and use agent_spawn for additional workers"
+          return reply.code(409).send({ error: detail })
+        }
+      }
       if (assignments.length >= MAX_SUBAGENTS_PER_SESSION) {
         return reply.code(409).send({ error: `subagent limit reached (${MAX_SUBAGENTS_PER_SESSION} per session)` })
       }

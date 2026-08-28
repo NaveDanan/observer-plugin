@@ -199,15 +199,22 @@ Assignment prompts and direct-message text pass through the same capture switche
 rules as observed prompts and chat. Session deletion and retention pruning remove the related
 coordination rows.
 
-The OpenCode plugin registers three coordination tools:
+Observer exposes four coordination tools. OpenCode registers them natively; Claude Code, Codex, and Copilot load
+the same names from Observer's bundled stdio MCP server:
 
 - `agent_identity` returns the caller's stable id, resume token and peers.
-- `agent_send` writes an addressed mailbox entry and prompts the recipient's existing session.
+- `agent_send` writes an addressed mailbox entry. OpenCode also prompts the recipient's existing
+  session; the MCP-backed hosts leave it queued because their integrations do not expose peer resume.
 - `agent_inbox` reads queued messages if immediate host delivery failed.
 - `agent_ack` removes processed message IDs from later inbox reads.
 
-Immediate delivery remains in the mailbox until the recipient acknowledges the message id. This
-avoids losing a message when OpenCode accepts a queued turn but the turn is later interrupted.
+Every message remains in the mailbox until the recipient acknowledges its id. This avoids losing a
+message when immediate delivery is unavailable or an accepted recipient turn is interrupted.
+
+Claude Code, Codex, and Copilot lifecycle events reveal stable subagent ids after the host creates them. The
+ingest pipeline projects those observed ids into the same durable assignment table OpenCode fills
+before spawn. The MCP server resolves a caller from host session metadata when available and accepts
+an explicit stable caller id otherwise; it never picks an assignment by recency across sessions.
 
 Messages may only address assignments under the same host root session. Sending also emits a
 `messaged` edge, but it never changes the spawn parent. Sender and recipient budgets each cap direct
@@ -220,6 +227,13 @@ wildcard or per-agent task policy exists. Coordination tools check the resolved 
 they run, and nested children inherit parent restrictions. OpenCode's default depth is 1, which
 forbids a subagent from creating a child. Observer changes that default to 2 parent edges, which
 produces the three session levels, but leaves any explicit lower user value intact.
+
+OpenCode permits one native top-level `task` context per root session. That context is the
+coordinator: it creates every additional worker beneath itself with `agent_spawn`, and the root
+resumes it with its stable `task_id` for later work. The plugin reserves the coordinator slot before
+async admission work, and the daemon rejects a second top-level assignment so parallel calls and
+separate plugin processes cannot split one investigation into several root children. Nested workers
+remain subject to the normal depth and 15-subagent limits.
 
 These are daemon invariants as well as plugin checks. The coordination API rejects the sixteenth
 assignment for a root, rejects a parent chain deeper than two subagent edges, and does not allow an

@@ -35,7 +35,8 @@ The plugin stays dormant if `~/.observer/config.json` does not exist.
 
 ## Claude Code
 
-**Installed to:** `~/.claude/settings.json`, merged into the `hooks` key.
+**Installed to:** `~/.claude/settings.json`, merged into the `hooks` key, and
+`~/.claude.json`, merged into the user-scoped `mcpServers` key.
 
 Uses exec form (`command` + `args`), so paths containing spaces need no quoting:
 
@@ -67,6 +68,12 @@ Subscribed events: `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
 `MessageDisplay` runs on the render path, which is why the emitter does nothing
 except forward the payload and exit.
 
+The user-scoped MCP entry exposes `agent_identity`, `agent_send`, `agent_inbox`,
+and `agent_ack` to the main session and its subagents. Observer marks this small
+server `alwaysLoad` so direct mail is available without tool discovery. Claude
+Code reports each subagent's stable id in lifecycle hooks; recipients poll
+`agent_inbox` because this MCP integration does not resume them itself.
+
 ---
 
 ## Codex
@@ -88,8 +95,10 @@ It writes:
 ```text
 ~/.codex/plugins/observer/
   .codex-plugin/plugin.json      manifest
+  .mcp.json                      coordination MCP server registration
   hooks/hooks.json               lifecycle hooks
   scripts/emit.js                the emitter, shipped inside the plugin
+  scripts/coordination-mcp.js    durable subagent mail tools
 ~/.agents/plugins/marketplace.json   personal marketplace entry
 ```
 
@@ -113,10 +122,12 @@ is an employee agent or a subcontractor. Generated employee definitions carry
 the same Default pack. A failed probe leaves the pack empty and reports a
 warning without blocking delegation.
 
-The Codex plugin observes lifecycle and tool events. It does not add the
-OpenCode-only `agent_identity`, `agent_send`, `agent_inbox`, or `agent_ack`
-coordination tools. Codex subagents communicate with the host's built-in
-collaboration tools; those messages are not Observer coordination mail.
+The plugin exposes Observer's `agent_identity`, `agent_send`, `agent_inbox`, and
+`agent_ack` coordination tools through a bundled stdio MCP server. Messages use
+the same daemon mailbox as OpenCode, stay scoped to one Codex session tree, and
+do not pass through the root agent. Codex does not expose a plugin API for
+waking an addressed subagent, so `agent_send` queues the message and the
+recipient reads it with `agent_inbox`.
 
 Two details make this work:
 
@@ -195,10 +206,12 @@ It writes:
 
 ```text
 ~/.copilot/plugins/observer/
-  plugin.json            manifest, points at hooks/hooks.json
+  plugin.json            manifest, points at hooks and MCP configuration
+  .mcp.json              coordination MCP server registration
   hooks/hooks.json       lifecycle hooks
   agents/*.agent.md      generated employee agents
   scripts/emit.js        telemetry emitter
+  scripts/coordination-mcp.js  durable subagent mail tools
 ```
 
 then runs `copilot plugin install ~/.copilot/plugins/observer`, which is what
@@ -207,6 +220,13 @@ actually registers it. Copilot copies the staged directory to
 `~/.copilot/config.json`; copying files there by hand does not work.
 
 Restart Copilot CLI (and the desktop app) so the new session picks it up.
+
+The plugin exposes `agent_identity`, `agent_send`, `agent_inbox`, and
+`agent_ack` through its local MCP server. Copilot reconciles stable subagent ids
+from its session log, then Observer uses those ids as same-session mailbox
+addresses. Copilot does not expose a peer-resume API, so recipients retrieve
+queued messages with `agent_inbox` and remove processed entries with
+`agent_ack`.
 
 Unlike the Codex plugin, the hook commands use **absolute paths** to `node` and
 the installed emitter rather than `$PLUGIN_ROOT`. Copilot documents

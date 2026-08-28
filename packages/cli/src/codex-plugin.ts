@@ -5,7 +5,7 @@ import { HOST_EVENTS } from "./install.js"
 import { loadConfig } from "@observer-ai/daemon"
 import { removeCodexEmployeeAgents, syncCodexEmployeeAgents } from "./host-employee-agents.js"
 import { EMPLOYEES, rosterBriefing } from "@observer-ai/roster"
-import { codexHome, codexWindowsCommand, emitterPath, homeDir, nodePath, shellQuote } from "./paths.js"
+import { codexHome, codexWindowsCommand, coordinationMcpPath, emitterPath, homeDir, nodePath, shellQuote } from "./paths.js"
 
 /**
  * Codex plugin packaging.
@@ -73,6 +73,8 @@ export function installCodexPlugin(version: string): InstallResult {
     author: { name: "Observer" },
     license: "MIT",
     keywords: ["observability", "agents", "canvas"],
+    skills: "./skills/",
+    mcpServers: "./.mcp.json",
     interface: {
       displayName: "Observer",
       shortDescription: "Watch coding agents on a live local canvas.",
@@ -117,7 +119,25 @@ export function installCodexPlugin(version: string): InstallResult {
   }
   writeJson(join(pluginDir, "hooks", "hooks.json"), { description: "Observer agent telemetry", hooks })
 
-  // 3. Explicit @observer guidance. The narrow description keeps this skill
+  // 3. Portable coordination tools. The absolute script path points at the
+  // source bundle Observer owns; Codex may load this file from a cache copy.
+  const coordination = coordinationMcpPath()
+  if (!existsSync(coordination)) {
+    return { host: "codex", action: "missing", path: coordination, notes: ["Coordination MCP server not found; rebuild Observer."] }
+  }
+  mkdirSync(join(pluginDir, "scripts"), { recursive: true })
+  const coordinationTarget = join(pluginDir, "scripts", "coordination-mcp.js")
+  copyFileSync(coordination, coordinationTarget)
+  const coordinationCore = join(dirname(coordination), "coordination-mcp-core.js")
+  if (existsSync(coordinationCore)) copyFileSync(coordinationCore, join(pluginDir, "scripts", "coordination-mcp-core.js"))
+  writeJson(join(pluginDir, ".mcp.json"), {
+    observer: {
+      command: nodePath(),
+      args: [coordinationTarget, "--host", "codex"],
+    },
+  })
+
+  // 4. Explicit @observer guidance. The narrow description keeps this skill
   // scoped to turns where the user asks Observer to coordinate delegation.
   const skillDir = join(pluginDir, "skills", "observer")
   mkdirSync(skillDir, { recursive: true })
@@ -138,7 +158,7 @@ export function installCodexPlugin(version: string): InstallResult {
     ].join("\n"),
   )
 
-  // 4. The emitter itself, so the plugin is self-contained once cached.
+  // 5. The emitter itself, so the plugin is self-contained once cached.
   mkdirSync(join(pluginDir, "scripts"), { recursive: true })
   const emitter = emitterPath()
   if (!existsSync(emitter)) {
@@ -154,7 +174,7 @@ export function installCodexPlugin(version: string): InstallResult {
     copyFileSync(source, join(pluginDir, "scripts", file))
   }
 
-  // 5. Register in the personal marketplace, preserving anything already there.
+  // 6. Register in the personal marketplace, preserving anything already there.
   const marketplace = readJson(marketplacePath) ?? {
     name: MARKETPLACE_NAME,
     interface: { displayName: "Observer (local)" },

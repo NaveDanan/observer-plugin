@@ -149,6 +149,7 @@ describe("installCodexPlugin", () => {
     expect(manifest["name"]).toBe(CODEX_PLUGIN_NAME)
     expect(manifest["version"]).toBe("1.2.3")
     expect(manifest).not.toHaveProperty("hooks")
+    expect(manifest["mcpServers"]).toBe("./.mcp.json")
     expect(manifest["interface"]).toMatchObject({
       displayName: "Observer",
       category: "Developer Tools",
@@ -156,6 +157,10 @@ describe("installCodexPlugin", () => {
 
     // The emitter ships inside the plugin so the cached copy is runnable.
     expect(existsSync(join(dir, "scripts", "emit.js"))).toBe(true)
+    expect(existsSync(join(dir, "scripts", "coordination-mcp.js"))).toBe(true)
+    const mcp = readJson(join(dir, ".mcp.json"))["observer"]
+    expect(mcp.command).toBe(process.execPath)
+    expect(mcp.args).toEqual([join(dir, "scripts", "coordination-mcp.js"), "--host", "codex"])
     expect(isCodexPluginInstalled()).toBe(true)
   })
 

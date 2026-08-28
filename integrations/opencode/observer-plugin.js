@@ -229,6 +229,7 @@ function briefingFromProfiles(profiles) {
     ...rows,
     "When selecting a host agent directly, copy its exact registered type; never abbreviate an agent type.",
     'If no teammate fits a task, delegate anyway without naming one: that subagent is recorded as a "subcontractor".',
+    "The root agent may create exactly one top-level coordinator with task. That coordinator creates every additional worker with agent_spawn so all work stays in one session tree.",
     "Every task result returns a stable task id. Reuse it as task_id after an interruption or when continuing the same work; omitting it creates a fresh subagent with no prior context.",
     "Assigned subagents can call agent_identity, agent_send, agent_inbox, and agent_ack to address each other directly. They use agent_spawn, not task, to spawn nested subagents.",
   ].join("\n")
@@ -399,9 +400,14 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
     return message.startsWith("subagent limit reached") || message.startsWith("subagent depth limit reached")
   }
 
+  const isRootCoordinatorError = (error) => {
+    const message = error instanceof Error ? error.message.toLowerCase() : ""
+    return message.startsWith("root coordinator already exists") || message.startsWith("root coordinator is already being created")
+  }
+
   const isCreationAdmissionError = (error) => {
     const message = error instanceof Error ? error.message : ""
-    return isCreationLimitError(error) || message.startsWith("Observer could not persist subagent admission")
+    return isCreationLimitError(error) || isRootCoordinatorError(error) || message.startsWith("Observer could not persist subagent admission")
   }
 
   const loadBriefing = async () => {
@@ -485,6 +491,8 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
   const activated = new Map()
   /** Root session -> task calls admitted but not yet bound to a child session. */
   const spawnReservations = new Map()
+  /** Root session -> the native task call reserving its only coordinator slot. */
+  const rootCoordinatorReservations = new Map()
   /** Root session -> child ids observed in this plugin process. */
   const locallyCreatedSubagents = new Map()
 
@@ -1007,6 +1015,9 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
     const reservations = spawnReservations.get(rootSessionKey)
     reservations?.delete(reservationId)
     if (reservations?.size === 0) spawnReservations.delete(rootSessionKey)
+    if (rootCoordinatorReservations.get(rootSessionKey) === reservationId) {
+      rootCoordinatorReservations.delete(rootSessionKey)
+    }
   }
 
   const rememberCreatedSubagent = (rootSessionKey, runtimeId) => {
@@ -1024,20 +1035,46 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
   const reserveSubagent = async (sessionID, reservationId) => {
     const target = await resolve(sessionID)
     if (!target) return { error: "Observer could not resolve the current session." }
-    const depthLimit = Math.min(await configuredDepth(), MAX_COORDINATION_DEPTH)
-    if ((await coordinationDepth(sessionID)) >= depthLimit) {
-      return {
-        error: `Subagent depth limit reached (${depthLimit + 1} session levels).`,
-        rootSessionKey: target.root,
+    const isRootCreation = sessionID === target.root
+    if (isRootCreation) {
+      const pendingCoordinator = rootCoordinatorReservations.get(target.root)
+      if (pendingCoordinator && pendingCoordinator !== reservationId) {
+        return {
+          error: "Root coordinator is already being created. Wait for its task_id, then resume it and use agent_spawn for additional workers.",
+          rootSessionKey: target.root,
+        }
       }
+      rootCoordinatorReservations.set(target.root, reservationId)
     }
 
     let assignments = []
     try {
+      const depthLimit = Math.min(await configuredDepth(), MAX_COORDINATION_DEPTH)
+      if ((await coordinationDepth(sessionID)) >= depthLimit) {
+        return {
+          error: `Subagent depth limit reached (${depthLimit + 1} session levels).`,
+          rootSessionKey: target.root,
+        }
+      }
       const existing = await apiGet(
         `/v1/coordination/assignments?${new URLSearchParams({ host: "opencode", rootSessionKey: target.root })}`,
       )
       assignments = existing.assignments ?? []
+      if (isRootCreation) {
+        const coordinator = assignments.find((entry) => entry.parentRuntimeId === target.root)
+        if (coordinator?.runtimeId) {
+          return {
+            error: `Root coordinator already exists (task_id ${coordinator.runtimeId}). Resume it with task_id ${coordinator.runtimeId} and have it create additional workers with agent_spawn.`,
+            rootSessionKey: target.root,
+          }
+        }
+        if (coordinator) {
+          return {
+            error: "Root coordinator is already being created. Wait for its task_id, then resume it and use agent_spawn for additional workers.",
+            rootSessionKey: target.root,
+          }
+        }
+      }
     } catch {
       return {
         error: "Observer could not verify the durable subagent limit; creation is blocked until the daemon is reachable.",
@@ -1399,7 +1436,10 @@ export const ObserverPlugin = async ({ client, directory, worktree }) => {
       let reservedCreation
       if (!(typeof args.task_id === "string" && args.task_id.length > 0)) {
         reservedCreation = await reserveSubagent(input?.sessionID, callID)
-        if (reservedCreation.error) throw new Error(reservedCreation.error)
+        if (reservedCreation.error) {
+          releaseSpawnReservation(reservedCreation.rootSessionKey, callID)
+          throw new Error(reservedCreation.error)
+        }
       }
       // Activation is checked against the session tree's root, not the raw
       // session: `@observer` is typed once but governs every subagent below it,

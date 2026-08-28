@@ -95,6 +95,7 @@ describe("native employee agents", () => {
     expect(arjun).toContain('model: "opus"')
     expect(arjun).toContain('effort: "high"')
     expect(arjun).toContain("Use proactively")
+    expect(arjun).toContain("Same-level peers communicate directly with agent_send")
     expect(malik).not.toMatch(/^model:/m)
     expect(result.notes.join(" ")).toContain("model pins do not force")
   })
