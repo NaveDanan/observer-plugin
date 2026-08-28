@@ -15,7 +15,7 @@ declare const __OBSERVER_VERSION__: string
 
 export const VERSION: string = typeof __OBSERVER_VERSION__ === "string" ? __OBSERVER_VERSION__ : "dev"
 
-/** How the banner says it: `v0.9.15` for a release, `(dev build)` otherwise. */
+/** How the banner says it: `v0.9.16` for a release, `(dev build)` otherwise. */
 export function versionLabel(version: string = VERSION): string {
   return version === "dev" ? "(dev build)" : `v${version}`
 }

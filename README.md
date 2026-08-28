@@ -56,7 +56,7 @@ no native build step).
 This is how you install Observer on a machine that does not have the source.
 
 ```bash
-npm install -g observer-ai-0.9.15.tgz
+npm install -g observer-ai-0.9.16.tgz
 
 observer install all      # or: observer install claude codex
 observer open
