@@ -85,7 +85,7 @@ echo '{"session_id":"t1","source":"startup","model":"claude-opus-5"}' \
 The version comes from the root `package.json`, or `OBSERVER_VERSION` if set:
 
 ```bash
-OBSERVER_VERSION=0.9.17 pnpm release
+OBSERVER_VERSION=0.9.18 pnpm release
 ```
 
 It is injected into the CLI bundle at build time and reported by
@@ -100,7 +100,7 @@ The tarball is self-contained; copy it to the target machine by any means and
 Two install traps, both hit in practice:
 
 - **Always pass the tarball with an explicit path.** Without the leading
-  `./`, npm parses `release/observer-ai-0.9.17.tgz` as a GitHub `user/repo`
+  `./`, npm parses `release/observer-ai-0.9.18.tgz` as a GitHub `user/repo`
   shorthand and fails trying to contact git.
 - **Never install the staging directory** (`npm i -g ./release/package`).
   Folder installs are symlinked, so `observer` runs from a tree that has no
