@@ -104,7 +104,7 @@ export function LandingPage(props: { connection: Connection; error?: string; onO
         <p className="landing-install-footnote" aria-live="polite">{copied === "failed" ? "Clipboard access is unavailable. Select the command above to copy it manually." : "Works with OpenCode, Codex, Claude Code, and GitHub Copilot CLI."}<span> No cloud relay. No mystery meat.</span></p>
       </section>
 
-      <footer className="landing-footer"><span>OBSERVER / 0.9.16</span><span>CC0 POCKET WATCH / POLY HAVEN</span><span>MADE FOR PEOPLE WHO RUN AGENTS</span><a href="#top">BACK TO TOP ↑</a></footer>
+      <footer className="landing-footer"><span>OBSERVER / 0.9.17</span><span>CC0 POCKET WATCH / POLY HAVEN</span><span>MADE FOR PEOPLE WHO RUN AGENTS</span><a href="#top">BACK TO TOP ↑</a></footer>
     </main>
   )
 }

@@ -138,6 +138,38 @@ function agent(overrides: Partial<AgentEntity> = {}): AgentEntity {
 describe("employee seating", () => {
   const state = { matchCache: new Map() } as unknown as Parameters<typeof selectEmployeeMatch>[0]
 
+  it("recognizes the employee selected by a Codex native agent", () => {
+    // Captured Codex SubagentStart events report the generated employee-agent
+    // name as agentType. The task path and prompt can be arbitrary, so the
+    // employee identity must not depend on lexical task matching.
+    const node = agent({
+      agentType: "observer-marcus-reed",
+      displayName: "/root/marcus_manager",
+      delegationPrompt: "Coordinate this effort.",
+    })
+    const match = selectEmployeeMatch(state, node)
+    expect(match?.profile.fullName).toBe("Marcus Reed")
+    expect(match?.profile.title).toBe("Engineering Manager")
+  })
+
+  it("keeps explicit employee identity when the task text fits somebody else", () => {
+    const node = agent({
+      agentType: "observer-marcus-reed",
+      delegationPrompt: "Set up Kubernetes and CI/CD for the deployment.",
+      updatedAt: 2_000,
+    })
+    expect(selectEmployeeMatch(state, node)?.profile.id).toBe("marcus-reed")
+  })
+
+  it("falls back to task matching for an unknown observer-prefixed type", () => {
+    const node = agent({
+      agentType: "observer-not-on-the-roster",
+      delegationPrompt: "Set up Kubernetes and CI/CD for the deployment.",
+      updatedAt: 3_000,
+    })
+    expect(selectEmployeeMatch(state, node)?.profile.id).toBe("elias-mercer")
+  })
+
   it("seats an employee from the delegation prompt", () => {
     const node = agent({
       delegationPrompt: "Our deployments work differently in every environment. Set up kubernetes and CI/CD.",

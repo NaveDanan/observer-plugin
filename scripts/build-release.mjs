@@ -38,7 +38,7 @@ const releaseDir = join(root, "release")
 const stageDir = join(releaseDir, "package")
 
 const rootManifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
-const version = process.env.OBSERVER_VERSION ?? rootManifest.version ?? "0.9.16"
+const version = process.env.OBSERVER_VERSION ?? rootManifest.version ?? "0.9.17"
 
 /** Kept external so they install from npm rather than being inlined. */
 const EXTERNAL = ["fastify", "@fastify/websocket"]

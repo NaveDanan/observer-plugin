@@ -13,7 +13,7 @@ import type {
 } from "@observer-ai/protocol"
 import { MAIN_AGENT_KEY } from "@observer-ai/protocol"
 import type { EmployeeMatch, RosterProfile } from "@observer-ai/roster"
-import { matchEmployee } from "@observer-ai/roster"
+import { getEmployee, matchEmployee } from "@observer-ai/roster"
 import * as api from "./api"
 
 type ConnectionState = "connecting" | "live" | "offline"
@@ -668,6 +668,20 @@ export function selectRoster(current: Readonly<State>): RosterProfile[] {
 const EXPLICIT_TYPES = new Set(["subcontractor", "observer"])
 
 /**
+ * Native employee definitions use this name on every supported host. When a
+ * host reports one, it is authoritative identity rather than task text for the
+ * lexical matcher to score.
+ */
+const EMPLOYEE_AGENT_TYPE_PREFIX = "observer-"
+
+function matchNativeEmployeeAgent(agentType: string): EmployeeMatch | undefined {
+  if (!agentType.startsWith(EMPLOYEE_AGENT_TYPE_PREFIX)) return undefined
+  const profile = getEmployee(agentType.slice(EMPLOYEE_AGENT_TYPE_PREFIX.length))
+  if (!profile) return undefined
+  return { profile, score: Number.MAX_SAFE_INTEGER, reasons: [] }
+}
+
+/**
  * OpenCode titles a child session `"<task> (@<type> subagent)"`. That suffix
  * names the host's own agent definition, not the work, so it must not become
  * match evidence.
@@ -687,6 +701,11 @@ export function selectEmployeeMatch(current: Readonly<State>, agent: AgentEntity
   if (EXPLICIT_TYPES.has(agent.agentType)) return undefined
   const key = `${agent.id}:${agent.updatedAt}`
   if (current.matchCache.has(key)) return current.matchCache.get(key)
+  const nativeMatch = matchNativeEmployeeAgent(agent.agentType)
+  if (nativeMatch) {
+    current.matchCache.set(key, nativeMatch)
+    return nativeMatch
+  }
   const task = [agent.delegationPrompt, agent.description, agent.agentType]
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
     .map(stripHostTitleSuffix)
