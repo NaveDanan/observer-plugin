@@ -147,6 +147,30 @@ export function hookPowershellCommand(host: string, event: string): string {
   return `& "${nodePath()}" "${emitterPath()}" --host ${host} --event ${event}`
 }
 
+/** Absolute path to the synchronous Claude subagent admission controller. */
+export function claudeControlPath(): string {
+  return controlPath("claude-control.js")
+}
+
+/** Absolute path to the synchronous Codex spawn controller. */
+export function codexControlPath(): string {
+  return controlPath("codex-control.js")
+}
+
+function controlPath(file: string): string {
+  const candidates = [
+    resolve(here(), `./${file}`),
+    resolve(here(), `../../hook-emitter/dist/${file}`),
+  ]
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (found) return found
+  try {
+    return require.resolve(`@observer-ai/hook-emitter/dist/${file}`)
+  } catch {
+    return candidates[0] as string
+  }
+}
+
 /** Absolute path to the portable Observer coordination MCP server. */
 export function coordinationMcpPath(): string {
   const candidates = [

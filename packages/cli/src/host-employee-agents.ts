@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { applySeatSkills, fetchCodexSkills, seatFor, seatTargets } from "@observer-ai/daemon"
+import { applySeatSkills, fetchCodexSkillsWithFallback, seatFor, seatTargets } from "@observer-ai/daemon"
 import type { CodexAvailableSkill, CodexSkillInventory, SeatTarget, SeatsConfig } from "@observer-ai/daemon"
 import { behaviorDirective, ROSTER } from "@observer-ai/roster"
 import type { RosterProfile } from "@observer-ai/roster"
@@ -48,7 +48,7 @@ export function syncCodexEmployeeAgents(
   options: CodexEmployeeAgentOptions = {},
 ): HostEmployeeAgentSync {
   const pins = controlledTargets(seats, "codex")
-  const discovered = options.skillInventory ?? fetchCodexSkills({ cwd: options.cwd })
+  const discovered = options.skillInventory ?? fetchCodexSkillsWithFallback({ cwd: options.cwd })
   const inventory: CodexSkillInventory = { skills: discovered.skills, warnings: [...discovered.warnings] }
   try {
     rememberCodexSkills(options.cwd ?? process.cwd(), inventory)

@@ -9,7 +9,7 @@ import {
   syncCopilotSeatAgents,
 } from "./copilot-seat-agents.js"
 import { loadConfig } from "@observer-ai/daemon"
-import { coordinationMcpPath, copilotHome, emitterPath, nodePath, shellQuote } from "./paths.js"
+import { coordinationMcpPath, copilotControlPath, copilotHome, emitterPath, nodePath, shellQuote } from "./paths.js"
 
 /**
  * Copilot CLI plugin packaging.
@@ -130,12 +130,23 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
   mkdirSync(join(pluginDir, "hooks"), { recursive: true })
   const hooks: Record<string, unknown> = {}
   for (const event of HOST_EVENTS.copilot) {
-    hooks[event] = [{
+    const handlers: Record<string, unknown>[] = []
+    if (event === "preToolUse") {
+      handlers.push({
+        type: "command",
+        bash: `${shellQuote(nodePath())} ${shellQuote(copilotControlPath())}`,
+        powershell: `& "${nodePath()}" "${copilotControlPath()}"`,
+        timeoutSec: HOOK_TIMEOUT_SECONDS,
+        matcher: "task",
+      })
+    }
+    handlers.push({
       type: "command",
       bash: `${shellQuote(nodePath())} ${shellQuote(emitter)} --host copilot --event ${event}`,
       powershell: `& "${nodePath()}" "${emitter}" --host copilot --event ${event}`,
       timeoutSec: HOOK_TIMEOUT_SECONDS,
-    }]
+    })
+    hooks[event] = handlers
   }
   writeJson(join(pluginDir, "hooks", "hooks.json"), { version: 1, hooks })
 

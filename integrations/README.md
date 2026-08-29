@@ -113,14 +113,16 @@ codex plugin add observer@observer-local
 Finally run `/hooks` inside Codex and trust the Observer entries. Plugin hooks
 are non-managed, so Codex skips them until reviewed.
 
-`observer config` asks Codex for the enabled skills visible from its current
-project. Its Skills screen labels project and global entries separately and
-turns **Pass All Skills** on by default. Observer caches that merged inventory
-for the project. The Codex pre-spawn hook then adds its names, descriptions,
-scopes, and `SKILL.md` paths to every delegated instruction, whether the target
-is an employee agent or a subcontractor. Generated employee definitions carry
-the same Default pack. A failed probe leaves the pack empty and reports a
-warning without blocking delegation.
+`observer config` shows the skill inventories OpenCode, Codex, Claude Code, and
+Copilot expose for the current project. It labels project and global entries,
+names every host that can load each skill, and marks filesystem fallbacks when
+a native host command cannot answer within the probe budget. **Pass All
+Skills** is on by default. Observer caches the Codex slice for the project. The
+Codex pre-spawn hook then adds its names, descriptions, scopes, and `SKILL.md`
+paths to every delegated instruction, whether the target is an employee agent
+or a subcontractor. Generated employee definitions carry the same Default
+pack. Discovery warnings never block delegation or hide inventories from the
+other hosts.
 
 The plugin exposes Observer's `agent_identity`, `agent_send`, `agent_inbox`, and
 `agent_ack` coordination tools through a bundled stdio MCP server. Messages use

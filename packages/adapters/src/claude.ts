@@ -229,6 +229,7 @@ function emitAgentSpawn(
     {
       kind: "agent.started",
       runtimeId: childId,
+      assignmentCallId: pickString(payload, "tool_use_id"),
       agentType: pickString(input, "subagent_type") ?? "subagent",
       parentAgentKey,
       prompt: pickString(input, "prompt"),

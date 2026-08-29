@@ -65,6 +65,17 @@ describe("config round-trip", () => {
     expect(readRaw()["passAllSkills"]).toBe(false)
   })
 
+  it("defaults the shared subagent caps and preserves explicit values", () => {
+    writeRaw({ port: 4599, token: "tok" })
+    expect(loadConfig().subagentLimits).toEqual({ maxDepth: 2, maxPerSession: 15 })
+
+    writeRaw({ port: 4599, token: "tok", subagentLimits: { maxDepth: 4, maxPerSession: 27 } })
+    const config = loadConfig()
+    expect(config.subagentLimits).toEqual({ maxDepth: 4, maxPerSession: 27 })
+    saveConfig(config)
+    expect(readRaw()["subagentLimits"]).toEqual({ maxDepth: 4, maxPerSession: 27 })
+  })
+
   it("lets a declared field win over a stale copy of the same key", () => {
     // `guidance` was undeclared until now. A promoted key must be read from the
     // schema, not resurrected from the preserved-unknowns bag.
@@ -109,6 +120,11 @@ describe("config validation falls back per field", () => {
     const config = loadConfig()
     expect(config.capture.messages).toBe(DEFAULT_CONFIG.capture.messages)
     expect(config.capture.reasoning).toBe(true)
+  })
+
+  it("falls back one malformed subagent cap without losing its valid sibling", () => {
+    writeRaw({ port: 4599, token: "tok", subagentLimits: { maxDepth: 99, maxPerSession: 23 } })
+    expect(loadConfig().subagentLimits).toEqual({ maxDepth: 2, maxPerSession: 23 })
   })
 
   it("replaces a wholly wrong-typed section with its defaults", () => {

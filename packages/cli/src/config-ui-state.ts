@@ -1,10 +1,15 @@
 import {
   LEGACY_TARGET_ID,
+  DEFAULT_SUBAGENT_LIMITS,
+  MAX_CONFIGURED_SUBAGENT_DEPTH,
+  MAX_CONFIGURED_SUBAGENTS_PER_SESSION,
   OPENCODE_VARIANT_OPTION,
-  type CodexAvailableSkill,
   type CodexSkillInventory,
   type CatalogueModel,
+  type HostAvailableSkill,
   type HostCapabilities,
+  type HostSkillInventory,
+  type HostSkillSummary,
   type ModelCatalogue,
   type ModelOptionDescriptor,
   readOpencodeTarget,
@@ -13,6 +18,7 @@ import {
   type SeatTarget,
   type SeatTargetOption,
   type SeatsConfig,
+  type SubagentLimits,
 } from "@observer-ai/daemon"
 import type { EmployeeSkill } from "@observer-ai/roster"
 import { type ModelInfo, groupByProvider, variantsFor } from "./models.js"
@@ -49,6 +55,7 @@ export type ConfigView =
   | "models"
   | "options"
   | "skills"
+  | "limits"
   /** Which host/profile the default is being chosen for. Scoped to nobody. */
   | "default-target"
   /** The default-model picker. Same table as `models`, scoped to nobody. */
@@ -57,7 +64,7 @@ export type ConfigView =
   | "apply"
 
 /** One actionable row of the main menu, in display order. */
-export type MenuRowKind = "control" | "employees" | "default-model" | "skills" | "save" | "exit"
+export type MenuRowKind = "control" | "employees" | "default-model" | "skills" | "limits" | "save" | "exit"
 
 /**
  * The menu's rows for the current state.
@@ -69,7 +76,7 @@ export type MenuRowKind = "control" | "employees" | "default-model" | "skills" |
  * always re-reads this list rather than trusting the remembered cursor.
  */
 export function menuRows(state: ConfigUIState): MenuRowKind[] {
-  const rows: MenuRowKind[] = ["control", "employees", "default-model", "skills"]
+  const rows: MenuRowKind[] = ["control", "employees", "default-model", "skills", "limits"]
   if (state.dirty) rows.push("save")
   rows.push("exit")
   return rows
@@ -88,7 +95,10 @@ export const TARGET_EMPLOYEE_ROWS = ["targets", "skills", "reset"] as const
 export type EmployeeRowKind = (typeof EMPLOYEE_ROWS)[number]
 export type TargetEmployeeRowKind = (typeof TARGET_EMPLOYEE_ROWS)[number]
 
-export type EntryField = "model" | "skills" | "filter"
+export type EntryField = "model" | "skills" | "filter" | "max-depth" | "max-per-session"
+
+export const SUBAGENT_LIMIT_ROWS = ["max-depth", "max-per-session"] as const
+export type SubagentLimitRow = (typeof SUBAGENT_LIMIT_ROWS)[number]
 
 export interface EntryState {
   field: EntryField
@@ -154,11 +164,14 @@ export interface ConfigUIState {
   profiles: TargetProfile[]
   /** Preloaded for Copilot at launch; other targets load when opened. */
   catalogues: Record<string, ModelCatalogue>
-  /** Enabled skills Codex resolved from this project and the user's global roots. */
-  availableSkills: CodexAvailableSkill[]
+  /** Enabled skills resolved by every supported host for this project. */
+  availableSkills: HostAvailableSkill[]
+  skillSummaries: HostSkillSummary[]
   skillWarnings: string[]
-  /** Whether every Codex spawn receives `availableSkills`. Defaults on. */
+  /** Whether Observer forwards the discovered pack where a host needs help. Defaults on. */
   passAllSkills: boolean
+  /** One host-agnostic creation policy, edited as a unit and saved globally. */
+  subagentLimits: SubagentLimits
   /** One cursor per view, so backing out and re-entering keeps your place. */
   cursor: Record<ConfigView, number>
   /** The employee the `employee` and `models` views are scoped to. */
@@ -205,13 +218,15 @@ export interface InitialInput {
   models: ModelInfo[]
   profiles?: TargetProfile[]
   catalogues?: Record<string, ModelCatalogue>
-  skillInventory?: CodexSkillInventory
+  skillInventory?: HostSkillInventory | CodexSkillInventory
   passAllSkills?: boolean
+  subagentLimits?: SubagentLimits
   /** Shown once on arrival, e.g. what the model catalogue managed to read. */
   welcome?: string
 }
 
 export function initialState(input: InitialInput): ConfigUIState {
+  const inventory = normalizeSkillInventory(input.skillInventory)
   return {
     view: "menu",
     seats: cloneSeats(input.seats),
@@ -219,10 +234,12 @@ export function initialState(input: InitialInput): ConfigUIState {
     models: input.models,
     profiles: input.profiles ?? [],
     catalogues: input.catalogues ?? {},
-    availableSkills: input.skillInventory?.skills ?? [],
-    skillWarnings: input.skillInventory?.warnings ?? [],
+    availableSkills: inventory.skills,
+    skillSummaries: inventory.summaries,
+    skillWarnings: inventory.warnings,
     passAllSkills: input.passAllSkills !== false,
-    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, skills: 0, "default-target": 0, default: 0, apply: 0 },
+    subagentLimits: { ...(input.subagentLimits ?? DEFAULT_SUBAGENT_LIMITS) },
+    cursor: { menu: 0, employees: 0, employee: 0, targets: 0, models: 0, options: 0, skills: 0, limits: 0, "default-target": 0, default: 0, apply: 0 },
     draftTargetOptions: [],
     filter: "",
     confirmQuit: false,
@@ -521,6 +538,8 @@ export function reduce(state: ConfigUIState, key: Key): ConfigUIState {
       return reduceOptions(base, key)
     case "skills":
       return reduceSkills(base, key)
+    case "limits":
+      return reduceLimits(base, key)
     case "default-target":
       return reduceDefaultTarget(base, key)
     case "default":
@@ -563,6 +582,8 @@ function reduceMenu(state: ConfigUIState, key: Key): ConfigUIState {
         return openDefaultPicker(clamped)
       case "skills":
         return { ...clamped, view: "skills", cursor: { ...clamped.cursor, skills: 0 } }
+      case "limits":
+        return { ...clamped, view: "limits", cursor: { ...clamped.cursor, limits: 0 } }
       case "save": {
         // The row says "Save & exit", so it does both: the shell performs the
         // save and `applied` turns the pending quit into a request, which is
@@ -578,6 +599,25 @@ function reduceMenu(state: ConfigUIState, key: Key): ConfigUIState {
   return state
 }
 
+function normalizeSkillInventory(inventory: InitialInput["skillInventory"]): HostSkillInventory {
+  if (inventory === undefined) return { skills: [], summaries: [], warnings: [] }
+  if ("summaries" in inventory) return inventory
+  return {
+    skills: inventory.skills.map((skill) => ({
+      ...skill,
+      hosts: ["codex"],
+      locations: [{ host: "codex", path: skill.path, scope: skill.scope, source: "codex skills/list" }],
+    })),
+    summaries: [{
+      host: "codex",
+      count: inventory.skills.length,
+      discovery: inventory.warnings.length === 0 ? "native" : "unavailable",
+      source: "codex app-server skills/list",
+    }],
+    warnings: inventory.warnings,
+  }
+}
+
 function reduceSkills(state: ConfigUIState, key: Key): ConfigUIState {
   if (isEscape(key)) return { ...state, view: "menu" }
   const length = state.availableSkills.length + 1
@@ -590,11 +630,54 @@ function reduceSkills(state: ConfigUIState, key: Key): ConfigUIState {
       passAllSkills,
       dirty: true,
       status: passAllSkills
-        ? "Pass All Skills is on. Every Codex subagent will receive this project's available skills after you save."
-        : "Pass All Skills is off. Codex subagents will keep only skills configured directly on their employee seat.",
+        ? "Pass All Skills is on. Host-native skill tools stay available, and Observer forwards the merged pack where the host needs it."
+        : "Pass All Skills is off. Subagents keep only host-native skills and skills configured directly on their employee seat.",
     }
   }
   return state
+}
+
+function reduceLimits(state: ConfigUIState, key: Key): ConfigUIState {
+  if (isEscape(key)) return { ...state, view: "menu" }
+  if (isUp(key)) return moveCursor(state, "limits", -1, SUBAGENT_LIMIT_ROWS.length)
+  if (isDown(key)) return moveCursor(state, "limits", 1, SUBAGENT_LIMIT_ROWS.length)
+  const field = SUBAGENT_LIMIT_ROWS[state.cursor.limits]
+  if (!field) return state
+  if (isLeft(key)) return adjustSubagentLimit(state, field, -1)
+  if (isRight(key)) return adjustSubagentLimit(state, field, 1)
+  if (isEnter(key) || isSpace(key)) {
+    const value = field === "max-depth" ? state.subagentLimits.maxDepth : state.subagentLimits.maxPerSession
+    return { ...state, entry: { field, value: String(value) } }
+  }
+  return state
+}
+
+function adjustSubagentLimit(state: ConfigUIState, field: SubagentLimitRow, delta: number): ConfigUIState {
+  const current = field === "max-depth" ? state.subagentLimits.maxDepth : state.subagentLimits.maxPerSession
+  const max = field === "max-depth" ? MAX_CONFIGURED_SUBAGENT_DEPTH : MAX_CONFIGURED_SUBAGENTS_PER_SESSION
+  return setSubagentLimit(state, field, Math.max(0, Math.min(max, current + delta)))
+}
+
+function setSubagentLimit(state: ConfigUIState, field: SubagentLimitRow, value: number): ConfigUIState {
+  const max = field === "max-depth" ? MAX_CONFIGURED_SUBAGENT_DEPTH : MAX_CONFIGURED_SUBAGENTS_PER_SESSION
+  const label = field === "max-depth" ? "Subagent depth" : "Subagents per session"
+  if (!Number.isInteger(value) || value < 0 || value > max) {
+    return { ...state, status: `${label} must be a whole number from 0 to ${max}.` }
+  }
+  const current = field === "max-depth" ? state.subagentLimits.maxDepth : state.subagentLimits.maxPerSession
+  const next: ConfigUIState = { ...state }
+  delete next.entry
+  if (current === value) return next
+  next.subagentLimits = {
+    ...state.subagentLimits,
+    ...(field === "max-depth" ? { maxDepth: value } : { maxPerSession: value }),
+  }
+  next.dirty = true
+  next.status =
+    field === "max-depth"
+      ? `Subagent depth set to ${value}${value === 0 ? "; new delegation is disabled" : ` level${value === 1 ? "" : "s"} below the root`}.`
+      : `Session cap set to ${value}${value === 0 ? "; new delegation is disabled" : " lifetime subagents"}.`
+  return next
 }
 
 /** One place owns the flag flip and the sentence that explains it. */
@@ -1128,6 +1211,13 @@ function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
   }
 
   if (isEnter(key)) {
+    if (entry.field === "max-depth" || entry.field === "max-per-session") {
+      const typed = entry.value.trim()
+      if (!/^\d+$/.test(typed)) {
+        return { ...state, status: "Enter a whole number, or press esc to cancel." }
+      }
+      return setSubagentLimit(state, entry.field, Number(typed))
+    }
     const next: ConfigUIState = { ...state }
     delete next.entry
     if (entry.field === "filter") {
@@ -1157,6 +1247,7 @@ function reduceEntry(state: ConfigUIState, key: Key): ConfigUIState {
 
   const char = printable(key)
   if (char === undefined) return state
+  if ((entry.field === "max-depth" || entry.field === "max-per-session") && !/^\d$/.test(char)) return state
   return { ...state, entry: { ...entry, value: entry.value + char } }
 }
 
@@ -1675,6 +1766,14 @@ function isUp(key: Key): boolean {
 
 function isDown(key: Key): boolean {
   return key.name === "down" || key.name === "j"
+}
+
+function isLeft(key: Key): boolean {
+  return key.name === "left" || key.name === "h"
+}
+
+function isRight(key: Key): boolean {
+  return key.name === "right" || key.name === "l"
 }
 
 function isEnter(key: Key): boolean {

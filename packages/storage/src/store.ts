@@ -504,6 +504,10 @@ export class Store implements EntityStore {
       )
   }
 
+  deleteAgentAssignment(id: string): void {
+    this.db.prepare("DELETE FROM agent_assignments WHERE id = ?").run(id)
+  }
+
   putAgentMail(row: AgentMail): boolean {
     const result = this.db
       .prepare(

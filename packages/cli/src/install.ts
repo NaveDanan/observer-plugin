@@ -3,6 +3,10 @@ import { dirname, join } from "node:path"
 import { loadConfig } from "@observer-ai/daemon"
 import type { HostId } from "@observer-ai/protocol"
 import {
+  claudeControlPath,
+  codexWindowsCommand,
+  codexControlPath,
+  copilotControlPath,
   emitterPath,
   coordinationMcpPath,
   hookPowershellCommand,
@@ -15,6 +19,7 @@ import {
   opencodeConfigBase,
   opencodePluginSource,
   recordInstallPaths,
+  shellQuote,
 } from "./paths.js"
 import { removeSeatAgents, syncSeatAgents } from "./seat-agents.js"
 import { removeCopilotEmployeeAgents, removeCopilotSeatSettings, syncCopilotSeatAgents } from "./copilot-seat-agents.js"
@@ -186,17 +191,27 @@ function installClaude(): InstallResult {
   for (const event of HOST_EVENTS.claude) {
     const groups = Array.isArray(hooks[event]) ? (hooks[event] as unknown[]) : []
     const kept = groups.filter((group) => !isObserverEntry(group))
+    if (event === "PreToolUse") {
+      kept.push({
+        matcher: "Agent|Task",
+        hooks: [{
+          type: "command",
+          command: nodePath(),
+          args: [claudeControlPath()],
+          timeout: HOOK_TIMEOUT_SECONDS,
+          statusMessage: "Observer subagent limits",
+        }],
+      })
+    }
     kept.push({
-      hooks: [
-        {
+      hooks: [{
           type: "command",
           // Exec form: no shell, so paths with spaces need no quoting.
           command: nodePath(),
           args: [emitterPath(), "--host", "claude", "--event", event],
           timeout: HOOK_TIMEOUT_SECONDS,
           statusMessage: "Observer",
-        },
-      ],
+        }],
     })
     hooks[event] = kept
   }
@@ -224,16 +239,25 @@ function installCodex(): InstallResult {
   for (const event of HOST_EVENTS.codex) {
     const groups = Array.isArray(hooks[event]) ? (hooks[event] as unknown[]) : []
     const kept = groups.filter((group) => !isObserverEntry(group))
-    kept.push({
-      hooks: [
-        {
+    const observerHooks: Record<string, unknown>[] = []
+    if (event === "PreToolUse") {
+      observerHooks.push({
+        type: "command",
+        command: `${shellQuote(nodePath())} ${shellQuote(codexControlPath())}`,
+        commandWindows: codexWindowsCommand(nodePath(), codexControlPath(), "codex", event),
+        timeout: HOOK_TIMEOUT_SECONDS,
+        statusMessage: "Observer subagent limits",
+      })
+    }
+    observerHooks.push({
           type: "command",
           command: hookShellCommand("codex", event),
           commandWindows: hookWindowsCommand("codex", event),
           timeout: event === "SessionEnd" ? 3 : HOOK_TIMEOUT_SECONDS,
           statusMessage: "Observer",
-        },
-      ],
+        })
+    kept.push({
+      hooks: observerHooks,
     })
     hooks[event] = kept
   }
@@ -258,14 +282,23 @@ function installCopilot(): InstallResult {
   const existed = existsSync(path)
   const hooks: Record<string, unknown> = {}
   for (const event of HOST_EVENTS.copilot) {
-    hooks[event] = [
-      {
+    const observerHooks: Record<string, unknown>[] = []
+    if (event === "preToolUse") {
+      observerHooks.push({
+        type: "command",
+        bash: `${shellQuote(nodePath())} ${shellQuote(copilotControlPath())}`,
+        powershell: `& "${nodePath()}" "${copilotControlPath()}"`,
+        timeoutSec: HOOK_TIMEOUT_SECONDS,
+        matcher: "task",
+      })
+    }
+    observerHooks.push({
         type: "command",
         bash: hookShellCommand("copilot", event),
         powershell: hookPowershellCommand("copilot", event),
         timeoutSec: HOOK_TIMEOUT_SECONDS,
-      },
-    ]
+      })
+    hooks[event] = observerHooks
   }
   writeJson(path, { version: 1, hooks })
   return {
@@ -477,7 +510,11 @@ function withRemovedEmployeeAgents(result: InstallResult, removed: string[], ext
 function isObserverEntry(value: unknown): boolean {
   try {
     const text = JSON.stringify(value) ?? ""
-    return text.includes(`"Observer"`) || (text.includes("emit.js") && text.includes("--host"))
+    return (
+      text.includes(`"Observer"`) ||
+      text.includes("Observer subagent limits") ||
+      (text.includes("emit.js") && text.includes("--host"))
+    )
   } catch {
     return false
   }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -67,6 +67,7 @@ describe("configuration API", () => {
         redaction: { enabled: false, maxTextLength: 128 },
         guidance: false,
         providers: { primary: { driver: "claude" } },
+        subagentLimits: { maxDepth: 4, maxPerSession: 30 },
       },
     })
 
@@ -77,14 +78,17 @@ describe("configuration API", () => {
       redaction: { enabled: false, maxTextLength: 128 },
       guidance: false,
       providers: { primary: { driver: "claude", enabled: true } },
+      subagentLimits: { maxDepth: 4, maxPerSession: 30 },
     })
     expect(JSON.parse(readFileSync(configPath(), "utf8"))).toMatchObject({
       capture: { messages: false },
       retentionDays: 0,
       guidance: false,
       providers: { primary: { driver: "claude", enabled: true } },
+      subagentLimits: { maxDepth: 4, maxPerSession: 30 },
     })
     expect(loadConfig().retentionDays).toBe(0)
+    expect(config.subagentLimits).toEqual({ maxDepth: 4, maxPerSession: 30 })
     expect(store.prune()).toBe(0)
   })
 
@@ -105,6 +109,31 @@ describe("configuration API", () => {
     expect(response.json()).toEqual({ error: "invalid config patch" })
     expect(readFileSync(configPath(), "utf8")).toBe(before)
     expect(config.capture.messages).toBe(true)
+  })
+
+  it("does not overwrite config changes made after the daemon started", async () => {
+    const config = makeConfig()
+    saveConfig(config)
+    const { app } = await setup(config)
+    const changed = JSON.parse(readFileSync(configPath(), "utf8"))
+    changed.guidance = false
+    changed.futureSetting = { keep: true }
+    writeFileSync(configPath(), `${JSON.stringify(changed, null, 2)}\n`)
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/config",
+      headers: auth(),
+      payload: { subagentLimits: { maxDepth: 3, maxPerSession: 20 } },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(JSON.parse(readFileSync(configPath(), "utf8"))).toMatchObject({
+      guidance: false,
+      futureSetting: { keep: true },
+      subagentLimits: { maxDepth: 3, maxPerSession: 20 },
+    })
+    expect(config.subagentLimits).toEqual({ maxDepth: 3, maxPerSession: 20 })
   })
 
   it("canonicalises string skills through a seats patch and persists them", async () => {

@@ -10,27 +10,58 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { codexHookOutput } from "./codex-control-core.js"
 import type { CodexSpawnControl, CodexSpawnSkill } from "./codex-control-core.js"
+import { admitSubagent, type AdmissionConfig } from "./subagent-admission.js"
 
-try {
-  const raw = readFileSync(0, "utf8")
-  const payload = JSON.parse(raw) as unknown
+async function main(): Promise<void> {
+  const payload = JSON.parse(readFileSync(0, "utf8")) as unknown
   const event = isRecord(payload) && typeof payload["hook_event_name"] === "string"
     ? payload["hook_event_name"]
     : "PreToolUse"
-  const output = codexHookOutput(event, payload, readControl(payload))
+  const config = readObserverConfig()
+  if (config) {
+    const decision = await admitSubagent("codex", payload, config)
+    if (decision.controlled && !decision.allowed) {
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: decision.reason,
+        },
+      }))
+      return
+    }
+  }
+  const output = codexHookOutput(event, payload, readControl(payload, config))
   if (output) process.stdout.write(JSON.stringify(output))
-} catch {
-  // Fail open. A malformed hook payload must never block delegation.
 }
-process.exitCode = 0
+
+main()
+  .catch(() => {
+    // A malformed non-spawn hook stays invisible. Spawn admission failures are
+    // converted to a deny inside `admitSubagent` before they reach this path.
+  })
+  .finally(() => {
+    process.exitCode = 0
+  })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function readControl(payload: unknown): CodexSpawnControl {
+function readObserverConfig(): AdmissionConfig | undefined {
   const directory = process.env["OBSERVER_HOME"]?.trim() || join(homedir(), ".observer")
-  const passAllSkills = readPassAllSkills(join(directory, "config.json"))
+  try {
+    const value = JSON.parse(readFileSync(join(directory, "config.json"), "utf8")) as unknown
+    if (!isRecord(value) || typeof value["port"] !== "number" || typeof value["token"] !== "string") return undefined
+    return value as unknown as AdmissionConfig
+  } catch {
+    return undefined
+  }
+}
+
+function readControl(payload: unknown, config: AdmissionConfig | undefined): CodexSpawnControl {
+  const directory = process.env["OBSERVER_HOME"]?.trim() || join(homedir(), ".observer")
+  const passAllSkills = config === undefined ? readPassAllSkills(join(directory, "config.json")) : (config as unknown as Record<string, unknown>)["passAllSkills"] !== false
   if (!passAllSkills) return { passAllSkills: false, skills: [] }
 
   const cwd = resolve(isRecord(payload) && typeof payload["cwd"] === "string" ? payload["cwd"] : process.cwd())

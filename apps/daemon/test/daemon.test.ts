@@ -439,6 +439,13 @@ describe("HTTP API", () => {
     expect(replayedAssignment.json().assignment.id).toBe("assignment-a")
     expect(store.listAgentAssignments("opencode", "root")).toHaveLength(2)
     expect(store.countEvents()).toBe(initialEvents)
+    const assignmentById = await app.inject({
+      method: "GET",
+      url: "/v1/coordination/assignments?host=opencode&assignmentId=assignment-a",
+      headers,
+    })
+    expect(assignmentById.statusCode, assignmentById.body).toBe(200)
+    expect(assignmentById.json().assignment).toMatchObject({ id: "assignment-a", runtimeId: "a", rootSessionKey: "root" })
     const completed = { ...assignment("a", "call-a"), status: "completed" }
     const completedResponse = await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: completed })
     expect(completedResponse.json().assignment.status).toBe("completed")
@@ -558,6 +565,38 @@ describe("HTTP API", () => {
     expect(store.getAgent("opencode:root~session:level-3")).toBeUndefined()
   })
 
+  it("uses the configured depth cap at the coordination boundary", async () => {
+    const config = makeConfig({ subagentLimits: { maxDepth: 1, maxPerSession: 15 } })
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const assignment = (id: string, parentRuntimeId: string) => ({
+      id: `configured-depth-${id}`,
+      host: "codex",
+      rootSessionKey: "configured-depth-root",
+      runtimeId: id,
+      parentRuntimeId,
+      agentType: "worker",
+      hostAgentType: "worker",
+      status: "running",
+    })
+
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("level-1", "configured-depth-root") })).statusCode).toBe(200)
+    const tooDeep = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: assignment("level-2", "level-1"),
+    })
+
+    expect(tooDeep.statusCode).toBe(409)
+    expect(tooDeep.json().error).toBe("subagent depth limit reached (2 session levels)")
+  })
+
   it("admits only one top-level OpenCode coordinator per root session", async () => {
     const config = makeConfig()
     const { store, pipeline } = setup(config)
@@ -644,6 +683,40 @@ describe("HTTP API", () => {
     })
     expect(resumed.statusCode, resumed.body).toBe(200)
     expect(store.listAgentAssignments("opencode", "root")).toHaveLength(15)
+  })
+
+  it("uses the configured lifetime cap for a session", async () => {
+    const config = makeConfig({ subagentLimits: { maxDepth: 2, maxPerSession: 2 } })
+    const { store, pipeline } = setup(config)
+    const app = await createServer({ store, pipeline, config, broadcaster: new Broadcaster(), webDir: "/nonexistent" })
+    closers.push(() => {
+      void app.close()
+      store.close()
+    })
+    const headers = { authorization: `Bearer ${config.token}` }
+    const assignment = (id: string, parentRuntimeId: string, status = "running") => ({
+      id: `configured-count-${id}`,
+      host: "claude",
+      rootSessionKey: "configured-count-root",
+      runtimeId: id,
+      parentRuntimeId,
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status,
+    })
+
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("one", "configured-count-root", "completed") })).statusCode).toBe(200)
+    expect((await app.inject({ method: "POST", url: "/v1/coordination/assignments", headers, payload: assignment("two", "one") })).statusCode).toBe(200)
+    const third = await app.inject({
+      method: "POST",
+      url: "/v1/coordination/assignments",
+      headers,
+      payload: assignment("three", "one"),
+    })
+
+    expect(third.statusCode).toBe(409)
+    expect(third.json().error).toBe("subagent limit reached (2 per session)")
+    expect(store.listAgentAssignments("claude", "configured-count-root")).toHaveLength(2)
   })
 
   it("holds the 15-subagent cap across parallel coordination requests", async () => {

@@ -116,16 +116,17 @@ describe("installCopilotPlugin", () => {
     expect(entry.powershell).not.toContain("PLUGIN_ROOT")
   })
 
-  it("does not install a routing controller for task calls", () => {
+  it("installs the limit controller before the telemetry hook", () => {
     const { run } = recorder()
     installCopilotPlugin("1.0.0", run)
     const hooks = readJson(join(copilotPluginDir(), "hooks", "hooks.json"))
     const entries = hooks["hooks"]["preToolUse"]
 
-    expect(entries).toHaveLength(1)
-    expect(entries[0].matcher).toBeUndefined()
-    expect(entries[0].bash).not.toContain("copilot-control.js")
-    expect(entries[0].bash).toContain("--host copilot --event preToolUse")
+    expect(entries).toHaveLength(2)
+    expect(entries[0].matcher).toBe("task")
+    expect(entries[0].bash).toContain("copilot-control.js")
+    expect(entries[1].matcher).toBeUndefined()
+    expect(entries[1].bash).toContain("--host copilot --event preToolUse")
   })
 
   it("hands the staged directory to `copilot plugin install`", () => {

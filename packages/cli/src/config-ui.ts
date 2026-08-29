@@ -3,10 +3,13 @@ import {
   LEGACY_TARGET_ID,
   createOpencodeAdapter,
   type HostSeatAdapter,
+  type CodexSkillInventory,
+  type HostSkillInventory,
   type ModelCatalogue,
   type ObserverConfig,
   type SeatsConfig,
-  fetchCodexSkills,
+  type SubagentLimits,
+  fetchHostSkills,
   loadConfig,
   readOpencodeTarget,
   saveConfig,
@@ -84,9 +87,9 @@ export interface ConfigCommandOptions {
 export async function runConfig(options: ConfigCommandOptions = {}): Promise<number> {
   const config = loadConfig()
   const cwd = process.cwd()
-  const skillInventory = fetchCodexSkills({ cwd })
+  const skillInventory = fetchHostSkills({ cwd })
   try {
-    rememberCodexSkills(cwd, skillInventory)
+    rememberCodexSkills(cwd, codexInventory(skillInventory))
   } catch (error) {
     skillInventory.warnings.push(
       `Observer could not cache skills for Codex subagent spawns: ${error instanceof Error ? error.message : String(error)}.`,
@@ -111,7 +114,7 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
   const profiles = targetProfiles(adapters)
 
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
-    for (const line of renderReport(config.seats, roster, profiles, skillInventory, config.passAllSkills)) {
+    for (const line of renderReport(config.seats, roster, profiles, skillInventory, config.passAllSkills, config.subagentLimits)) {
       process.stdout.write(`${line}\n`)
     }
     return 0
@@ -133,6 +136,7 @@ export async function runConfig(options: ConfigCommandOptions = {}): Promise<num
     catalogues,
     skillInventory,
     passAllSkills: config.passAllSkills,
+    subagentLimits: config.subagentLimits,
     ...(welcome === undefined ? {} : { welcome }),
   })
 
@@ -157,6 +161,7 @@ function drive(
   let state = start
   let saves = 0
   let restored = false
+  let saving = false
 
   const restore = (): void => {
     if (restored) return
@@ -207,7 +212,8 @@ function drive(
       resolve(0)
     }
 
-    const onKey = (_sequence: string, key: Key | undefined): void => {
+    const onKey = async (_sequence: string, key: Key | undefined): Promise<void> => {
+      if (saving) return
       const next = reduce(state, key ?? {})
       if (next === state) return
       state = next
@@ -228,7 +234,10 @@ function drive(
         }
       }
       if (state.request === "save") {
-        const outcome = save(config, state.seats, state.passAllSkills, sync)
+        saving = true
+        paint()
+        const outcome = await save(config, state.seats, state.passAllSkills, state.subagentLimits, sync)
+        saving = false
         if (outcome.saved) saves++
         state = applied(state, outcome)
       }
@@ -274,27 +283,81 @@ function targetProfiles(adapters: HostSeatAdapter[]): TargetProfile[] {
  * nasty trade. `saveConfig` is atomic and lossless, so the merge is a field
  * assignment and not a hand-rolled JSON write.
  */
-function save(
+async function save(
   config: ObserverConfig,
   seats: SeatsConfig,
   passAllSkills: boolean,
+  subagentLimits: SubagentLimits,
   sync: SyncSeatAgents | undefined,
-): { saved: boolean; status: string } {
+): Promise<{ saved: boolean; status: string }> {
+  let latest: ObserverConfig
+  const limitsChanged =
+    config.subagentLimits.maxDepth !== subagentLimits.maxDepth ||
+    config.subagentLimits.maxPerSession !== subagentLimits.maxPerSession
   try {
-    const latest = loadConfig()
+    latest = loadConfig()
     latest.seats = seats
     latest.passAllSkills = passAllSkills
+    latest.subagentLimits = { ...subagentLimits }
     saveConfig(latest)
     config.seats = seats
     config.passAllSkills = passAllSkills
+    config.subagentLimits = { ...subagentLimits }
   } catch (error) {
     return { saved: false, status: `Could not save: ${error instanceof Error ? error.message : String(error)}` }
   }
 
+  const live = limitsChanged ? await syncRunningDaemon(latest) : undefined
+
   // The save has already happened. Anything the apply layer does or fails to
   // do from here is reported, never rolled back: the file on disk is the
   // user's config and a generated agent definition is a cache of it.
-  return { saved: true, status: `Saved. ${applyNote(seats, passAllSkills, sync)}` }
+  return {
+    saved: true,
+    status:
+      limitsChanged && live === true
+        ? `Saved. Subagent limits now apply to every installed host. ${applyNote(seats, passAllSkills, sync)}`
+        : limitsChanged
+          ? `Saved to config.json. Restart the Observer daemon before relying on the new subagent limits. ${applyNote(seats, passAllSkills, sync)}`
+          : `Saved. ${applyNote(seats, passAllSkills, sync)}`,
+  }
+}
+
+function codexInventory(inventory: HostSkillInventory): CodexSkillInventory {
+  return {
+    skills: inventory.skills.flatMap((skill) => {
+      const location = skill.locations.find((candidate) => candidate.host === "codex" && candidate.path)
+      if (!location?.path) return []
+      return [{
+        name: skill.name,
+        description: skill.description,
+        path: location.path,
+        scope: location.scope,
+      }]
+    }),
+    warnings: inventory.warnings.filter((warning) => warning.startsWith("Codex:")),
+  }
+}
+
+async function syncRunningDaemon(config: ObserverConfig): Promise<boolean> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 1_500)
+  try {
+    const response = await fetch(`http://127.0.0.1:${config.port}/v1/config`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.token}`,
+      },
+      body: JSON.stringify({ subagentLimits: config.subagentLimits }),
+      signal: controller.signal,
+    })
+    return response.ok
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -341,12 +404,16 @@ function applyNote(seats: SeatsConfig, passAllSkills: boolean, sync: SyncSeatAge
 function farewell(state: ConfigUIState, saves: number): string[] {
   if (state.dirty) return ["Left without saving. The config on disk is unchanged."]
   if (saves === 0) return ["No changes."]
+  const configLine = state.status.includes("Restart the Observer daemon")
+    ? "Configuration saved. Restart the Observer daemon before relying on changed subagent limits."
+    : "Configuration saved. Subagent limits are active for every installed host."
   if (!state.seats.control) {
-    return ["Employees saved. Harnesses may use them with their own model choices; configured pins stay inactive."]
+    return [configLine, "Hosts may use employees with their own model choices; configured pins stay inactive."]
   }
   return [
-    "Employees saved. Seat control is on, so configured employees pin the models you chose.",
-    `OpenCode agent definitions live in ${seatAgentDir()}; other harnesses use their native agent directories.`,
-    "Restart installed harnesses so they reload employee definitions.",
+    configLine,
+    "Seat control is on, so configured employees pin the models you chose.",
+    `OpenCode agent definitions live in ${seatAgentDir()}; other hosts use their native agent directories.`,
+    "Restart installed hosts so they reload employee definitions.",
   ]
 }

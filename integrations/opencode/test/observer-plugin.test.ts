@@ -19,6 +19,7 @@ interface SessionRecord {
   id: string
   parentID?: string
   title?: string
+  metadata?: Record<string, unknown>
 }
 
 interface Harness {
@@ -30,6 +31,7 @@ interface Harness {
   agentListCalls(): number
   assignments: Map<string, Record<string, any>>
   mail: Record<string, any>[]
+  sessions: Record<string, SessionRecord>
   createdSessions: Record<string, any>[]
   promptedSessions: Record<string, any>[]
   flush(): Promise<void>
@@ -67,6 +69,7 @@ async function harness(
     /** The `seats` section of ~/.observer/config.json. */
     seats?: { control?: boolean; employees?: Record<string, Record<string, unknown>> }
     subagentDepth?: number
+    subagentLimits?: { maxDepth: number; maxPerSession: number }
     /** Agent names the host reports. Defaults to a stock OpenCode. */
     agents?: string[]
     /** Per-agent permission rules returned by OpenCode's live agent registry. */
@@ -77,13 +80,15 @@ async function harness(
     assignmentError?: string
     /** Make durable assignment reads unavailable. */
     assignmentsUnavailable?: boolean
+    /** Assignment lineage inherited by a nested OpenCode process. */
+    inheritedAssignmentId?: string
   } = {},
 ): Promise<Harness> {
   const sessions = options.sessions ?? {}
   const unreachable = new Set(options.unreachable ?? [])
   const seat = options.seat ?? { id: "malik-johnson", directive: "Be calm and direct.", score: 9 }
 
-  if (options.guidance === false || options.seats) {
+  if (options.guidance === false || options.seats || options.subagentLimits) {
     writeFileSync(
       join(home, "config.json"),
       JSON.stringify({
@@ -91,6 +96,7 @@ async function harness(
         token: "t0k3n",
         ...(options.guidance === false ? { guidance: false } : {}),
         ...(options.seats ? { seats: options.seats } : {}),
+        ...(options.subagentLimits ? { subagentLimits: options.subagentLimits } : {}),
       }),
     )
   }
@@ -129,6 +135,10 @@ async function harness(
         return Response.json({ assignment })
       }
       const query = new URL(href).searchParams
+      if (query.get("assignmentId")) {
+        const assignment = assignments.get(query.get("assignmentId")!)
+        return assignment ? Response.json({ assignment }) : Response.json({ error: "not found" }, { status: 404 })
+      }
       if (query.get("runtimeId")) {
         const assignment = [...assignments.values()].find((entry) => entry.runtimeId === query.get("runtimeId"))
         return assignment ? Response.json({ assignment }) : Response.json({ error: "not found" }, { status: 404 })
@@ -207,8 +217,15 @@ async function harness(
         create: async (input: any) => {
           const body = input?.body ?? input
           const id = `spawned-${createdSessions.length + 1}`
-          sessions[id] = { id, parentID: body.parentID, title: body.title }
+          sessions[id] = { id, parentID: body.parentID, title: body.title, metadata: body.metadata }
           createdSessions.push({ id, ...body })
+          return { data: sessions[id] }
+        },
+        update: async (input: any) => {
+          const id = input?.sessionID ?? input?.path?.id
+          const body = input?.body ?? input
+          if (!sessions[id]) throw new Error("no such session")
+          sessions[id] = { ...sessions[id], ...body, id }
           return { data: sessions[id] }
         },
         messages: async () => ({ data: [] }),
@@ -221,7 +238,19 @@ async function harness(
     },
   }
 
-  const hooks = await ObserverPlugin({ client, directory: "/repo", worktree: "/repo" })
+  const previousInheritedAssignment = process.env["OBSERVER_OPENCODE_ASSIGNMENT_ID"]
+  if (options.inheritedAssignmentId) {
+    process.env["OBSERVER_OPENCODE_ASSIGNMENT_ID"] = options.inheritedAssignmentId
+  } else {
+    delete process.env["OBSERVER_OPENCODE_ASSIGNMENT_ID"]
+  }
+  let hooks: any
+  try {
+    hooks = await ObserverPlugin({ client, directory: "/repo", worktree: "/repo" })
+  } finally {
+    if (previousInheritedAssignment === undefined) delete process.env["OBSERVER_OPENCODE_ASSIGNMENT_ID"]
+    else process.env["OBSERVER_OPENCODE_ASSIGNMENT_ID"] = previousInheritedAssignment
+  }
   return {
     hooks,
     deliveries,
@@ -229,6 +258,7 @@ async function harness(
     agentListCalls: () => agentListCalls,
     assignments,
     mail,
+    sessions,
     createdSessions,
     promptedSessions,
     flush: async () => {
@@ -699,6 +729,13 @@ describe("observer opencode plugin: nesting", () => {
     expect(config.subagent_depth).toBe(2)
   })
 
+  it("projects the shared depth cap into OpenCode's host config", async () => {
+    const h = await harness({ subagentLimits: { maxDepth: 4, maxPerSession: 9 } })
+    const config: Record<string, any> = {}
+    await h.hooks.config(config)
+    expect(config.subagent_depth).toBe(4)
+  })
+
   it("does not override an explicit global or general task policy", async () => {
     const h = await harness()
     const global = { permission: { task: "deny" } } as Record<string, any>
@@ -1139,6 +1176,31 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.createdSessions).toHaveLength(0)
   })
 
+  it("keeps the shared depth cap when OpenCode allows deeper nesting", async () => {
+    const h = await harness({
+      subagentDepth: 8,
+      subagentLimits: { maxDepth: 1, maxPerSession: 15 },
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "Too deep", prompt: "Do more work", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+    expect(result).toContain("depth limit reached (2 session levels)")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
   it("lets agent_spawn create a child when native task is denied but agent_spawn is allowed", async () => {
     const h = await harness({
       sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
@@ -1319,6 +1381,245 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       ),
     ).rejects.toThrow("subagent limit reached (15 per session)")
     expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("uses the configured lifetime cap for OpenCode sessions", async () => {
+    const h = await harness({
+      subagentLimits: { maxDepth: 2, maxPerSession: 2 },
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "completed",
+      createdAt: 1,
+    })
+    h.assignments.set("assignment-finished", {
+      id: "assignment-finished",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "finished",
+      parentRuntimeId: "parent",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "completed",
+      createdAt: 2,
+    })
+
+    const result = await h.hooks.tool.agent_spawn.execute(
+      { description: "One too many", prompt: "Do more work", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )
+    expect(result).toBe("Subagent limit reached (2 per session).")
+    expect(h.createdSessions).toHaveLength(0)
+  })
+
+  it("keeps the lifetime cap when an assigned subagent is forked into a root conversation", async () => {
+    const h = await harness({
+      subagentLimits: { maxDepth: 2, maxPerSession: 2 },
+      sessions: {
+        root: { id: "root" },
+        parent: { id: "parent", parentID: "root", metadata: { observerAssignmentId: "assignment-parent" } },
+        // OpenCode intentionally creates forks without parentID, but clones the
+        // source session metadata into the new root conversation.
+        forked: { id: "forked", metadata: { observerAssignmentId: "assignment-parent" } },
+      },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "malik-johnson",
+      hostAgentType: "general",
+      status: "completed",
+      createdAt: 1,
+    })
+    h.assignments.set("assignment-finished", {
+      id: "assignment-finished",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "finished",
+      parentRuntimeId: "parent",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "completed",
+      createdAt: 2,
+    })
+
+    const call = taskCall("forked", "fork-bypass", "One too many", "Create work from the forked root")
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Subagent limit reached (2 per session)",
+    )
+    expect([...h.assignments.values()].some((entry) => entry.callId === "fork-bypass")).toBe(false)
+  })
+
+  it("keeps the depth cap when a nested subagent is forked into a root conversation", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        parent: { id: "parent", parentID: "root", metadata: { observerAssignmentId: "assignment-parent" } },
+        nested: { id: "nested", parentID: "parent", metadata: { observerAssignmentId: "assignment-nested" } },
+        forked: { id: "forked", metadata: { observerAssignmentId: "assignment-nested" } },
+      },
+    })
+    for (const assignment of [
+      { id: "assignment-parent", runtimeId: "parent", parentRuntimeId: "root" },
+      { id: "assignment-nested", runtimeId: "nested", parentRuntimeId: "parent" },
+    ]) {
+      h.assignments.set(assignment.id, {
+        ...assignment,
+        host: "opencode",
+        rootSessionKey: "root",
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        status: "running",
+        createdAt: 1,
+      })
+    }
+
+    const call = taskCall("forked", "fork-too-deep", "Too deep", "Create a third subagent level")
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Subagent depth limit reached (3 session levels)",
+    )
+    expect([...h.assignments.values()].some((entry) => entry.callId === "fork-too-deep")).toBe(false)
+  })
+
+  it("stamps native task children so OpenCode forks retain their assignment lineage", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, child: { id: "child", parentID: "root" } } })
+    const call = taskCall("root", "native-stamp", "Audit the build", "Review the build")
+    await h.hooks["tool.execute.before"](call.input, call.output)
+    await h.hooks.event({
+      event: sessionCreated({ id: "child", parentID: "root", title: "Audit the build (@general subagent)" }),
+    })
+
+    const assignment = [...h.assignments.values()].find((entry) => entry.callId === "native-stamp")
+    expect(assignment?.id).toBeTruthy()
+    expect(h.sessions["child"]?.metadata).toEqual({ observerAssignmentId: assignment?.id })
+  })
+
+  it("propagates assignment lineage into OpenCode processes launched by a subagent", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } } })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    const output = { env: {} as Record<string, string> }
+
+    await h.hooks["shell.env"]({ cwd: "/repo", sessionID: "parent", callID: "shell-1" }, output)
+
+    expect(output.env["OBSERVER_OPENCODE_ASSIGNMENT_ID"]).toBe("assignment-parent")
+  })
+
+  it("keeps the lifetime cap in a nested OpenCode process that creates a blank root", async () => {
+    const h = await harness({
+      inheritedAssignmentId: "assignment-parent",
+      subagentLimits: { maxDepth: 2, maxPerSession: 1 },
+      sessions: { escapedRoot: { id: "escapedRoot" } },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    const call = taskCall("escapedRoot", "nested-process-bypass", "One too many", "Create work from a fresh root")
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Subagent limit reached (1 per session)",
+    )
+    expect([...h.assignments.values()].some((entry) => entry.callId === "nested-process-bypass")).toBe(false)
+  })
+
+  it("keeps the lifetime cap when a subagent shell creates a blank root on the current OpenCode server", async () => {
+    const h = await harness({
+      subagentLimits: { maxDepth: 2, maxPerSession: 1 },
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "subcontractor",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+    const shellInput = { tool: "bash", sessionID: "parent", callID: "shell-create-root" }
+    await h.hooks["tool.execute.before"](shellInput, { args: { command: "create a root through the server API" } })
+    h.sessions["escapedRoot"] = { id: "escapedRoot" }
+    await h.hooks.event({ event: sessionCreated({ id: "escapedRoot" }) })
+    await h.hooks["tool.execute.after"](
+      { ...shellInput, args: { command: "create a root through the server API" } },
+      { title: "", output: "", metadata: {} },
+    )
+
+    const call = taskCall("escapedRoot", "same-server-bypass", "One too many", "Create work from a fresh root")
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Subagent limit reached (1 per session)",
+    )
+    expect(h.sessions["escapedRoot"]?.metadata).toEqual({ observerAssignmentId: "assignment-parent" })
+    expect([...h.assignments.values()].some((entry) => entry.callId === "same-server-bypass")).toBe(false)
+  })
+
+  it("fails closed when concurrent subagent shells make a new root's creator ambiguous", async () => {
+    const h = await harness({
+      sessions: {
+        root: { id: "root" },
+        parent: { id: "parent", parentID: "root" },
+        nested: { id: "nested", parentID: "parent" },
+      },
+    })
+    for (const assignment of [
+      { id: "assignment-parent", runtimeId: "parent", parentRuntimeId: "root" },
+      { id: "assignment-nested", runtimeId: "nested", parentRuntimeId: "parent" },
+    ]) {
+      h.assignments.set(assignment.id, {
+        ...assignment,
+        host: "opencode",
+        rootSessionKey: "root",
+        agentType: "subcontractor",
+        hostAgentType: "general",
+        status: "running",
+        createdAt: 1,
+      })
+      await h.hooks["tool.execute.before"](
+        { tool: "bash", sessionID: assignment.runtimeId, callID: `shell-${assignment.runtimeId}` },
+        { args: { command: "possibly create a root" } },
+      )
+    }
+    h.sessions["ambiguousRoot"] = { id: "ambiguousRoot" }
+
+    await h.hooks.event({ event: sessionCreated({ id: "ambiguousRoot" }) })
+
+    const call = taskCall("ambiguousRoot", "ambiguous-bypass", "Do not admit", "Create work")
+    await expect(h.hooks["tool.execute.before"](call.input, call.output)).rejects.toThrow(
+      "Observer could not resolve the current session",
+    )
+    expect(h.sessions["ambiguousRoot"]?.metadata).toEqual({
+      observerAssignmentId: "observer:ambiguous-shell-lineage",
+    })
+    expect([...h.assignments.values()].some((entry) => entry.callId === "ambiguous-bypass")).toBe(false)
   })
 
   it("blocks native task creation when the durable cap cannot be verified", async () => {

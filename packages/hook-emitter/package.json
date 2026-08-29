@@ -6,13 +6,14 @@
   "bin": {
     "observer-emit": "./dist/emit.js",
     "observer-coordination-mcp": "./dist/coordination-mcp.js",
+    "observer-claude-control": "./dist/claude-control.js",
     "observer-codex-control": "./dist/codex-control.js",
     "observer-copilot-control": "./dist/copilot-control.js"
   },
   "main": "./dist/emit.js",
   "files": ["dist"],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"for (const f of ['dist/emit.js','dist/coordination-mcp.js','dist/codex-control.js','dist/copilot-control.js']) require('fs').chmodSync(f, 0o755)\"",
+    "build": "tsc -p tsconfig.json && node -e \"for (const f of ['dist/emit.js','dist/coordination-mcp.js','dist/claude-control.js','dist/codex-control.js','dist/copilot-control.js']) require('fs').chmodSync(f, 0o755)\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

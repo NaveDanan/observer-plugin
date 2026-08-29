@@ -112,6 +112,10 @@ async function main() {
     join(stageDir, "dist/coordination-mcp.js"),
   )
   await bundle(
+    join(root, "packages/hook-emitter/src/claude-control.ts"),
+    join(stageDir, "dist/claude-control.js"),
+  )
+  await bundle(
     join(root, "packages/hook-emitter/src/codex-control.ts"),
     join(stageDir, "dist/codex-control.js"),
   )
@@ -160,6 +164,7 @@ async function main() {
       "observer-daemon": "dist/daemon.js",
       "observer-emit": "dist/emit.js",
       "observer-coordination-mcp": "dist/coordination-mcp.js",
+      "observer-claude-control": "dist/claude-control.js",
       "observer-codex-control": "dist/codex-control.js",
       "observer-copilot-control": "dist/copilot-control.js",
     },

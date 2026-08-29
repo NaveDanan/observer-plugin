@@ -6,6 +6,11 @@ import { ProvidersConfigSchema } from "./providers.js"
 import type { ProviderInstanceConfig } from "./providers.js"
 import { DEFAULT_SEATS, SeatsConfigSchema } from "./seats.js"
 import type { SeatsConfig } from "./seats.js"
+import {
+  DEFAULT_SUBAGENT_LIMITS,
+  SubagentLimitsSchema,
+  type SubagentLimits,
+} from "./subagent-limits.js"
 
 /**
  * What Observer is allowed to capture.
@@ -38,6 +43,8 @@ export interface ObserverConfig {
   guidance: boolean
   /** Pass Codex's project-aware enabled skill inventory to every spawned subagent. */
   passAllSkills: boolean
+  /** Global hard caps applied to subagent creation on every observed host. */
+  subagentLimits: SubagentLimits
   /** Per-employee model, reasoning effort and skills. See `seats.ts`. */
   seats: SeatsConfig
   /** Configured provider instances, keyed by the user's instance id. */
@@ -83,6 +90,7 @@ export const DEFAULT_CONFIG: Omit<ObserverConfig, "token"> = {
   },
   guidance: true,
   passAllSkills: true,
+  subagentLimits: DEFAULT_SUBAGENT_LIMITS,
   seats: DEFAULT_SEATS,
   providers: {},
   autostart: true,
@@ -136,6 +144,12 @@ export const ConfigSchema = z.object({
     .catch(DEFAULT_CONFIG.capture),
   guidance: z.boolean().catch(DEFAULT_CONFIG.guidance),
   passAllSkills: z.boolean().catch(DEFAULT_CONFIG.passAllSkills),
+  subagentLimits: SubagentLimitsSchema
+    .extend({
+      maxDepth: SubagentLimitsSchema.shape.maxDepth.catch(DEFAULT_CONFIG.subagentLimits.maxDepth),
+      maxPerSession: SubagentLimitsSchema.shape.maxPerSession.catch(DEFAULT_CONFIG.subagentLimits.maxPerSession),
+    })
+    .catch(DEFAULT_CONFIG.subagentLimits),
   seats: SeatsConfigSchema,
   providers: ProvidersConfigSchema,
   autostart: z.boolean().catch(DEFAULT_CONFIG.autostart),
@@ -148,6 +162,7 @@ export const ConfigPatchSchema = z
     redaction: RedactionConfigSchema.optional(),
     guidance: z.boolean().optional(),
     passAllSkills: z.boolean().optional(),
+    subagentLimits: SubagentLimitsSchema.optional(),
     seats: SeatsConfigSchema.optional(),
     providers: ProvidersConfigSchema.optional(),
     autostart: z.boolean().optional(),

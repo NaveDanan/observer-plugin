@@ -151,6 +151,17 @@ export type {
   CodexSkillDiscoveryOptions,
   CodexSkillInventory,
 } from "./codex-skills.js"
+export { fetchCodexSkillsWithFallback, fetchHostSkills, runSkillCommand, SKILL_HOSTS } from "./host-skills.js"
+export type {
+  HostAvailableSkill,
+  HostSkillDiscoveryOptions,
+  HostSkillInventory,
+  HostSkillLocation,
+  HostSkillSummary,
+  SkillCommandResult,
+  SkillCommandRunner,
+  SkillHost,
+} from "./host-skills.js"
 export { createClaudeAdapter, claudeAdapter, CLAUDE_DEFAULT_PROFILE_ID } from "./claude.js"
 export type { ClaudeAdapterOptions, ClaudeVersionRunner } from "./claude.js"
 export {

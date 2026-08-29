@@ -1,11 +1,17 @@
 import {
+  DEFAULT_SUBAGENT_LIMITS,
   LEGACY_TARGET_ID,
   type CodexSkillInventory,
+  type HostAvailableSkill,
+  type HostSkillInventory,
+  type HostSkillSummary,
+  type SkillHost,
   type ModelOptionDescriptor,
   type SeatIssue,
   type SeatSpec,
   type SeatTarget,
   type SeatsConfig,
+  type SubagentLimits,
   diagnoseSeats,
   readOpencodeTarget,
   seatTargets,
@@ -15,6 +21,7 @@ import { diagnoseOpencodeSeats } from "./seat-agents.js"
 import {
   type ConfigUIState,
   DEFAULT_APPLY_ROWS,
+  SUBAGENT_LIMIT_ROWS,
   type EmployeeRow,
   type MenuRowKind,
   type PickerEntry,
@@ -166,6 +173,9 @@ export function render(state: ConfigUIState, viewport: Viewport = DEFAULT_VIEWPO
     case "skills":
       lines.push(...skillInventory(state, room, columns, theme))
       break
+    case "limits":
+      lines.push(...subagentLimitEditor(state, columns, theme))
+      break
   }
 
   lines.push(...footer)
@@ -283,6 +293,7 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
     employees: "Employees",
     "default-model": "Default model",
     skills: "Skills",
+    limits: "Subagent limits",
     save: "Save & exit",
     exit: "Exit",
   }
@@ -293,7 +304,8 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
       errors > 0 ? theme.alert(`, ${errors} to fix`) : ""
     }`,
     "default-model": theme.dim(`hand one model to ${unseated === state.roster.length ? "everyone" : `${unseated} unseated`} at once`),
-    skills: `${state.passAllSkills ? theme.good("Pass All Skills on") : theme.warn("Pass All Skills off")} ${theme.dim(`- ${state.availableSkills.length} available`)}`,
+    skills: `${state.passAllSkills ? theme.good("Pass All Skills on") : theme.warn("Pass All Skills off")} ${theme.dim(`- ${state.availableSkills.length} unique across ${state.skillSummaries.length || coveredSkillHosts(state.availableSkills).length} hosts`)}`,
+    limits: `${state.subagentLimits.maxDepth} level${state.subagentLimits.maxDepth === 1 ? "" : "s"}, ${state.subagentLimits.maxPerSession} per session`,
     save: theme.warn("write these seats to config.json"),
     exit: theme.dim("leave observer config"),
   }
@@ -315,7 +327,11 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
         ? `Pick a host target and one of its models, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no model there, or move all ${state.roster.length} onto it.`
         : `Pick a model and reasoning effort once, then give it to the ${unseated} employee${unseated === 1 ? "" : "s"} with no seat, or move all ${state.roster.length} onto it.`,
     ],
-    skills: ["List the enabled project and global skills Codex reported, and choose whether every subagent receives them."],
+    skills: ["List the skills OpenCode, Codex, Claude Code, and Copilot make available in this project, and show exactly which hosts can load each one."],
+    limits: [
+      "One hard cap for every installed host. Depth counts subagent levels below the root. The session cap counts all subagents created during the session, including finished ones.",
+      "Set either value to 0 to disable new delegation.",
+    ],
     save: ["Writes seats to config.json, regenerates the agent definitions, and leaves."],
     exit: [],
   }
@@ -348,6 +364,34 @@ function mainMenu(state: ConfigUIState, issues: SeatIssue[], columns: number, th
   return lines
 }
 
+function subagentLimitEditor(state: ConfigUIState, columns: number, theme: Theme): string[] {
+  const at = Math.min(state.cursor.limits, SUBAGENT_LIMIT_ROWS.length - 1)
+  const lines = [theme.heading("Subagent limits") + theme.dim("   shared by every installed host"), ""]
+  const labels = { "max-depth": "Nesting depth", "max-per-session": "Per-session cap" } as const
+
+  SUBAGENT_LIMIT_ROWS.forEach((row, index) => {
+    const selected = index === at
+    const configured = row === "max-depth" ? state.subagentLimits.maxDepth : state.subagentLimits.maxPerSession
+    const editing = state.entry?.field === row
+    const value = editing ? `${state.entry?.value ?? ""}_` : String(configured)
+    lines.push(
+      marker(selected, false, theme) +
+        (selected ? theme.focus(pad(labels[row], GUTTER)) : pad(labels[row], GUTTER)) +
+        (configured === 0 && !editing ? theme.warn(value) : theme.accent(value)),
+    )
+    if (!selected) return
+    const detail =
+      row === "max-depth"
+        ? "Maximum subagent levels below the root agent. The root does not count."
+        : "Maximum subagents created over the whole session. Finished subagents still count; resumed subagents do not count again."
+    lines.push(...wrapAt(detail, Math.max(24, columns - GUTTER - 2), " ".repeat(GUTTER + 2)).split("\n").map(theme.dim))
+    if (configured === 0 && !editing) {
+      lines.push(" ".repeat(GUTTER + 2) + theme.warn("New subagent creation is disabled."))
+    }
+  })
+  return lines
+}
+
 function skillInventory(
   state: ConfigUIState,
   room: number,
@@ -358,7 +402,13 @@ function skillInventory(
   const total = count + 1
   const at = Math.min(state.cursor.skills, total - 1)
   const window = windowOf(at, total, Math.max(2, room))
-  const lines = [theme.heading("Skills") + theme.dim(`   ${count} available from Codex`), ""]
+  const hosts = coveredSkillHosts(state.availableSkills)
+  const hostCount = state.skillSummaries.length || hosts.length
+  const lines = [theme.heading("Skills") + theme.dim(`   ${count} unique across ${hostCount} host${hostCount === 1 ? "" : "s"}`), ""]
+
+  if (state.skillSummaries.length > 0) {
+    lines.push(state.skillSummaries.map((summary) => `${hostLabel(summary.host)} ${summary.count}${summary.discovery === "native" ? "" : ` (${summary.discovery})`}`).join("   "), "")
+  }
 
   for (let index = window.start; index < window.end; index++) {
     const selected = index === at
@@ -366,20 +416,27 @@ function skillInventory(
       const checked = state.passAllSkills ? "[x]" : "[ ]"
       lines.push(cursor(selected, theme) + (selected ? theme.focus(`${checked} Pass All Skills`) : `${checked} Pass All Skills`))
       if (selected) {
-        lines.push(...wrapAt("Pass this merged inventory to every Codex subagent, including employee agents and subcontractors.", columns - 4, "    ").split("\n").map(theme.dim))
+        lines.push(...wrapAt("Keep every host's native skill inventory available. Observer also forwards Codex metadata to fresh employee agents and subcontractors because their isolated spawn context does not carry it.", columns - 4, "    ").split("\n").map(theme.dim))
       }
       continue
     }
 
     const skill = state.availableSkills[index - 1]!
     const origin = skill.scope === "repo" ? "project" : "global"
-    const label = `${skill.name}  [${origin}]`
+    const label = `${skill.name}  [${origin}]  ${skillHosts(skill).map(hostLabel).join(", ")}`
     lines.push(cursor(selected, theme) + (selected ? theme.focus(label) : label))
     if (!selected) continue
     if (skill.description.trim()) {
       lines.push(...wrapAt(skill.description.replace(/\s+/g, " ").trim(), columns - 4, "    ").split("\n").map(theme.dim))
     }
-    lines.push(...wrapAt(skill.path, columns - 4, "    ").split("\n").map(theme.dim))
+    const locations = Array.isArray(skill.locations) ? skill.locations.filter((location) => location.path) : []
+    if (locations.length > 0) {
+      for (const location of locations) {
+        lines.push(...wrapAt(`${hostLabel(location.host)}: ${location.path}`, columns - 4, "    ").split("\n").map(theme.dim))
+      }
+    } else if (skill.path) {
+      lines.push(...wrapAt(skill.path, columns - 4, "    ").split("\n").map(theme.dim))
+    }
   }
 
   for (const warning of state.skillWarnings) {
@@ -1067,6 +1124,8 @@ function hints(state: ConfigUIState, columns: number, theme: Theme): string[] {
       return bar(["up/down", "move"], ["left/right", "change select"], ["enter", "toggle/change"], ["esc", "back"])
     case "skills":
       return bar(["up/down", "move"], ["enter", "toggle Pass All Skills"], ["s", "save"], ["esc", "back"])
+    case "limits":
+      return bar(["up/down", "move"], ["left/right", "adjust"], ["enter", "type value"], ["s", "save"], ["esc", "back"])
     case "default-target":
       return bar(["up/down", "move"], ["enter", "choose models for it"], ["esc", "back"])
     case "default":
@@ -1106,8 +1165,9 @@ export function renderReport(
   seats: SeatsConfig,
   roster: EmployeeRow[],
   profiles: TargetProfile[] = [],
-  skillInventory: CodexSkillInventory = { skills: [], warnings: [] },
+  skillInventory: HostSkillInventory | CodexSkillInventory = { skills: [], warnings: [] },
   passAllSkills = true,
+  subagentLimits: SubagentLimits = DEFAULT_SUBAGENT_LIMITS,
 ): string[] {
   const diagnosis = diagnoseSeats(seats)
   const issues = seatIssues(seats)
@@ -1153,14 +1213,54 @@ export function renderReport(
       lines.push(`  ${issue.severity}: ${scope.length > 0 ? `${scope}: ` : ""}${issue.message}`)
     }
   }
+  const inventory = reportSkillInventory(skillInventory)
   lines.push("", `Pass All Skills: ${passAllSkills ? "on" : "off"}`)
-  if (skillInventory.skills.length === 0) lines.push("  No available Codex skills were found for this project.")
-  for (const skill of skillInventory.skills) {
-    lines.push(`  ${skill.name} [${skill.scope === "repo" ? "project" : "global"}]  ${skill.path}`)
+  if (inventory.summaries.length > 0) {
+    for (const summary of inventory.summaries) {
+      lines.push(`  ${hostLabel(summary.host)}: ${summary.count} available (${summary.discovery})`)
+    }
   }
-  for (const warning of skillInventory.warnings) lines.push(`  warning: ${warning}`)
+  if (inventory.skills.length === 0) lines.push("  No available skills were found for the supported hosts in this project.")
+  for (const skill of inventory.skills) {
+    const path = skill.path ? `  ${skill.path}` : ""
+    lines.push(`  ${skill.name} [${skill.scope === "repo" ? "project" : "global"}] [${skillHosts(skill).map(hostLabel).join(", ")}]${path}`)
+  }
+  for (const warning of inventory.warnings) lines.push(`  warning: ${warning}`)
+  lines.push(
+    "",
+    "Subagent limits",
+    `  nesting depth: ${subagentLimits.maxDepth} level${subagentLimits.maxDepth === 1 ? "" : "s"} below the root`,
+    `  per session: ${subagentLimits.maxPerSession} lifetime subagent${subagentLimits.maxPerSession === 1 ? "" : "s"}`,
+  )
   lines.push("", "Run `observer config` in a terminal to change any of this.")
   return lines
+}
+
+function reportSkillInventory(inventory: HostSkillInventory | CodexSkillInventory): HostSkillInventory {
+  if ("summaries" in inventory) return inventory
+  return {
+    skills: inventory.skills.map((skill) => ({
+      ...skill,
+      hosts: ["codex"],
+      locations: [{ host: "codex", path: skill.path, scope: skill.scope, source: "codex skills/list" }],
+    })),
+    summaries: [{ host: "codex", count: inventory.skills.length, discovery: "native", source: "codex skills/list" }],
+    warnings: inventory.warnings,
+  }
+}
+
+function skillHosts(skill: HostAvailableSkill): SkillHost[] {
+  return Array.isArray(skill.hosts) && skill.hosts.length > 0 ? skill.hosts : ["codex"]
+}
+
+function coveredSkillHosts(skills: HostAvailableSkill[]): SkillHost[] {
+  const found = new Set<SkillHost>()
+  for (const skill of skills) for (const host of skillHosts(skill)) found.add(host)
+  return ["opencode", "codex", "claude", "copilot"].filter((host): host is SkillHost => found.has(host as SkillHost))
+}
+
+function hostLabel(host: SkillHost): string {
+  return host === "opencode" ? "OpenCode" : host === "claude" ? "Claude Code" : host === "copilot" ? "Copilot" : "Codex"
 }
 
 function reportTargetSeat(

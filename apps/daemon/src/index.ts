@@ -105,6 +105,14 @@ export type { DiagnosticsSnapshot, DropReason, DropSample } from "./diagnostics.
 export { createServer } from "./server.js"
 export type { ServerOptions } from "./server.js"
 export { loadConfig, saveConfig, DEFAULT_CONFIG, ConfigSchema, ConfigPatchSchema } from "./config.js"
+export {
+  DEFAULT_SUBAGENT_LIMITS,
+  MAX_CONFIGURED_SUBAGENT_DEPTH,
+  MAX_CONFIGURED_SUBAGENTS_PER_SESSION,
+  SubagentLimitsSchema,
+  subagentAdmissionError,
+} from "./subagent-limits.js"
+export type { SubagentLimits, SubagentCandidate } from "./subagent-limits.js"
 export type { ObserverConfig, CaptureConfig } from "./config.js"
 export {
   applySeatSkills,
@@ -142,6 +150,10 @@ export {
   createCopilotAdapter,
   createOpencodeAdapter,
   fetchCodexSkills,
+  fetchCodexSkillsWithFallback,
+  fetchHostSkills,
+  runSkillCommand,
+  SKILL_HOSTS,
   copilotSeatAgentName,
   copilotSeatAgentReference,
   COPILOT_SEAT_AGENT_MARKER,
@@ -164,6 +176,14 @@ export type {
   CodexAvailableSkill,
   CodexSkillDiscoveryOptions,
   CodexSkillInventory,
+  HostAvailableSkill,
+  HostSkillDiscoveryOptions,
+  HostSkillInventory,
+  HostSkillLocation,
+  HostSkillSummary,
+  SkillCommandResult,
+  SkillCommandRunner,
+  SkillHost,
   CodexSpawn,
   CodexSpawnResult,
   ControlSupport,

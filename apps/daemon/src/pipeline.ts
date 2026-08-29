@@ -5,6 +5,7 @@ import { type Change, type EventBody, type IngestEvent, IngestEvent as IngestEve
 import type { Store } from "@observer-ai/storage"
 import type { CaptureConfig, ObserverConfig } from "./config.js"
 import type { Diagnostics, DropReason } from "./diagnostics.js"
+import { subagentAdmissionError } from "./subagent-limits.js"
 
 export interface PipelineOptions {
   store: Store
@@ -130,8 +131,12 @@ export class Pipeline {
     const runtimeId = agent?.runtimeId
     if (!agent || !runtimeId) return
 
-    const existing = this.store.getAgentAssignmentByRuntime(event.host, runtimeId)
-    let parentRuntimeId = existing?.parentRuntimeId
+    const runtimeAssignment = this.store.getAgentAssignmentByRuntime(event.host, runtimeId)
+    const callId = event.body.kind === "agent.started" ? event.body.assignmentCallId : undefined
+    const callAssignment = callId
+      ? this.store.getAgentAssignmentByCall(event.host, event.sessionKey, callId)
+      : undefined
+    let parentRuntimeId = (callAssignment ?? runtimeAssignment)?.parentRuntimeId
     let status = agent.status
     if (event.body.kind === "agent.started") {
       const parentAgentKey = event.body.parentAgentKey
@@ -143,19 +148,45 @@ export class Pipeline {
         ? parentAgentKey === "main"
           ? event.sessionKey
           : this.store.getAgentByKey(sessionId, parentAgentKey)?.runtimeId ?? undefined
-        : existing?.parentRuntimeId ?? event.sessionKey
+        : (callAssignment ?? runtimeAssignment)?.parentRuntimeId ?? event.sessionKey
       status = "running"
     } else {
       status = event.body.status
     }
     if (!parentRuntimeId) return
+
+    // A pre-spawn hook reserves the durable row before the host has a runtime
+    // id. Exact call ids win; hosts whose start event omits one bind the oldest
+    // reservation for the same parent and reconcile exactly on PostToolUse.
+    const pending = this.store
+      .listAgentAssignments(event.host, event.sessionKey)
+      .filter(
+        (assignment) =>
+          assignment.runtimeId === null &&
+          assignment.status === "starting" &&
+          assignment.parentRuntimeId === parentRuntimeId,
+      )
+    const reserved = callAssignment ?? (runtimeAssignment ? undefined : pending[0])
+    if (reserved && runtimeAssignment && reserved.id !== runtimeAssignment.id) {
+      this.store.deleteAgentAssignment(runtimeAssignment.id)
+    }
+    const existing = reserved ?? runtimeAssignment
+    if (!existing) {
+      const assignments = this.store.listAgentAssignments(event.host, event.sessionKey)
+      const error = subagentAdmissionError(
+        assignments,
+        { host: event.host, rootSessionKey: event.sessionKey, parentRuntimeId },
+        this.config.subagentLimits,
+      )
+      if (error) return
+    }
     this.store.putAgentAssignment({
       id: existing?.id ?? `observed:${event.host}:${event.sessionKey}:${runtimeId}`,
       host: event.host,
       rootSessionKey: event.sessionKey,
       runtimeId,
       parentRuntimeId,
-      callId: existing?.callId ?? null,
+      callId: callId ?? existing?.callId ?? null,
       agentType: agent.agentType,
       hostAgentType: agent.agentType,
       description: agent.description,

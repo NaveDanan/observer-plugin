@@ -47,10 +47,13 @@ describe("install", () => {
     install("claude")
     const settings = readJson(hostConfigPath("claude"))
     expect(Object.keys(settings["hooks"]).sort()).toEqual([...HOST_EVENTS.claude].sort())
-    const entry = settings["hooks"]["PreToolUse"][0].hooks[0]
+    const groups = settings["hooks"]["PreToolUse"]
+    const entry = groups.flatMap((group: any) => group.hooks).find((hook: any) => hook.statusMessage === "Observer")
+    const controller = groups.flatMap((group: any) => group.hooks).find((hook: any) => hook.statusMessage === "Observer subagent limits")
     // Exec form avoids shell quoting problems in paths.
     expect(entry.args).toContain("--host")
     expect(entry.statusMessage).toBe("Observer")
+    expect(controller.args[0]).toContain("claude-control.js")
     expect(readJson(claudeMcpConfigPath())["mcpServers"]["observer-coordination"]).toMatchObject({
       type: "stdio",
       args: [expect.stringContaining("coordination-mcp.js"), "--host", "claude"],
@@ -98,10 +101,13 @@ describe("install", () => {
     install("copilot")
     const document = readJson(hostConfigPath("copilot"))
     expect(document["version"]).toBe(1)
-    const entry = document["hooks"]["preToolUse"][0]
+    const entries = document["hooks"]["preToolUse"]
+    const entry = entries.find((candidate: any) => candidate.bash.includes("--host copilot"))
+    const controller = entries.find((candidate: any) => candidate.bash.includes("copilot-control.js"))
     expect(entry.bash).toContain("--host copilot")
     expect(entry.powershell).toContain("--host copilot")
     expect(entry.timeoutSec).toBe(5)
+    expect(controller.matcher).toBe("task")
   })
 
   it("writes Codex hooks with platform-specific commands", () => {

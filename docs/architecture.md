@@ -218,29 +218,41 @@ an explicit stable caller id otherwise; it never picks an assignment by recency 
 
 Messages may only address assignments under the same host root session. Sending also emits a
 `messaged` edge, but it never changes the spawn parent. Sender and recipient budgets each cap direct
-messages at 30 per minute. Native `task` calls and `agent_spawn` cap each root session at 15 distinct
-subagents. They respect a lower OpenCode depth setting and otherwise allow three session levels:
-the root, its subagent, and that subagent's child. Resuming a stable `task_id` creates no subagent and
-does not consume another slot. OpenCode otherwise strips `task` from child sessions, so
+messages at 30 per minute. `subagentLimits.maxDepth` and `subagentLimits.maxPerSession` define one
+creation policy for OpenCode, Claude Code, Codex, and Copilot. The defaults allow two subagent levels
+below the root and 15 distinct subagents over the session lifetime. Resuming a stable subagent id
+creates no subagent and consumes no new slot. Setting either value to zero blocks new creation.
+OpenCode otherwise strips `task` from child sessions, so
 the plugin adds `task: allow` only to `general` and generated Observer seats when no global,
 wildcard or per-agent task policy exists. Coordination tools check the resolved session rules when
-they run, and nested children inherit parent restrictions. OpenCode's default depth is 1, which
-forbids a subagent from creating a child. Observer changes that default to 2 parent edges, which
-produces the three session levels, but leaves any explicit lower user value intact.
+they run, and nested children inherit parent restrictions. Observer projects the shared depth into
+OpenCode's host config while preserving any explicit lower OpenCode value.
+
+OpenCode forks are new root conversations: the host omits `parentID` while copying the source
+session's metadata. The plugin stamps each assigned child with its durable assignment UUID and
+resolves a copied marker back through the coordination API, so a fork keeps the original logical
+runtime id, root ledger and depth. The `shell.env` hook passes the same marker to an OpenCode process
+started from an assigned subagent; a blank root in that nested process therefore remains in the
+originating assignment's cap scope. For a root created through the current OpenCode server, the
+plugin correlates `session.created` with the assigned shell call that is still executing; OpenCode
+publishes the event before that server request returns. More than one possible shell creator is
+ambiguous and fails closed. A marker that cannot be verified also fails closed instead of being
+promoted to a root.
 
 OpenCode permits one native top-level `task` context per root session. That context is the
 coordinator: it creates every additional worker beneath itself with `agent_spawn`, and the root
 resumes it with its stable `task_id` for later work. The plugin reserves the coordinator slot before
 async admission work, and the daemon rejects a second top-level assignment so parallel calls and
 separate plugin processes cannot split one investigation into several root children. Nested workers
-remain subject to the normal depth and 15-subagent limits.
+remain subject to the configured shared limits.
 
-These are daemon invariants as well as plugin checks. The coordination API rejects the sixteenth
-assignment for a root, rejects a parent chain deeper than two subagent edges, and does not allow an
-existing assignment to change its parent or runtime id. Finished assignments still count toward the
-15-agent lifetime cap; resuming an existing runtime id does not. The plugin reserves slots before
-parallel OpenCode creation begins, while the daemon serially checks durable assignments before each
-insert, so concurrent calls cannot all pass against the same final slot.
+These are daemon invariants as well as host checks. OpenCode reserves creation directly in its plugin.
+Claude Code, Codex, and Copilot install synchronous pre-spawn controllers that reserve the same durable
+assignment before allowing the host tool to run. The coordination API rejects a parent chain or
+lifetime count beyond the configured values, and it does not allow an existing assignment to change
+its parent or runtime id. Finished assignments still count; resuming an existing runtime id does not.
+The daemon serially checks durable assignments before each insert, so concurrent calls cannot all pass
+against the same final slot.
 New creation is fail-closed when the daemon cannot supply or persist that durable count: native
 `task` and `agent_spawn` refuse to create a child instead of trusting a process-local count that a
 plugin restart could have reset. Resuming an existing `task_id` is not creation and remains outside
@@ -342,12 +354,28 @@ anywhere, but it is now a shortcut rather than the only way in. Views unwind one
 level per esc — `models` -> `employee` -> `employees` -> `menu` — and only the
 menu ends the session, so backing out of a picker can never quit by accident.
 
-The Skills row opens Codex's merged inventory for the current project. Project
-and global skills remain distinguishable. **Pass All Skills** defaults on and
-is stored as `passAllSkills` in `config.json`. The screen caches the inventory
-by project directory, which lets the synchronous Codex pre-spawn hook add the
-same progressive-disclosure metadata to employee and subcontractor prompts
-without starting another Codex process inside a hook.
+The Skills row merges four host inventories for the current project. Codex
+uses `skills/list`, OpenCode uses `opencode debug skill`, Copilot uses
+`copilot plugins list --kind skill --json`, and Claude Code uses its documented
+project, personal, and installed-plugin roots because it exposes no
+non-interactive skill-list command. OpenCode, Codex, and Copilot fall back to
+their documented roots when a CLI is absent, too old, or slower than the
+bounded probe. The TUI marks each host's result as native, filesystem, or
+unavailable and keeps project and global skills distinguishable.
+
+**Pass All Skills** defaults on and is stored as `passAllSkills` in
+`config.json`. OpenCode, Claude Code, and Copilot already advertise native
+skills inside subagents. Observer caches the Codex slice by project directory,
+which lets the synchronous Codex pre-spawn hook add the same
+progressive-disclosure metadata to employee and subcontractor prompts without
+starting another Codex process inside a hook.
+
+The Subagent limits row edits the shared `subagentLimits` object. Arrow keys
+change one unit at a time and enter accepts a validated numeric value. The
+screen states that depth excludes the root, the count is lifetime rather than
+concurrent, and zero disables creation. Saving writes `config.json` and sends
+the same limits to a running daemon so every installed host uses the new cap
+for its next admission check.
 
 The split is three files and holds strictly:
 

@@ -305,6 +305,7 @@ export const codexAdapter: Adapter = {
           {
             kind: "agent.started",
             runtimeId: agentId,
+            assignmentCallId: spawn?.callId,
             agentType: pickString(p, "agent_type") ?? "subagent",
             parentAgentKey: spawn?.parentAgentKey ?? MAIN_AGENT_KEY,
             model,

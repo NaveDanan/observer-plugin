@@ -300,6 +300,7 @@ describe("seats survive the config round-trip", () => {
       capture: { messages: true, reasoning: true, toolInput: true, toolOutput: true, prompts: true, rawEvents: false },
       guidance: true,
       passAllSkills: true,
+      subagentLimits: { maxDepth: 2, maxPerSession: 15 },
       seats: { control: true, employees },
       providers: {},
       autostart: true,

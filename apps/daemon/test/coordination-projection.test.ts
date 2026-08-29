@@ -13,6 +13,44 @@ beforeEach(() => {
 afterEach(() => store.close())
 
 describe("portable coordination assignment projection", () => {
+  it("binds a pre-spawn reservation instead of creating a duplicate assignment", () => {
+    store.putAgentAssignment({
+      id: "reserved-claude-child",
+      host: "claude",
+      rootSessionKey: "claude-root",
+      runtimeId: null,
+      parentRuntimeId: "claude-root",
+      callId: "spawn-child",
+      agentType: "reviewer",
+      hostAgentType: "reviewer",
+      description: "Review auth",
+      prompt: "Audit the auth flow",
+      status: "starting",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+
+    pipeline.ingestHook({
+      host: "claude",
+      event: "PostToolUse",
+      deliveryId: "claude-spawn-result",
+      payload: {
+        session_id: "claude-root",
+        tool_name: "Agent",
+        tool_use_id: "spawn-child",
+        tool_input: { subagent_type: "reviewer" },
+        tool_response: { agentId: "claude-child-1" },
+      },
+    })
+
+    expect(store.listAgentAssignments("claude", "claude-root")).toHaveLength(1)
+    expect(store.getAgentAssignment("reserved-claude-child")).toMatchObject({
+      runtimeId: "claude-child-1",
+      callId: "spawn-child",
+      status: "running",
+    })
+  })
+
   it("makes Claude subagents addressable after the host reports their stable ID", () => {
     pipeline.ingestHook({
       host: "claude",

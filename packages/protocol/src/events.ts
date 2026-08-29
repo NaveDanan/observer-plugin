@@ -120,6 +120,8 @@ export const EventBody = z.discriminatedUnion("kind", [
     runtimeId: z.string().optional(),
     /** True only when the host is continuing an existing interrupted run. */
     resumed: z.boolean().optional(),
+    /** Parent spawn call reserved before the host revealed this runtime id. */
+    assignmentCallId: z.string().optional(),
     parentAgentKey: z.string().optional(),
     model: z.string().optional(),
     modelConfidence: Provenance.optional(),

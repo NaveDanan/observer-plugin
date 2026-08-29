@@ -8,7 +8,7 @@ import type { AgentAssignment, AgentDetail, AgentMail, SessionSnapshot } from "@
 import { behaviorDirective, ROSTER, rankEmployees } from "@observer-ai/roster"
 import type { Store } from "@observer-ai/storage"
 import { z } from "zod"
-import { ConfigPatchSchema, saveConfig } from "./config.js"
+import { ConfigPatchSchema, loadConfig, saveConfig } from "./config.js"
 import type { ObserverConfig } from "./config.js"
 import type { Pipeline } from "./pipeline.js"
 import type { Diagnostics } from "./diagnostics.js"
@@ -16,6 +16,7 @@ import { applySeatSkills, diagnoseSeats } from "./seats.js"
 import { Broadcaster } from "./broadcaster.js"
 import { describeCatalogue, listModels } from "./models.js"
 import { seatAdapters } from "./adapters/index.js"
+import { subagentAdmissionError } from "./subagent-limits.js"
 import type { HostCapabilities as SeatHostCapabilities, HostProfile, HostSeatAdapter, ModelCatalogue } from "./adapters/index.js"
 
 const HookRequestSchema = z.object({
@@ -54,10 +55,6 @@ const AgentMailSchema = z.object({
 })
 
 const MAIL_RATE_LIMIT = 30
-/** Root -> subagent -> subagent: two parent edges below the root. */
-const MAX_SUBAGENT_DEPTH = 2
-/** Lifetime cap per root session, including finished and pre-runtime assignments. */
-const MAX_SUBAGENTS_PER_SESSION = 15
 const INBOX_PAGE_BYTES = 64 * 1024
 /** A pasted screenshot is well under this; anything above is not a transcript. */
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
@@ -210,6 +207,8 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       retentionDays: config.retentionDays,
       redaction: config.redaction,
       guidance: config.guidance,
+      passAllSkills: config.passAllSkills,
+      subagentLimits: config.subagentLimits,
       seats: config.seats,
       providers: config.providers,
     }
@@ -221,14 +220,31 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       }
       if (parsed.data.redaction !== undefined) config.redaction = parsed.data.redaction
       if (parsed.data.guidance !== undefined) config.guidance = parsed.data.guidance
+      if (parsed.data.passAllSkills !== undefined) config.passAllSkills = parsed.data.passAllSkills
+      if (parsed.data.subagentLimits !== undefined) config.subagentLimits = parsed.data.subagentLimits
       if (parsed.data.seats !== undefined) config.seats = parsed.data.seats
       if (parsed.data.providers !== undefined) config.providers = parsed.data.providers
-      saveConfig(config)
+      // Merge the patch into a fresh disk read. The TUI may have written
+      // another declared field or a forward-compatible key since this daemon
+      // started, and a live limit update must not replace either with the
+      // daemon's older in-memory copy.
+      const persisted = loadConfig()
+      if (parsed.data.capture !== undefined) persisted.capture = parsed.data.capture
+      if (parsed.data.retentionDays !== undefined) persisted.retentionDays = parsed.data.retentionDays
+      if (parsed.data.redaction !== undefined) persisted.redaction = parsed.data.redaction
+      if (parsed.data.guidance !== undefined) persisted.guidance = parsed.data.guidance
+      if (parsed.data.passAllSkills !== undefined) persisted.passAllSkills = parsed.data.passAllSkills
+      if (parsed.data.subagentLimits !== undefined) persisted.subagentLimits = parsed.data.subagentLimits
+      if (parsed.data.seats !== undefined) persisted.seats = parsed.data.seats
+      if (parsed.data.providers !== undefined) persisted.providers = parsed.data.providers
+      saveConfig(persisted)
     } catch (error) {
       config.capture = previous.capture
       config.retentionDays = previous.retentionDays
       config.redaction = previous.redaction
       config.guidance = previous.guidance
+      config.passAllSkills = previous.passAllSkills
+      config.subagentLimits = previous.subagentLimits
       config.seats = previous.seats
       config.providers = previous.providers
       store.setRetentionDays(previous.retentionDays)
@@ -562,37 +578,12 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
           return reply.code(409).send({ error: detail })
         }
       }
-      if (assignments.length >= MAX_SUBAGENTS_PER_SESSION) {
-        return reply.code(409).send({ error: `subagent limit reached (${MAX_SUBAGENTS_PER_SESSION} per session)` })
-      }
-      const parent =
-        row.parentRuntimeId === row.rootSessionKey
-          ? undefined
-          : assignments.find((assignment) => assignment.runtimeId === row.parentRuntimeId)
-      if (row.parentRuntimeId !== row.rootSessionKey && !parent) {
-        return reply.code(409).send({ error: "parent assignment not found in this session" })
-      }
+      const admissionError = subagentAdmissionError(assignments, row, config.subagentLimits)
+      if (admissionError) return reply.code(409).send({ error: admissionError })
       const activeChildren = assignments.filter(
         (assignment) => assignment.parentRuntimeId === row.parentRuntimeId && ["starting", "running"].includes(assignment.status),
       )
       if (activeChildren.length >= 16) return reply.code(409).send({ error: "subagent fan-out limit reached" })
-      let depth = 1
-      if (parent) {
-        depth = 2
-        let cursor = parent
-        const seen = new Set<string>()
-        while (cursor.parentRuntimeId !== row.rootSessionKey) {
-          if (seen.has(cursor.id)) return reply.code(409).send({ error: "assignment parent cycle" })
-          seen.add(cursor.id)
-          depth++
-          const next = assignments.find((assignment) => assignment.runtimeId === cursor.parentRuntimeId)
-          if (!next) return reply.code(409).send({ error: "parent assignment not found in this session" })
-          cursor = next
-        }
-      }
-      if (depth > MAX_SUBAGENT_DEPTH) {
-        return reply.code(409).send({ error: `subagent depth limit reached (${MAX_SUBAGENT_DEPTH + 1} session levels)` })
-      }
     }
     store.putAgentAssignment(row)
     if (row.runtimeId) {
@@ -636,12 +627,20 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     const parsed = z
       .object({
         host: HostId,
+        assignmentId: z.string().min(1).optional(),
         rootSessionKey: z.string().min(1).optional(),
         runtimeId: z.string().min(1).optional(),
         callId: z.string().min(1).optional(),
       })
       .safeParse(request.query)
     if (!parsed.success) return reply.code(400).send({ error: "invalid assignment query" })
+    if (parsed.data.assignmentId) {
+      const assignment = store.getAgentAssignment(parsed.data.assignmentId)
+      if (!assignment || assignment.host !== parsed.data.host) {
+        return reply.code(404).send({ error: "assignment not found" })
+      }
+      return reply.send({ assignment: publicAssignment(assignment) })
+    }
     if (parsed.data.runtimeId) {
       const assignment = store.getAgentAssignmentByRuntime(parsed.data.host, parsed.data.runtimeId)
       if (!assignment || (parsed.data.rootSessionKey && assignment.rootSessionKey !== parsed.data.rootSessionKey)) {
@@ -889,6 +888,8 @@ function configPayload(config: ObserverConfig) {
     retentionDays: config.retentionDays,
     redaction: config.redaction,
     guidance: config.guidance,
+    passAllSkills: config.passAllSkills,
+    subagentLimits: config.subagentLimits,
     seats: config.seats,
     providers: config.providers,
     autostart: config.autostart,

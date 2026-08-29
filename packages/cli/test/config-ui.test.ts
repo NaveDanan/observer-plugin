@@ -354,12 +354,12 @@ describe("the main menu", () => {
   })
 
   it("offers Save & exit only when there is something to save", () => {
-    expect(menuRows(start())).toEqual(["control", "employees", "default-model", "skills", "exit"])
-    expect(menuRows(press(start(), "c"))).toEqual(["control", "employees", "default-model", "skills", "save", "exit"])
+    expect(menuRows(start())).toEqual(["control", "employees", "default-model", "skills", "limits", "exit"])
+    expect(menuRows(press(start(), "c"))).toEqual(["control", "employees", "default-model", "skills", "limits", "save", "exit"])
   })
 
   it("saves and then leaves from the Save & exit row, because that is what it says", () => {
-    const onSave = press(start(), "c", "down", "down", "down", "down")
+    const onSave = press(start(), "c", "down", "down", "down", "down", "down")
     expect(menuRows(onSave)[onSave.cursor.menu]).toBe("save")
     const saving = press(onSave, "return")
     expect(saving.request).toBe("save")
@@ -368,7 +368,7 @@ describe("the main menu", () => {
   })
 
   it("keeps the user on screen when that save fails", () => {
-    const saving = press(press(start(), "c", "down", "down", "down"), "return")
+    const saving = press(press(start(), "c", "down", "down", "down", "down", "down"), "return")
     const failed = applied(saving, { saved: false, status: "Could not save: disk full" })
     expect(failed.request).toBeUndefined()
     expect(failed.dirty).toBe(true)
@@ -377,10 +377,10 @@ describe("the main menu", () => {
   it("acts on the row that is on screen after a save removes one", () => {
     // The cursor is remembered per view, so a save that drops `Save & exit`
     // would otherwise leave it pointing one row past the end.
-    const onSave = press(start(), "c", "down", "down", "down", "down")
+    const onSave = press(start(), "c", "down", "down", "down", "down", "down")
     const saved = { ...applied(press(onSave, "return"), { saved: true, status: "Saved." }), quitAfterSave: false }
     delete saved.request
-    expect(menuRows(saved)).toEqual(["control", "employees", "default-model", "skills", "exit"])
+    expect(menuRows(saved)).toEqual(["control", "employees", "default-model", "skills", "limits", "exit"])
     expect(press(saved, "return").request).toBe("quit")
   })
 
@@ -1477,6 +1477,44 @@ describe("filtering", () => {
 })
 
 describe("skills", () => {
+  it("shows skill availability for every supported host", () => {
+    let state = initialState({
+      seats: { control: false, employees: {} },
+      roster: ROSTER,
+      models: MODELS,
+      skillInventory: {
+        skills: [{
+          name: "shared-review",
+          description: "Review code",
+          path: "/home/me/.agents/skills/review/SKILL.md",
+          scope: "user",
+          hosts: ["opencode", "codex", "claude", "copilot"],
+          locations: [
+            { host: "opencode", path: "/home/me/.agents/skills/review/SKILL.md", scope: "user", source: "test" },
+            { host: "codex", path: "/home/me/.agents/skills/review/SKILL.md", scope: "user", source: "test" },
+            { host: "claude", path: "/home/me/.agents/skills/review/SKILL.md", scope: "user", source: "test" },
+            { host: "copilot", path: "/home/me/.agents/skills/review/SKILL.md", scope: "user", source: "test" },
+          ],
+        }],
+        summaries: [
+          { host: "opencode", count: 1, discovery: "native", source: "test" },
+          { host: "codex", count: 1, discovery: "native", source: "test" },
+          { host: "claude", count: 1, discovery: "filesystem", source: "test" },
+          { host: "copilot", count: 1, discovery: "native", source: "test" },
+        ],
+        warnings: [],
+      } as any,
+    })
+    state = press(state, "down", "down", "down", "return")
+    const text = render(state, { rows: 40, columns: 120 }).join("\n")
+
+    expect(text).toContain("OpenCode")
+    expect(text).toContain("Codex")
+    expect(text).toContain("Claude Code")
+    expect(text).toContain("Copilot")
+    expect(text).toContain("shared-review")
+  })
+
   it("lists project and global Codex skills with Pass All Skills selected by default", () => {
     let state = initialState({
       seats: { control: false, employees: {} },
@@ -1529,6 +1567,58 @@ describe("skills", () => {
     expect(state.entry?.value).toBe("react")
     state = press(state, "backspace", "backspace", "backspace", "backspace", "backspace", "return")
     expect(state.seats.employees["arjun-mehta"]).toBeUndefined()
+  })
+})
+
+describe("subagent limits", () => {
+  const limits = (): ConfigUIState => press(start(), "down", "down", "down", "down", "return")
+
+  it("opens from the main menu and explains both shared hard caps", () => {
+    const state = limits()
+    const text = render(state, { rows: 40, columns: 120 }).join("\n")
+
+    expect(state.view).toBe("limits")
+    expect(state.subagentLimits).toEqual({ maxDepth: 2, maxPerSession: 15 })
+    expect(text).toContain("Nesting depth")
+    expect(text).toContain("Per-session cap")
+    expect(collapse(render(press(state, "down"), { rows: 40, columns: 120 }).join("\n"))).toContain("Finished subagents still count")
+  })
+
+  it("adjusts values with arrows and marks the config dirty", () => {
+    const state = press(limits(), "right", "down", "left")
+
+    expect(state.subagentLimits).toEqual({ maxDepth: 3, maxPerSession: 14 })
+    expect(state.dirty).toBe(true)
+  })
+
+  it("accepts direct numeric entry and treats zero as delegation disabled", () => {
+    let state = press(limits(), "return", "backspace")
+    state = type(state, "0")
+    state = press(state, "return")
+    expect(state.subagentLimits.maxDepth).toBe(0)
+    expect(state.status).toContain("new delegation is disabled")
+
+    state = press(state, "down", "return")
+    for (let index = 0; index < 2; index++) state = press(state, "backspace")
+    state = type(state, "21")
+    state = press(state, "return")
+    expect(state.subagentLimits.maxPerSession).toBe(21)
+  })
+
+  it("keeps an invalid direct value open so it can be corrected", () => {
+    let state = press(limits(), "return", "backspace")
+    state = type(state, "99")
+    state = press(state, "return")
+
+    expect(state.entry?.field).toBe("max-depth")
+    expect(state.subagentLimits.maxDepth).toBe(2)
+    expect(state.status).toContain("whole number from 0 to 32")
+  })
+
+  it("ignores non-numeric input", () => {
+    let state = press(limits(), "return")
+    state = type(state, "x")
+    expect(state.entry?.value).toBe("2")
   })
 })
 
@@ -1945,6 +2035,8 @@ describe("renderReport", () => {
     expect(text).toContain("in effect           yes")
     expect(text).toContain("arjun-mehta")
     expect(text).toContain("anthropic/claude-opus-4-8")
+    expect(text).toContain("nesting depth: 2 levels below the root")
+    expect(text).toContain("per session: 15 lifetime subagents")
     expect(text).toContain("Run `observer config` in a terminal")
     expect(text).not.toMatch(/\u001B\[/)
   })

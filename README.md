@@ -155,6 +155,10 @@ In `~/.observer/config.json`:
 ```jsonc
 {
   "passAllSkills": true,
+  "subagentLimits": {
+    "maxDepth": 2,
+    "maxPerSession": 15
+  },
   "seats": {
     "control": true,
     "employees": {
@@ -165,10 +169,19 @@ In `~/.observer/config.json`:
 }
 ```
 
-`observer config` lists the project and global skills Codex makes available.
-**Pass All Skills** is on by default and passes that inventory to every Codex
-subagent, including subcontractors. Turn it off from the Skills screen if a
-project should keep those skills out of delegated prompts.
+`observer config` lists the skills OpenCode, Codex, Claude Code, and Copilot
+make available for the current project. Each skill names the hosts that can
+load it, and the screen reports whether the answer came from a native host
+command or a filesystem fallback. **Pass All Skills** is on by default. The
+three hosts with native Skill tools expose their own inventories to subagents;
+Observer forwards Codex's metadata into isolated employee and subcontractor
+spawns.
+
+The Subagent limits screen sets one hard policy for every installed host.
+`maxDepth` counts subagent levels below the root agent. `maxPerSession` counts
+every subagent created during a session, including finished subagents. Resuming
+an existing subagent does not count again. Set either value to `0` to block new
+delegation. Saving updates a running Observer daemon when one is available.
 
 Run `observer install opencode` and/or `observer install copilot --plugin` after
 editing, then restart the affected host.
@@ -193,9 +206,9 @@ registers Observer's nested-spawn, identity and direct-message tools. To prevent
 OpenCode from stripping nested task access, it adds `task: allow` only to
 `general` and generated Observer seats when no global, wildcard or per-agent
 task policy exists. Each tool also checks the host's resolved session policy,
-and nested children inherit the parent's restrictions. Observer changes
-OpenCode's otherwise non-nesting depth default to 8 while preserving an
-explicit user value.
+and nested children inherit the parent's restrictions. Observer uses the
+shared `subagentLimits.maxDepth` value as OpenCode's default. An explicit lower
+OpenCode value remains in force.
 
 ### What you should expect to change
 

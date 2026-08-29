@@ -12,12 +12,16 @@ import { join } from "node:path"
 import { COPILOT_SEAT_AGENT_MARKER } from "@observer-ai/daemon"
 import type { CopilotSeatTarget, SeatsConfig } from "@observer-ai/daemon"
 import { controlCopilotDelegation } from "./copilot-control-core.js"
+import { admitSubagent, type AdmissionConfig } from "./subagent-admission.js"
 
 const STDIN_TIMEOUT_MS = 1_500
 const MAX_PAYLOAD_BYTES = 2_000_000
 const PLUGIN_NAME = "observer"
 
 interface ObserverFile {
+  port?: number
+  token?: string
+  subagentLimits?: AdmissionConfig["subagentLimits"]
   guidance?: boolean
   seats?: SeatsConfig
 }
@@ -110,6 +114,16 @@ async function main(): Promise<unknown> {
     return {}
   }
   if (!isRecord(input)) return {}
+
+  if (typeof config.port === "number" && typeof config.token === "string") {
+    const admission = await admitSubagent("copilot", input, config as AdmissionConfig)
+    if (admission.controlled && !admission.allowed) {
+      return {
+        permissionDecision: "deny",
+        permissionDecisionReason: admission.reason,
+      }
+    }
+  }
 
   return controlCopilotDelegation(input, config, generatedAgentReady) ?? {}
 }
