@@ -100,13 +100,13 @@ export function SettingsPage({
   const clearTarget = useCallback(() => setSearchTargetId(null), [])
 
   return (
-    <div className="fixed inset-0 z-30 flex bg-background text-foreground">
+    <div className="settings-layout fixed inset-0 z-30 flex bg-background text-foreground">
       <nav
         data-app-sidebar
         aria-label="Settings sections"
-        className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+        className="settings-nav flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
       >
-        <div className="flex flex-col gap-2 p-[var(--sidebar-content-inset)]">
+        <div className="settings-nav-inner flex flex-col gap-2 p-[var(--sidebar-content-inset)]">
           <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
             <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
             <Input
@@ -164,7 +164,7 @@ export function SettingsPage({
             </p>
           ) : null}
 
-          <ul className="flex flex-col gap-0.5">
+          <ul className="settings-nav-list flex flex-col gap-0.5">
             {searching
               ? results.map((item, index) => (
                   <li key={item.id}>
@@ -210,8 +210,8 @@ export function SettingsPage({
         </div>
       </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-border/70 px-4">
+      <div className="settings-content flex min-w-0 flex-1 flex-col">
+        <header className="settings-header flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-border/70 px-4">
           <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
             <span className="text-muted-foreground">Settings</span>
             <span className="text-muted-foreground/60">/</span>
@@ -226,9 +226,9 @@ export function SettingsPage({
         <SettingsSearchTargetProvider targetId={searchTargetId} onTargetHandled={clearTarget}>
           <div
             data-settings-page-scroll
-            className="topbar-scroll-fade min-h-0 flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem]"
+            className="settings-page-scroll topbar-scroll-fade min-h-0 flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem]"
           >
-            <div className="mx-auto flex w-full max-w-4xl flex-col gap-12 px-2 py-8 sm:px-6">
+            <div className="settings-content-inner mx-auto flex w-full max-w-4xl flex-col gap-12 px-2 py-8 sm:px-6">
               {tab === "general" ? <GeneralPanel /> : null}
               {tab === "employees" ? <EmployeesPanel /> : null}
               {tab === "appearance" ? <AppearancePanel /> : null}

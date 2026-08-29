@@ -88,25 +88,10 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
         </button>
       </div>
 
+      <SessionRail sessions={sessions} activeSessionId={activeSessionId} onSelectSession={props.onSelectSession} mobile />
+
       {collapsed ? (
-        <div className="session-rail">
-          {sessions.map((entry) => {
-            const Icon = PROVIDER_ICON[entry.host]
-            const title = sessionTitle(entry)
-            return (
-              <button
-                key={entry.id}
-                type="button"
-                className={`session-rail-item${entry.id === activeSessionId ? " is-active" : ""}`}
-                onClick={() => props.onSelectSession(entry.id)}
-                title={`${title} — ${providerLabel(entry.host)}`}
-                aria-current={entry.id === activeSessionId}
-              >
-                {Icon ? <Icon size={16} /> : <span className="session-rail-initial">{entry.host.slice(0, 2)}</span>}
-              </button>
-            )
-          })}
-        </div>
+        <SessionRail sessions={sessions} activeSessionId={activeSessionId} onSelectSession={props.onSelectSession} />
       ) : (
         <div className="session-list">
           {sessions.length === 0 && <p className="muted small session-empty">No agent sessions captured yet.</p>}
@@ -123,6 +108,16 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
                 key={entry.id}
                 className={`session-item ${isActive ? "is-active" : ""}`}
                 onClick={() => props.onSelectSession(entry.id)}
+                role="button"
+                tabIndex={0}
+                aria-current={isActive ? "page" : undefined}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault()
+                    props.onSelectSession(entry.id)
+                  }
+                }}
               >
                 <div className="session-title">{sessionTitle(entry)}</div>
                 <div className="session-meta">
@@ -173,6 +168,7 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
                         <button
                           key={agent.id}
                           className={`agent-mini${agent.id === selectedAgentId ? " is-selected" : ""}`}
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation()
                             props.onSelectAgent(agent.id)
@@ -218,6 +214,40 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
         </div>
       )}
     </nav>
+  )
+}
+
+function SessionRail({
+  sessions,
+  activeSessionId,
+  onSelectSession,
+  mobile = false,
+}: {
+  sessions: SessionEntity[]
+  activeSessionId: string | undefined
+  onSelectSession: (id: string) => void
+  mobile?: boolean
+}): JSX.Element {
+  return (
+    <div className={`session-rail${mobile ? " session-rail-mobile" : ""}`}>
+      {sessions.map((entry) => {
+        const Icon = PROVIDER_ICON[entry.host]
+        const title = sessionTitle(entry)
+        return (
+          <button
+            key={entry.id}
+            type="button"
+            className={`session-rail-item${entry.id === activeSessionId ? " is-active" : ""}`}
+            onClick={() => onSelectSession(entry.id)}
+            title={`${title} — ${providerLabel(entry.host)}`}
+            aria-current={entry.id === activeSessionId}
+          >
+            {Icon ? <Icon size={16} /> : <span className="session-rail-initial">{entry.host.slice(0, 2)}</span>}
+            <span className="session-rail-title">{title}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 

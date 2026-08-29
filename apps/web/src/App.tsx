@@ -49,6 +49,7 @@ export function App(): JSX.Element {
   const now = Date.now()
   const settingsTab = useSettingsRoute()
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
+  const [goalExpanded, setGoalExpanded] = useState(false)
   const landingRequested = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("landing") === "1"
 
   useEffect(() => {
@@ -118,9 +119,18 @@ export function App(): JSX.Element {
         </div>
 
         {session && (
-          <div className="topbar-goal" title={session.goal ?? undefined}>
+          <div className={`topbar-goal${goalExpanded ? " is-expanded" : ""}`} title={session.goal ?? undefined}>
             <span className="topbar-goal-label">Goal</span>
-            <span className="topbar-goal-text">{session.goal ?? "No goal recorded yet."}</span>
+            <button
+              type="button"
+              className="topbar-goal-toggle"
+              aria-expanded={goalExpanded}
+              aria-controls="topbar-goal-text"
+              onClick={() => setGoalExpanded((expanded) => !expanded)}
+            >
+              {goalExpanded ? "Hide goal" : "Show goal"}
+            </button>
+            <span id="topbar-goal-text" className="topbar-goal-text">{session.goal ?? "No goal recorded yet."}</span>
           </div>
         )}
 

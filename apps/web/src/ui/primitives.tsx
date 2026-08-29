@@ -510,7 +510,7 @@ export function Dialog({
 
   if (!open) return null
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="dialog-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="dialog-backdrop absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
@@ -519,6 +519,7 @@ export function Dialog({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
+          "dialog-panel",
           "dialog-glass relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border outline-none",
           className,
         )}
@@ -534,8 +535,8 @@ export function Dialog({
             <XIcon />
           </Button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2">{children}</div>
-        {footer ? <div className="flex items-center justify-end gap-2 px-5 pt-3 pb-5">{footer}</div> : null}
+        <div className="dialog-body min-h-0 flex-1 overflow-y-auto px-5 pb-2">{children}</div>
+        {footer ? <div className="dialog-footer flex items-center justify-end gap-2 px-5 pt-3 pb-5">{footer}</div> : null}
       </div>
     </div>,
     document.body,

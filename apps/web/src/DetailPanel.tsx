@@ -122,6 +122,8 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
           <button
             key={entry.id}
             role="tab"
+            id={`detail-tab-${entry.id}`}
+            aria-controls={`detail-tabpanel-${entry.id}`}
             aria-selected={tab === entry.id}
             className={tab === entry.id ? "tab is-active" : "tab"}
             onClick={() => setTab(entry.id)}
@@ -133,7 +135,13 @@ export function DetailPanel(props: DetailPanelProps): JSX.Element {
         ))}
       </nav>
 
-      <div className="panel-body">
+      <div
+        id={`detail-tabpanel-${tab}`}
+        className="panel-body"
+        role="tabpanel"
+        aria-labelledby={`detail-tab-${tab}`}
+        tabIndex={0}
+      >
         {tab === "profile" && (
           <ProfileTab
             agent={agent}

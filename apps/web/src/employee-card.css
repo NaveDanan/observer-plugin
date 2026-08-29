@@ -208,7 +208,10 @@
 }
 
 @media (max-width: 900px) {
-  .nj-overlay { padding: 12px; }
+  .nj-overlay {
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

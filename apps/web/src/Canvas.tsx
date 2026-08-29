@@ -130,7 +130,7 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
         <>
           <button
             type="button"
-            className="pixel-btn"
+            className="pixel-btn zoom-new"
             onClick={onRevealOffscreen}
             aria-label={`${offscreenCount} new agent${offscreenCount === 1 ? "" : "s"} off-screen. Fit them into view.`}
             title={`${offscreenCount} new agent${offscreenCount === 1 ? "" : "s"} off-screen`}
@@ -139,7 +139,7 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
           </button>
           <button
             type="button"
-            className="pixel-btn"
+            className="pixel-btn zoom-dismiss"
             onClick={onDismissOffscreen}
             aria-label="Dismiss the off-screen agent notice"
             title="Dismiss"
@@ -151,7 +151,7 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
 
       <button
         type="button"
-        className="pixel-btn"
+        className="pixel-btn zoom-out"
         onClick={() => flow.zoomOut({ duration })}
         disabled={!canZoomOut}
         aria-label="Zoom out"
@@ -165,7 +165,7 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
 
       <button
         type="button"
-        className="pixel-btn"
+        className="pixel-btn zoom-in"
         onClick={() => flow.zoomIn({ duration })}
         disabled={!canZoomIn}
         aria-label="Zoom in"
@@ -175,7 +175,7 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
 
       <button
         type="button"
-        className="pixel-btn"
+        className="pixel-btn zoom-fit"
         onClick={() => flow.fitView({ padding: 0.15, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM, duration })}
         aria-label="Fit the whole agent graph into view"
       >
@@ -184,7 +184,7 @@ function ZoomHud(props: ZoomHudProps): JSX.Element {
 
       <button
         type="button"
-        className="pixel-btn"
+        className="pixel-btn zoom-reset"
         onClick={() => flow.zoomTo(1, { duration })}
         aria-label="Reset zoom to 100 percent"
       >
