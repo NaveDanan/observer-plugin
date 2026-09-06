@@ -1,9 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   COPILOT_PLUGIN_NAME,
+  COPILOT_MARKETPLACE_NAME,
+  copilotMarketplaceDir,
+  copilotMarketplaceManifestPath,
   copilotPluginDir,
   copilotPluginManifestPath,
   installCopilotPlugin,
@@ -76,6 +79,15 @@ describe("installCopilotPlugin", () => {
     })
     expect(existsSync(join(copilotPluginDir(), "scripts", "coordination-mcp.js"))).toBe(true)
     expect(isCopilotPluginStaged()).toBe(true)
+    const marketplace = readJson(copilotMarketplaceManifestPath())
+    expect(marketplace["name"]).toBe(COPILOT_MARKETPLACE_NAME)
+    expect(marketplace["plugins"]).toEqual([
+      expect.objectContaining({
+        name: COPILOT_PLUGIN_NAME,
+        version: "1.2.3",
+        source: "./plugins/observer",
+      }),
+    ])
   })
 
   it("subscribes to every Copilot event the plain hook install uses", () => {
@@ -129,12 +141,17 @@ describe("installCopilotPlugin", () => {
     expect(entries[1].bash).toContain("--host copilot --event preToolUse")
   })
 
-  it("hands the staged directory to `copilot plugin install`", () => {
+  it("installs through a local marketplace so Copilot can disable it", () => {
     const { calls, run } = recorder()
     const result = installCopilotPlugin("1.0.0", run)
 
-    expect(calls).toEqual([["plugin", "install", copilotPluginDir()]])
-    expect(result.notes.join(" ")).toContain("copilot plugin list")
+    expect(calls).toEqual([
+      ["plugin", "list"],
+      ["plugin", "marketplace", "list"],
+      ["plugin", "marketplace", "add", copilotMarketplaceDir()],
+      ["plugin", "install", `${COPILOT_PLUGIN_NAME}@${COPILOT_MARKETPLACE_NAME}`],
+    ])
+    expect(result.notes.join(" ")).toContain("enable or disable")
   })
 
   it("still stages the bundle when copilot is not on PATH, and says what to run", () => {
@@ -144,7 +161,8 @@ describe("installCopilotPlugin", () => {
     // Staging is the part Observer controls, so it must survive a missing host.
     expect(result.action).toBe("installed")
     expect(existsSync(copilotPluginManifestPath())).toBe(true)
-    expect(result.notes.join("\n")).toContain(`copilot plugin install ${copilotPluginDir()}`)
+    expect(result.notes.join("\n")).toContain(`copilot plugin marketplace add ${copilotMarketplaceDir()}`)
+    expect(result.notes.join("\n")).toContain(`copilot plugin install ${COPILOT_PLUGIN_NAME}@${COPILOT_MARKETPLACE_NAME}`)
   })
 
   it("reports a second install as an update rather than a fresh one", () => {
@@ -153,22 +171,102 @@ describe("installCopilotPlugin", () => {
     expect(installCopilotPlugin("1.0.1", run).action).toBe("updated")
     expect(readJson(copilotPluginManifestPath())["version"]).toBe("1.0.1")
   })
+
+  it("migrates an existing direct install to the disable-able marketplace install", () => {
+    const legacyDir = join(home, ".copilot", "plugins", COPILOT_PLUGIN_NAME)
+    mkdirSync(legacyDir, { recursive: true })
+    writeFileSync(join(legacyDir, "plugin.json"), JSON.stringify({ name: COPILOT_PLUGIN_NAME }))
+    const calls: string[][] = []
+    const run = (args: string[]): CopilotRun => {
+      calls.push(args)
+      return { ok: true, output: args.join(" ") === "plugin list" ? "observer (v0.9.18)" : "", reason: "" }
+    }
+
+    installCopilotPlugin("1.0.0", run)
+
+    expect(calls).toEqual([
+      ["plugin", "list"],
+      ["plugin", "uninstall", COPILOT_PLUGIN_NAME],
+      ["plugin", "marketplace", "list"],
+      ["plugin", "marketplace", "add", copilotMarketplaceDir()],
+      ["plugin", "install", `${COPILOT_PLUGIN_NAME}@${COPILOT_MARKETPLACE_NAME}`],
+    ])
+    expect(existsSync(legacyDir)).toBe(false)
+  })
+
+  it("keeps the direct install intact when a running Copilot instance blocks migration", () => {
+    const legacyDir = join(home, ".copilot", "plugins", COPILOT_PLUGIN_NAME)
+    mkdirSync(legacyDir, { recursive: true })
+    writeFileSync(join(legacyDir, "plugin.json"), JSON.stringify({ name: COPILOT_PLUGIN_NAME }))
+    const calls: string[][] = []
+    const run = (args: string[]): CopilotRun => {
+      calls.push(args)
+      if (args.join(" ") === "plugin list") return { ok: true, output: "observer (v0.9.18)", reason: "" }
+      return { ok: false, output: "", reason: "Access is denied" }
+    }
+
+    const result = installCopilotPlugin("1.0.0", run)
+
+    expect(calls).toEqual([
+      ["plugin", "list"],
+      ["plugin", "uninstall", COPILOT_PLUGIN_NAME],
+    ])
+    expect(result.action).toBe("unchanged")
+    expect(result.notes.join("\n")).toContain("Close Copilot CLI and the desktop app")
+    expect(existsSync(legacyDir)).toBe(true)
+  })
 })
 
 describe("uninstallCopilotPlugin", () => {
   it("tells Copilot first, then removes the staging directory", () => {
-    const { calls, run } = recorder()
-    installCopilotPlugin("1.0.0", run)
-    calls.length = 0
+    const { run: install } = recorder()
+    installCopilotPlugin("1.0.0", install)
+    const calls: string[][] = []
+    const run = (args: string[]): CopilotRun => {
+      calls.push(args)
+      const command = args.join(" ")
+      const output = command === "plugin list"
+        ? "observer@observer-local"
+        : command === "plugin marketplace list"
+          ? "observer-local"
+          : ""
+      return { ok: true, output, reason: "" }
+    }
 
     const result = uninstallCopilotPlugin(run)
-    expect(calls).toEqual([["plugin", "uninstall", COPILOT_PLUGIN_NAME]])
+    expect(calls).toEqual([
+      ["plugin", "list"],
+      ["plugin", "uninstall", COPILOT_PLUGIN_NAME],
+      ["plugin", "marketplace", "list"],
+      ["plugin", "marketplace", "remove", COPILOT_MARKETPLACE_NAME],
+    ])
     expect(result.action).toBe("removed")
     expect(existsSync(copilotPluginDir())).toBe(false)
+    expect(existsSync(copilotMarketplaceDir())).toBe(false)
   })
 
   it("is a no-op when nothing was ever installed", () => {
     const { run } = recorder({ ok: false, reason: "not installed" })
     expect(uninstallCopilotPlugin(run).action).toBe("unchanged")
+  })
+
+  it("keeps the marketplace source when Copilot cannot uninstall a loaded plugin", () => {
+    const { run: install } = recorder()
+    installCopilotPlugin("1.0.0", install)
+    const calls: string[][] = []
+    const run = (args: string[]): CopilotRun => {
+      calls.push(args)
+      if (args.join(" ") === "plugin list") return { ok: true, output: "observer@observer-local", reason: "" }
+      return { ok: false, output: "", reason: "Access is denied" }
+    }
+
+    const result = uninstallCopilotPlugin(run)
+
+    expect(result.action).toBe("removed")
+    expect(calls).toEqual([
+      ["plugin", "list"],
+      ["plugin", "uninstall", COPILOT_PLUGIN_NAME],
+    ])
+    expect(existsSync(copilotPluginDir())).toBe(true)
   })
 })

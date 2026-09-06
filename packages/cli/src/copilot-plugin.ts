@@ -38,6 +38,7 @@ import { coordinationMcpPath, copilotControlPath, copilotHome, emitterPath, node
  */
 
 export const COPILOT_PLUGIN_NAME = "observer"
+export const COPILOT_MARKETPLACE_NAME = "observer-local"
 const HOOK_TIMEOUT_SECONDS = 5
 
 export interface CopilotRun {
@@ -55,9 +56,18 @@ export interface CopilotRun {
  */
 export type CopilotRunner = (args: string[]) => CopilotRun
 
-/** Where the plugin is staged before Copilot copies it into its cache. */
+/** Local marketplace containing Observer's Copilot plugin. */
+export function copilotMarketplaceDir(): string {
+  return join(copilotHome(), "observer-marketplace")
+}
+
+export function copilotMarketplaceManifestPath(): string {
+  return join(copilotMarketplaceDir(), ".github", "plugin", "marketplace.json")
+}
+
+/** Where the marketplace-backed plugin is staged. */
 export function copilotPluginDir(): string {
-  return join(copilotHome(), "plugins", COPILOT_PLUGIN_NAME)
+  return join(copilotMarketplaceDir(), "plugins", COPILOT_PLUGIN_NAME)
 }
 
 export function copilotPluginManifestPath(): string {
@@ -94,6 +104,11 @@ export function isCopilotPluginInstalled(run: CopilotRunner = runCopilot): boole
   return listed.ok && listed.output.includes(COPILOT_PLUGIN_NAME)
 }
 
+export function isCopilotMarketplaceRegistered(run: CopilotRunner = runCopilot): boolean {
+  const listed = run(["plugin", "marketplace", "list"])
+  return listed.ok && listed.output.includes(COPILOT_MARKETPLACE_NAME)
+}
+
 /**
  * Stages the plugin directory and asks Copilot to install it.
  *
@@ -104,6 +119,9 @@ export function isCopilotPluginInstalled(run: CopilotRunner = runCopilot): boole
 export function installCopilotPlugin(version: string, run: CopilotRunner = runCopilot): InstallResult {
   const pluginDir = copilotPluginDir()
   const existed = isCopilotPluginStaged()
+  const legacyPluginDir = join(copilotHome(), "plugins", COPILOT_PLUGIN_NAME)
+  const migratingDirectInstall = existsSync(join(legacyPluginDir, "plugin.json"))
+  const wasInstalled = isCopilotPluginInstalled(run)
 
   const emitter = emitterPath()
   if (!existsSync(emitter)) {
@@ -170,6 +188,23 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
     },
   })
 
+  writeJson(copilotMarketplaceManifestPath(), {
+    name: COPILOT_MARKETPLACE_NAME,
+    owner: { name: "Observer" },
+    metadata: {
+      description: "Local plugins installed by Observer.",
+      version,
+    },
+    plugins: [
+      {
+        name: COPILOT_PLUGIN_NAME,
+        description: "Interactive canvas for the coding agents you are already running.",
+        version,
+        source: "./plugins/observer",
+      },
+    ],
+  })
+
   // 4. A copy of the emitter, so the installed plugin is inspectable on its own.
   mkdirSync(join(pluginDir, "scripts"), { recursive: true })
   copyFileSync(emitter, join(pluginDir, "scripts", "emit.js"))
@@ -183,15 +218,35 @@ export function installCopilotPlugin(version: string, run: CopilotRunner = runCo
     notes.push(`Employee agents were not generated: ${error instanceof Error ? error.message : String(error)}`)
   }
 
-  // 5. Hand it to Copilot. This is the step that makes it appear in the
-  //    plugins list — staging alone is invisible to the CLI.
-  const install = run(["plugin", "install", pluginDir])
-  if (install.ok) {
-    notes.push("Installed with `copilot plugin install`; it now appears in `copilot plugin list`.")
+  // 5. Register through a marketplace. Copilot always loads direct local
+  //    plugins, even when their dashboard switch is off; marketplace plugins
+  //    participate in the host's persisted enabled/disabled state.
+  if (migratingDirectInstall && wasInstalled) {
+    const removeDirect = run(["plugin", "uninstall", COPILOT_PLUGIN_NAME])
+    if (!removeDirect.ok) {
+      notes.push(`Could not migrate the direct plugin while Copilot is running (${removeDirect.reason}).`)
+      notes.push("Close Copilot CLI and the desktop app, then run this install command again.")
+      return { host: "copilot", action: "unchanged", path: legacyPluginDir, notes }
+    }
+  }
+  if (migratingDirectInstall) rmSync(legacyPluginDir, { recursive: true, force: true })
+
+  const marketplace = isCopilotMarketplaceRegistered(run)
+    ? { ok: true, output: "", reason: "" }
+    : run(["plugin", "marketplace", "add", copilotMarketplaceDir()])
+  const needsInstall = migratingDirectInstall || !wasInstalled
+  const install = needsInstall
+    ? run(["plugin", "install", `${COPILOT_PLUGIN_NAME}@${COPILOT_MARKETPLACE_NAME}`])
+    : { ok: true, output: "", reason: "" }
+
+  if (marketplace.ok && install.ok) {
+    notes.push(`Installed from the ${COPILOT_MARKETPLACE_NAME} marketplace so Copilot can enable or disable it.`)
     notes.push("Restart Copilot CLI (and the desktop app) so the session picks it up.")
   } else {
-    notes.push(`Could not run \`copilot plugin install\` automatically (${install.reason}).`)
-    notes.push(`Finish by hand with: copilot plugin install ${pluginDir}`)
+    const failure = !marketplace.ok ? marketplace : install
+    notes.push(`Could not register the Copilot plugin automatically (${failure.reason}).`)
+    notes.push(`Finish by hand with: copilot plugin marketplace add ${copilotMarketplaceDir()}`)
+    notes.push(`Then run: copilot plugin install ${COPILOT_PLUGIN_NAME}@${COPILOT_MARKETPLACE_NAME}`)
   }
 
   return { host: "copilot", action: existed ? "updated" : "installed", path: pluginDir, notes }
@@ -209,17 +264,32 @@ export function uninstallCopilotPlugin(run: CopilotRunner = runCopilot): Install
 
   // Ask Copilot to forget it first: removing the staging directory underneath
   // an installed plugin would leave the CLI listing something with no source.
-  const remove = run(["plugin", "uninstall", COPILOT_PLUGIN_NAME])
-  if (remove.ok) {
+  const installed = isCopilotPluginInstalled(run)
+  if (installed) {
+    const remove = run(["plugin", "uninstall", COPILOT_PLUGIN_NAME])
+    if (!remove.ok) {
+      notes.push(`Could not run \`copilot plugin uninstall\` automatically (${remove.reason}).`)
+      notes.push(`Finish by hand with: copilot plugin uninstall ${COPILOT_PLUGIN_NAME}`)
+      return {
+        host: "copilot",
+        action: removed ? "removed" : "unchanged",
+        path: pluginDir,
+        notes,
+      }
+    }
     removed = true
     notes.push("Removed with `copilot plugin uninstall`.")
-  } else {
-    notes.push(`Could not run \`copilot plugin uninstall\` automatically (${remove.reason}).`)
-    notes.push(`Finish by hand with: copilot plugin uninstall ${COPILOT_PLUGIN_NAME}`)
   }
 
-  if (existsSync(pluginDir)) {
-    rmSync(pluginDir, { recursive: true, force: true })
+  if (isCopilotMarketplaceRegistered(run)) {
+    const removeMarketplace = run(["plugin", "marketplace", "remove", COPILOT_MARKETPLACE_NAME])
+    if (!removeMarketplace.ok) {
+      notes.push(`Could not remove the ${COPILOT_MARKETPLACE_NAME} marketplace automatically (${removeMarketplace.reason}).`)
+    }
+  }
+
+  if (existsSync(copilotMarketplaceDir())) {
+    rmSync(copilotMarketplaceDir(), { recursive: true, force: true })
     removed = true
   }
 

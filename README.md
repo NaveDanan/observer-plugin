@@ -56,7 +56,7 @@ no native build step).
 This is how you install Observer on a machine that does not have the source.
 
 ```bash
-npm install -g observer-ai-0.9.18.tgz
+npm install -g observer-ai-0.9.19.tgz
 
 observer install all      # or: observer install claude codex
 observer open
@@ -82,6 +82,8 @@ observer install copilot --plugin
 ```
 
 Then restart Copilot CLI and the desktop app. Verify with `copilot plugin list`.
+Observer is registered through a local marketplace so the plugin switch in the
+Copilot app can turn it off without uninstalling it.
 
 Use either this or `observer install copilot`, not both — the CLI warns you if
 you do, because each event would be recorded twice.
