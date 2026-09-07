@@ -70,7 +70,7 @@ function codes(issues: ReturnType<typeof diagnoseClaudeTarget>): SeatIssueCode[]
 
 function diagnose(target: SeatTarget, version = "2.4.0") {
   const { adapter } = adapterAt(version)
-  return adapter.diagnose(CLAUDE_DEFAULT_PROFILE_ID, "claude:default", target, "arjun-mehta")
+  return adapter.diagnose(CLAUDE_DEFAULT_PROFILE_ID, "claude:default", target, "frontend-engineer")
 }
 
 describe("version parsing", () => {
@@ -376,7 +376,7 @@ describe("diagnose", () => {
     expect(codes(issues)).toEqual(["unknown-field"])
     expect(issues[0]?.severity).toBe("warning")
     expect(issues[0]?.message).toContain("does not offer")
-    expect(issues[0]?.path).toBe("seats.employees.arjun-mehta.targets.claude:default.options.thinking")
+    expect(issues[0]?.path).toBe("seats.employees.frontend-engineer.targets.claude:default.options.thinking")
   })
 
   it("reports unpinnable options on a model it does not know without guessing its capabilities", () => {
@@ -424,7 +424,7 @@ describe("diagnose", () => {
 
   it("scopes every finding to the employee, target and host", () => {
     const issues = diagnose({ host: "claude", model: "" })
-    expect(issues[0]).toMatchObject({ employeeId: "arjun-mehta", targetId: "claude:default", host: "claude" })
+    expect(issues[0]).toMatchObject({ employeeId: "frontend-engineer", targetId: "claude:default", host: "claude" })
   })
 })
 

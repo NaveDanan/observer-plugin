@@ -40,9 +40,9 @@ import {
  */
 
 const ROSTER: EmployeeRow[] = [
-  { id: "arjun-mehta", name: "Arjun Mehta", role: "Senior Frontend Engineer" },
-  { id: "malik-johnson", name: "Malik Johnson", role: "Staff Backend Engineer" },
-  { id: "elias-mercer", name: "Elias Mercer", role: "Senior DevOps Engineer" },
+  { id: "frontend-engineer", name: "Noam Cohen", role: "Frontend Engineer", optional: false },
+  { id: "backend-engineer", name: "David Levi", role: "Staff Backend Engineer" },
+  { id: "platform-engineer", name: "Itai Friedman", role: "Senior DevOps Engineer" },
 ]
 
 const MODELS: ModelInfo[] = buildCatalogue({
@@ -407,7 +407,7 @@ describe("navigation", () => {
   it("drills from the list into an employee and on into the model picker", () => {
     const state = press(employees(), "down", "return")
     expect(state.view).toBe("employee")
-    expect(state.employeeId).toBe("malik-johnson")
+    expect(state.employeeId).toBe("backend-engineer")
 
     const picker = press(state, "return")
     expect(picker.view).toBe("models")
@@ -468,7 +468,7 @@ describe("host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "copilot:default": { host: "copilot" },
             "opencode:default": {
@@ -485,7 +485,7 @@ describe("host targets", () => {
 
     state = press(state, "return", "down", "right", "return")
     expect(state.view).toBe("targets")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]).toEqual({
       host: "copilot",
       model: "claude-opus-5",
       options: [{ id: "effortLevel", value: "low" }],
@@ -497,7 +497,7 @@ describe("host targets", () => {
   it("labels Codex child control experimental", () => {
     let state = press(targets(), "down", "return", "down", "return")
     expect(state.view).toBe("options")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["codex:default"]?.model).toBe("gpt-5.6-sol")
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["codex:default"]?.model).toBe("gpt-5.6-sol")
     state = press(state, "escape", "escape")
     expect(state.view).toBe("targets")
     expect(render(state, { rows: 40, columns: 120 }).join("\n")).toContain("experimental")
@@ -507,7 +507,7 @@ describe("host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "copilot:default": {
               host: "copilot",
@@ -519,7 +519,7 @@ describe("host targets", () => {
       },
     }
     const state = press(targets(seats), "down", "down", "return", "down", "return")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]).toEqual({
       host: "copilot",
       model: "claude-haiku-4.5",
     })
@@ -529,7 +529,7 @@ describe("host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "copilot:default": {
               host: "copilot",
@@ -541,7 +541,7 @@ describe("host targets", () => {
       },
     }
     const state = press(targets(seats), "down", "down", "return", "return")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.options).toEqual([
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]?.options).toEqual([
       { id: "futureOption", value: "kept", metadata: 42 },
     ])
   })
@@ -550,7 +550,7 @@ describe("host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "opencode:default": { host: "copilot", model: "claude-opus-5" },
           },
@@ -577,7 +577,7 @@ describe("host targets", () => {
     let state = press(targets(), "return")
     const text = render(state, { rows: 40, columns: 120 }).join("\n")
     expect(text).toContain("Select model for OpenCode / default")
-    expect(text).toContain("Choose the model to pin when the harness uses Arjun Mehta.")
+    expect(text).toContain("Choose the model to pin when the harness uses Noam Cohen.")
     expect(text).toContain("Context")
     expect(text).toContain("Reasoning")
     expect(text).toContain("Recommended models")
@@ -592,11 +592,11 @@ describe("host targets", () => {
       { id: "variant", value: "low" },
       { id: "contextWindow", value: "1m" },
     ])
-    expect(state.seats.employees["arjun-mehta"]).toBeUndefined()
+    expect(state.seats.employees["frontend-engineer"]).toBeUndefined()
 
     state = press(state, "return")
     expect(state.view).toBe("targets")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]).toEqual({
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["opencode:default"]).toEqual({
       host: "opencode",
       model: "github-copilot/claude-opus-5",
       options: [
@@ -698,7 +698,7 @@ describe("host targets", () => {
     state = press(state, "backspace")
     expect(state.filter).toBe("future-mode")
     state = press(state, "l", "return")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["codex:default"]?.model).toBe("future-model")
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["codex:default"]?.model).toBe("future-model")
   })
 
   it("selects and clears a target reasoning effort, including a one-choice scale", () => {
@@ -723,7 +723,7 @@ describe("host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "copilot:default": { host: "copilot" },
             "opencode:default": { host: "opencode", model: "github-copilot/claude-opus-5" },
@@ -732,7 +732,7 @@ describe("host targets", () => {
       },
     }
     const state = press(targets(seats), "down", "down", "d")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toBeUndefined()
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]).toBeUndefined()
     expect(render(state, { rows: 40, columns: 120 }).join("\n")).not.toContain("This target sets nothing")
   })
 
@@ -740,7 +740,7 @@ describe("host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: { "copilot:default": { host: "copilot", model: "claude-opus-5" } },
         },
       },
@@ -794,7 +794,7 @@ describe("models the host will not run", () => {
     const state = press(barred(), "return")
     // Still in the picker, and the seat is untouched.
     expect(state.view).toBe("models")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.model).toBeUndefined()
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]?.model).toBeUndefined()
     expect(state.status).toContain("Claude Haiku 4.5")
   })
 
@@ -814,7 +814,7 @@ describe("models the host will not run", () => {
     const state = press(targets(), "down", "down", "return", "down", "down", "return")
     expect(state.view).not.toBe("models")
     expect(state.status).not.toContain("unavailable")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]?.model).toBe("claude-haiku-4.5")
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]?.model).toBe("claude-haiku-4.5")
   })
 })
 
@@ -951,7 +951,7 @@ describe("effort", () => {
     let state = press(employees(), "return", "return", "m")
     state = type(state, "someone/exotic-model")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]?.model).toBe(
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["opencode:default"]?.model).toBe(
       "someone/exotic-model",
     )
 
@@ -967,7 +967,7 @@ describe("assigning a model", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           model: "anthropic/ignored",
           variant: "high",
           targets: { "opencode:default": { host: "opencode" } },
@@ -982,7 +982,7 @@ describe("assigning a model", () => {
       "right",
       "return",
     )
-    const seat = state.seats.employees["arjun-mehta"]
+    const seat = state.seats.employees["frontend-engineer"]
 
     expect(seat?.model).toBeUndefined()
     expect(seat?.variant).toBeUndefined()
@@ -1003,7 +1003,7 @@ describe("assigning a model", () => {
   it("writes the model onto the seat and returns to the employee view", () => {
     const state = press(employees(), "return", "return", ...Array<string>(OPUS).fill("down"), "return")
     expect(state.view).toBe("employee")
-    expect(state.seats.employees["arjun-mehta"]).toEqual({
+    expect(state.seats.employees["frontend-engineer"]).toEqual({
       targets: {
         "opencode:default": {
           host: "opencode",
@@ -1016,7 +1016,7 @@ describe("assigning a model", () => {
 
   it("commits the model and the effort together", () => {
     const state = press(employees(), "return", "return", ...Array<string>(OPUS).fill("down"), "right", "return")
-    expect(state.seats.employees["arjun-mehta"]).toEqual({
+    expect(state.seats.employees["frontend-engineer"]).toEqual({
       targets: {
         "opencode:default": {
           host: "opencode",
@@ -1030,7 +1030,7 @@ describe("assigning a model", () => {
   it("drops the effort when the model goes back to inherit", () => {
     const assigned = press(employees(), "return", "return", ...Array<string>(OPUS).fill("down"), "right", "return")
     const cleared = press(assigned, "return", "up", "return")
-    expect(cleared.seats.employees["arjun-mehta"]).toBeUndefined()
+    expect(cleared.seats.employees["frontend-engineer"]).toBeUndefined()
     expect(cleared.status).toContain("the effort was dropped with it")
   })
 
@@ -1044,7 +1044,7 @@ describe("assigning a model", () => {
       press(employees(), "return", "return", "down", "left", "return"),
     ]
     for (const state of states) {
-      const seat = state.seats.employees["arjun-mehta"]
+      const seat = state.seats.employees["frontend-engineer"]
       if (seat?.variant !== undefined) expect(typeof seat.model).toBe("string")
       expect(diagnoseSeats(state.seats).issues.some((issue) => issue.code === "variant-without-model")).toBe(false)
     }
@@ -1053,7 +1053,7 @@ describe("assigning a model", () => {
   it("opens the picker on the model the seat already names", () => {
     const seats: SeatsConfig = {
       control: true,
-      employees: { "arjun-mehta": { model: "anthropic/claude-haiku-4", variant: "medium" } },
+      employees: { "frontend-engineer": { model: "anthropic/claude-haiku-4", variant: "medium" } },
     }
     const picker = press(into(initialState({ seats, roster: ROSTER, models: MODELS })), "return", "return")
     expect(picker.cursor.models).toBe(HAIKU)
@@ -1063,7 +1063,7 @@ describe("assigning a model", () => {
   it("shows a configured model the catalogue cannot describe, rather than hiding it behind inherit", () => {
     // Otherwise the cursor would sit on "inherit" while the seat plainly names
     // a model, which reads as "your model is gone".
-    const seats: SeatsConfig = { control: true, employees: { "arjun-mehta": { model: "bedrock/anthropic.claude-v9" } } }
+    const seats: SeatsConfig = { control: true, employees: { "frontend-engineer": { model: "bedrock/anthropic.claude-v9" } } }
     const picker = press(into(initialState({ seats, roster: ROSTER, models: MODELS })), "return", "return")
     const entry = pickerEntries(picker)[picker.cursor.models]
     expect(picker.cursor.models).toBe(1)
@@ -1077,7 +1077,7 @@ describe("assigning a model", () => {
     let state = press(into(empty), "return", "return", "m")
     state = type(state, "bedrock/some-model")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]?.model).toBe(
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["opencode:default"]?.model).toBe(
       "bedrock/some-model",
     )
   })
@@ -1094,7 +1094,7 @@ describe("assigning a model", () => {
     let state = press(employees(), "return", "return", "m")
     state = type(state, "claude-opus")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]?.model).toBe("claude-opus")
+    expect(state.seats.employees["frontend-engineer"]?.targets?.["opencode:default"]?.model).toBe("claude-opus")
     const issue = diagnoseOpencodeSeats(state.seats).find((entry) => entry.code === "malformed-model")
     expect(issue?.severity).toBe("error")
     expect(collapse(render(state, { rows: 40, columns: 100 }).join("\n"))).toContain(collapse(issue!.message))
@@ -1105,7 +1105,7 @@ describe("assigning a model", () => {
     state = type(state, "half")
     state = press(state, "escape")
     expect(state.entry).toBeUndefined()
-    expect(state.seats.employees["arjun-mehta"]).toBeUndefined()
+    expect(state.seats.employees["frontend-engineer"]).toBeUndefined()
   })
 
   it("backspaces inside a text field", () => {
@@ -1161,7 +1161,7 @@ describe("the default model", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: { "opencode:default": { host: "opencode", model: "openai/gpt-4o" } },
           skills: [{ name: "react", description: "" }],
         },
@@ -1170,12 +1170,12 @@ describe("the default model", () => {
     const applied = press(applying(seats), "return")
     expect(applied.view).toBe("menu")
     // Arjun was seated, so neither his model nor his skills moved.
-    expect(applied.seats.employees["arjun-mehta"]).toEqual({
+    expect(applied.seats.employees["frontend-engineer"]).toEqual({
       targets: { "opencode:default": { host: "opencode", model: "openai/gpt-4o" } },
       skills: [{ name: "react", description: "" }],
     })
     // Malik and Elias were unseated; they got the pick, effort included.
-    expect(applied.seats.employees["malik-johnson"]).toEqual({
+    expect(applied.seats.employees["backend-engineer"]).toEqual({
       targets: {
         "opencode:default": {
           host: "opencode",
@@ -1184,7 +1184,7 @@ describe("the default model", () => {
         },
       },
     })
-    expect(applied.seats.employees["elias-mercer"]?.targets?.["opencode:default"]?.model).toBe(
+    expect(applied.seats.employees["platform-engineer"]?.targets?.["opencode:default"]?.model).toBe(
       "anthropic/claude-opus-4-8",
     )
     expect(applied.dirty).toBe(true)
@@ -1195,7 +1195,7 @@ describe("the default model", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "opencode:default": { host: "opencode", model: "openai/gpt-4o", options: [{ id: "variant", value: "high" }] },
           },
@@ -1210,7 +1210,7 @@ describe("the default model", () => {
         { id: "variant", value: "low" },
       ])
     }
-    expect(applied.seats.employees["arjun-mehta"]?.skills).toEqual([{ name: "react", description: "" }])
+    expect(applied.seats.employees["frontend-engineer"]?.skills).toEqual([{ name: "react", description: "" }])
     expect(applied.status).toContain("replacing any model they had")
   })
 
@@ -1349,11 +1349,11 @@ describe("the default model with host targets", () => {
       employees: {
         // A Copilot model is not an OpenCode one: this employee still has no
         // model for the target being filled, so the unseated scope includes him.
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: { "copilot:default": { host: "copilot", model: "claude-opus-5" } },
           skills: [{ name: "react", description: "" }],
         },
-        "malik-johnson": {
+        "backend-engineer": {
           targets: { "opencode:default": { host: "opencode", model: "openai/gpt-4o" } },
         },
       },
@@ -1362,7 +1362,7 @@ describe("the default model with host targets", () => {
     expect(render(armed, { rows: 40, columns: 120 }).join("\n")).toContain("2 of 3 have no model here yet")
 
     const applied = press(armed, "return")
-    expect(applied.seats.employees["arjun-mehta"]).toEqual({
+    expect(applied.seats.employees["frontend-engineer"]).toEqual({
       targets: {
         "copilot:default": { host: "copilot", model: "claude-opus-5" },
         "opencode:default": {
@@ -1374,7 +1374,7 @@ describe("the default model with host targets", () => {
       skills: [{ name: "react", description: "" }],
     })
     // Malik already had a model for this target, so the unseated scope left it.
-    expect(applied.seats.employees["malik-johnson"]?.targets?.["opencode:default"]).toEqual({
+    expect(applied.seats.employees["backend-engineer"]?.targets?.["opencode:default"]).toEqual({
       host: "opencode",
       model: "openai/gpt-4o",
     })
@@ -1384,7 +1384,7 @@ describe("the default model with host targets", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": {
+        "frontend-engineer": {
           targets: {
             "copilot:default": { host: "copilot", model: "claude-haiku-4.5" },
             "opencode:default": {
@@ -1398,17 +1398,17 @@ describe("the default model with host targets", () => {
       },
     }
     const applied = press(applying(seats), "down", "return")
-    expect(applied.seats.employees["arjun-mehta"]?.targets?.["opencode:default"]).toEqual({
+    expect(applied.seats.employees["frontend-engineer"]?.targets?.["opencode:default"]).toEqual({
       host: "opencode",
       model: "github-copilot/claude-opus-5",
       options: [{ id: "variant", value: "low" }],
     })
     // The other host and the skills are nobody's business here.
-    expect(applied.seats.employees["arjun-mehta"]?.targets?.["copilot:default"]).toEqual({
+    expect(applied.seats.employees["frontend-engineer"]?.targets?.["copilot:default"]).toEqual({
       host: "copilot",
       model: "claude-haiku-4.5",
     })
-    expect(applied.seats.employees["arjun-mehta"]?.skills).toEqual([{ name: "react", description: "" }])
+    expect(applied.seats.employees["frontend-engineer"]?.skills).toEqual([{ name: "react", description: "" }])
     expect(applied.status).toContain("replacing any model they had")
   })
 
@@ -1548,7 +1548,7 @@ describe("skills", () => {
     let state = press(employees(), "return", "down", "return")
     state = type(state, "react, accessibility")
     state = press(state, "return")
-    expect(state.seats.employees["arjun-mehta"]?.skills).toEqual([
+    expect(state.seats.employees["frontend-engineer"]?.skills).toEqual([
       { name: "react", description: "" },
       { name: "accessibility", description: "" },
     ])
@@ -1562,11 +1562,11 @@ describe("skills", () => {
   })
 
   it("clears skills when the field is emptied", () => {
-    const seats: SeatsConfig = { control: false, employees: { "arjun-mehta": { skills: [{ name: "react", description: "" }] } } }
+    const seats: SeatsConfig = { control: false, employees: { "frontend-engineer": { skills: [{ name: "react", description: "" }] } } }
     let state = press(into(initialState({ seats, roster: ROSTER, models: MODELS })), "return", "down", "return")
     expect(state.entry?.value).toBe("react")
     state = press(state, "backspace", "backspace", "backspace", "backspace", "backspace", "return")
-    expect(state.seats.employees["arjun-mehta"]).toBeUndefined()
+    expect(state.seats.employees["frontend-engineer"]).toBeUndefined()
   })
 })
 
@@ -1627,13 +1627,13 @@ describe("reset", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": { model: "anthropic/claude-opus-4-8", variant: "high" },
-        "malik-johnson": { model: "openai/gpt-5-nano" },
+        "frontend-engineer": { model: "anthropic/claude-opus-4-8", variant: "high" },
+        "backend-engineer": { model: "openai/gpt-5-nano" },
       },
     }
     const state = press(into(initialState({ seats, roster: ROSTER, models: MODELS })), "return", "down", "down", "return")
-    expect(state.seats.employees["arjun-mehta"]).toBeUndefined()
-    expect(state.seats.employees["malik-johnson"]).toBeDefined()
+    expect(state.seats.employees["frontend-engineer"]).toBeUndefined()
+    expect(state.seats.employees["backend-engineer"]).toBeDefined()
     expect(state.dirty).toBe(true)
   })
 
@@ -1642,10 +1642,10 @@ describe("reset", () => {
     // survives. Clearing the model must not take it with it.
     const seats: SeatsConfig = {
       control: true,
-      employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-8", temperature: 0.2 } },
+      employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-8", temperature: 0.2 } },
     }
     const state = press(into(initialState({ seats, roster: ROSTER, models: MODELS })), "return", "return", "up", "return")
-    expect(state.seats.employees["arjun-mehta"]).toEqual({ temperature: 0.2 })
+    expect(state.seats.employees["frontend-engineer"]).toEqual({ temperature: 0.2 })
   })
 
   it("does nothing, loudly, when there is no seat to reset", () => {
@@ -1783,7 +1783,7 @@ describe("render", () => {
   const menu = initialState({
     seats: {
       control: false,
-      employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-8", variant: "high", skills: [{ name: "react", description: "" }] } },
+      employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-8", variant: "high", skills: [{ name: "react", description: "" }] } },
     },
     roster: ROSTER,
     models: MODELS,
@@ -1803,9 +1803,10 @@ describe("render", () => {
     const lines = render(seated, viewport)
     const header = lines.find((line) => line.includes("Employee") && line.includes("Effort"))
     expect(header).toBeDefined()
-    const row = lines.find((line) => line.includes("Arjun Mehta"))!
-    expect(row.startsWith("> Arjun Mehta")).toBe(true)
-    expect(row).toContain("Senior Frontend Engineer")
+    const row = lines.find((line) => line.includes("Noam Cohen"))!
+    expect(row.startsWith("> Frontend Engineer")).toBe(true)
+    expect(row.indexOf("Frontend Engineer")).toBeLessThan(row.indexOf("Noam Cohen"))
+    expect(row).toContain("Frontend Engineer")
     expect(row).toContain("anthropic/claude-opus-4-8")
     expect(row).toContain("high")
     expect(row).toContain("react")
@@ -1823,7 +1824,7 @@ describe("render", () => {
     }
 
     const modelOnly = initialState({
-      seats: { control: false, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-8" } } },
+      seats: { control: false, employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-8" } } },
       roster: ROSTER,
       models: MODELS,
     })
@@ -1872,7 +1873,7 @@ describe("render", () => {
   it("renders diagnoseSeats sentences verbatim rather than rewording them", () => {
     const broken = into(
       initialState({
-        seats: { control: false, employees: { "malik-johnson": { variant: "high" } } },
+        seats: { control: false, employees: { "backend-engineer": { variant: "high" } } },
         roster: ROSTER,
         models: MODELS,
       }),
@@ -1887,12 +1888,12 @@ describe("render", () => {
   it("flags the row of a seat with a finding, in the gutter", () => {
     const broken = into(
       initialState({
-        seats: { control: false, employees: { "malik-johnson": { variant: "high" } } },
+        seats: { control: false, employees: { "backend-engineer": { variant: "high" } } },
         roster: ROSTER,
         models: MODELS,
       }),
     )
-    const row = render(broken, viewport).find((line) => line.includes("Malik Johnson"))!
+    const row = render(broken, viewport).find((line) => line.includes("David Levi"))!
     expect(row.startsWith(" !")).toBe(true)
   })
 
@@ -1930,13 +1931,13 @@ describe("render", () => {
   it("keeps every column readable at 80 columns", () => {
     const lines = render(seated, { rows: 30, columns: 80 })
     expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(80)
-    expect(lines.find((line) => line.includes("Arjun Mehta"))).toContain("high")
+    expect(lines.find((line) => line.includes("Noam Cohen"))).toContain("high")
   })
 
   it("shows where you are once you are more than one level in", () => {
-    expect(render(press(seated, "return"), viewport).join("\n")).toContain("Employees > Arjun Mehta")
+    expect(render(press(seated, "return"), viewport).join("\n")).toContain("Employees > Noam Cohen")
     expect(render(press(seated, "return", "return"), viewport).join("\n")).toContain(
-      "Employees > Arjun Mehta > Model",
+      "Employees > Noam Cohen > Model",
     )
   })
 
@@ -1955,7 +1956,7 @@ describe("colour", () => {
   const themed = { ...viewport, theme: buildTheme("truecolor") }
 
   const state = initialState({
-    seats: { control: true, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-8", variant: "high" } } },
+    seats: { control: true, employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-8", variant: "high" } } },
     roster: ROSTER,
     models: MODELS,
   })
@@ -1981,9 +1982,9 @@ describe("colour", () => {
   })
 
   it("keeps columns aligned once cells are painted", () => {
-    const rows = render(into(state), themed).filter((line) => line.includes("Arjun Mehta"))
+    const rows = render(into(state), themed).filter((line) => line.includes("Noam Cohen"))
     const widths = render(into(state), viewport)
-      .filter((line) => line.includes("Arjun Mehta"))
+      .filter((line) => line.includes("Noam Cohen"))
       .map((line) => line.length)
     expect(rows.map((line) => strip(line).length)).toEqual(widths)
   })
@@ -2028,12 +2029,12 @@ describe("renderReport", () => {
   it("prints the seats as plain text", () => {
     const seats: SeatsConfig = {
       control: true,
-      employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-8", variant: "high" } },
+      employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-8", variant: "high" } },
     }
     const text = renderReport(seats, ROSTER).join("\n")
     expect(text).toContain("control             on")
     expect(text).toContain("in effect           yes")
-    expect(text).toContain("arjun-mehta")
+    expect(text).toContain("frontend-engineer")
     expect(text).toContain("anthropic/claude-opus-4-8")
     expect(text).toContain("nesting depth: 2 levels below the root")
     expect(text).toContain("per session: 15 lifetime subagents")
@@ -2054,10 +2055,27 @@ describe("renderReport", () => {
 })
 
 describe("rosterRows", () => {
+  it("toggles optional specialists without changing model pins and reads legacy settings", () => {
+    const roster = rosterRows()
+    const initial = initialState({
+      seats: { control: false, employees: { "ravi-menon": { model: "saved/model", enabled: true } } },
+      roster,
+      models: [],
+    })
+    const detail: ConfigUIState = { ...initial, view: "employee", employeeId: "hardware-specialist" }
+    const disabled = press(detail, "return")
+    expect(disabled.seats.employees["hardware-specialist"]).toEqual({ model: "saved/model", enabled: false })
+    expect(disabled.seats.employees["ravi-menon"]).toEqual({ model: "saved/model", enabled: true })
+    expect(disabled.seats.control).toBe(false)
+    const enabled = press(disabled, "return")
+    expect(enabled.seats.employees["hardware-specialist"]?.enabled).toBe(true)
+    expect(enabled.dirty).toBe(true)
+  })
+
   it("projects the whole roster, ids intact", () => {
     const rows = rosterRows()
-    expect(rows).toHaveLength(14)
-    expect(rows[0]).toEqual({ id: "arjun-mehta", name: "Arjun Mehta", role: "Senior Frontend Engineer" })
+    expect(rows).toHaveLength(8)
+    expect(rows[0]).toEqual({ id: "frontend-engineer", name: "Noam Cohen", role: "Frontend Engineer", optional: false })
     // Every id must be one diagnoseSeats recognises, or the UI would flag its
     // own rows as unknown employees.
     const seats: SeatsConfig = { control: false, employees: Object.fromEntries(rows.map((row) => [row.id, { model: "a/b" }])) }

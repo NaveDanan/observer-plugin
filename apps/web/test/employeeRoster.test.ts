@@ -1,5 +1,5 @@
 /**
- * The guard the ticket asks for: **all fourteen roster employees appear, and a
+ * The guard the ticket asks for: **all eight roster employees appear, and a
  * fifteenth hire cannot silently vanish.**
  *
  * Two assertions, deliberately, because they fail for different reasons:
@@ -85,6 +85,17 @@ function renderedIds(seats: SeatsConfig, issues: SeatIssue[] = []): string[] {
 }
 
 describe("every employee appears", () => {
+  it("shows roles before Israeli names, labels disabled specialists, and displays legacy settings", () => {
+    const seats: SeatsConfig = { control: false, employees: { "arjun-mehta": { skills: [{ name: "legacy-ui", description: "Retained" }] } } }
+    const rows = employeeRows(ROSTER, seats, [])
+    expect(rows.find((row) => row.id === "frontend-engineer")?.skillCount).toBe(1)
+    const markup = renderToStaticMarkup(createElement(EmployeeRoster, { rows, directory: DIRECTORY, seatControl: false, onOpen() {} }))
+    expect(markup.match(/Optional · off/g)).toHaveLength(2)
+    expect(markup).toContain("Tamar Katz")
+    // Compare visible text, excluding the button's accessible label.
+    expect(markup.indexOf(">Frontend Engineer<")).toBeLessThan(markup.indexOf(">Noam Cohen<"))
+  })
+
   it("returns one row per roster profile, in roster order, on an empty config", () => {
     expect(employeeRows(ROSTER, EMPTY_SEATS, []).map((row) => row.id)).toEqual(ROSTER.map((profile) => profile.id))
   })
@@ -93,30 +104,30 @@ describe("every employee appears", () => {
     expect(renderedIds(EMPTY_SEATS)).toEqual(ROSTER.map((profile) => profile.id))
   })
 
-  it("renders all fourteen when only two of them are configured", () => {
+  it("renders all eight when only two of them are configured", () => {
     const seats: SeatsConfig = {
       control: true,
       employees: {
-        "arjun-mehta": { targets: { "opencode:default": { host: "opencode", model: "anthropic/claude-opus-4-5" } } },
-        "malik-johnson": { skills: [{ name: "contracts", description: "" }] },
+        "frontend-engineer": { targets: { "opencode:default": { host: "opencode", model: "anthropic/claude-opus-4-5" } } },
+        "backend-engineer": { skills: [{ name: "contracts", description: "" }] },
       },
     }
     expect(renderedIds(seats)).toEqual(ROSTER.map((profile) => profile.id))
-    expect(ROSTER).toHaveLength(14)
+    expect(ROSTER).toHaveLength(8)
   })
 
-  it("renders all fourteen when the config names somebody who is not on the roster", () => {
+  it("renders all eight when the config names somebody who is not on the roster", () => {
     const seats: SeatsConfig = {
       control: false,
-      employees: { "arjun-mehtaa": { model: "anthropic/claude-opus-4-5" } },
+      employees: { "frontend-engineera": { model: "anthropic/claude-opus-4-5" } },
     }
     const issues: SeatIssue[] = [
       {
         code: "unknown-employee",
         severity: "error",
-        path: "seats.employees.arjun-mehtaa",
-        employeeId: "arjun-mehtaa",
-        message: '"arjun-mehtaa" is not an employee on the roster.',
+        path: "seats.employees.frontend-engineera",
+        employeeId: "frontend-engineera",
+        message: '"frontend-engineera" is not an employee on the roster.',
       },
     ]
     // The typo gets no row of its own — the panel surfaces it from the
@@ -125,20 +136,20 @@ describe("every employee appears", () => {
   })
 
   it("survives a seats config with junk where a spec should be", () => {
-    const seats = { control: false, employees: { "arjun-mehta": 7 } } as unknown as SeatsConfig
+    const seats = { control: false, employees: { "frontend-engineer": 7 } } as unknown as SeatsConfig
     expect(renderedIds(seats)).toEqual(ROSTER.map((profile) => profile.id))
   })
 
   it("joins the config on rather than iterating it", () => {
     const seats: SeatsConfig = {
       control: false,
-      employees: { "dr-mei-lin": { targets: { "codex:default": { host: "codex", model: "gpt-5.6-sol" } } } },
+      employees: { "research-analyst": { targets: { "codex:default": { host: "codex", model: "gpt-5.6-sol" } } } },
     }
     const rows = employeeRows(ROSTER, seats, [])
-    const mei = rows.find((row) => row.id === "dr-mei-lin")
+    const mei = rows.find((row) => row.id === "research-analyst")
     expect(mei?.targets.map((target) => target.id)).toEqual(["codex:default"])
     expect(rows.filter((row) => row.targets.length > 0)).toHaveLength(1)
-    expect(rows.every((row) => row.seated === (row.id === "dr-mei-lin"))).toBe(true)
+    expect(rows.every((row) => row.seated === (row.id === "research-analyst"))).toBe(true)
   })
 })
 
@@ -153,7 +164,7 @@ describe("the card never overstates what a host will do", () => {
     const seats: SeatsConfig = {
       control,
       employees: {
-        "arjun-mehta": { targets: { [`${host}:default`]: { host, model: "some-model" } } },
+        "frontend-engineer": { targets: { [`${host}:default`]: { host, model: "some-model" } } },
       },
     }
     return renderToStaticMarkup(
@@ -189,7 +200,7 @@ describe("the card never overstates what a host will do", () => {
   it("says nothing at all while the host list is still in flight", () => {
     const seats: SeatsConfig = {
       control: true,
-      employees: { "arjun-mehta": { targets: { "opencode:default": { host: "opencode" } } } },
+      employees: { "frontend-engineer": { targets: { "opencode:default": { host: "opencode" } } } },
     }
     const markup = renderToStaticMarkup(
       createElement(EmployeeRoster, {
@@ -206,17 +217,17 @@ describe("the card never overstates what a host will do", () => {
 
 describe("search", () => {
   it("matches on name, title and strengths, and is the only thing that hides a row", () => {
-    const arjun = ROSTER.find((profile) => profile.id === "arjun-mehta")
-    if (!arjun) throw new Error("no arjun-mehta on the roster")
+    const arjun = ROSTER.find((profile) => profile.id === "frontend-engineer")
+    if (!arjun) throw new Error("no frontend-engineer on the roster")
     expect(matchesQuery(arjun, "")).toBe(true)
-    expect(matchesQuery(arjun, "arjun")).toBe(true)
+    expect(matchesQuery(arjun, "noam")).toBe(true)
     expect(matchesQuery(arjun, "frontend")).toBe(true)
     expect(matchesQuery(arjun, arjun.fields[0] ?? "react")).toBe(true)
     expect(matchesQuery(arjun, "kubernetes")).toBe(false)
   })
 
   it("requires every term, so a two-word search narrows rather than widens", () => {
-    const matched = ROSTER.filter((profile) => matchesQuery(profile, "senior engineer"))
+    const matched = ROSTER.filter((profile) => matchesQuery(profile, "frontend engineer"))
     expect(matched.length).toBeGreaterThan(0)
     expect(matched.length).toBeLessThan(ROSTER.length)
   })

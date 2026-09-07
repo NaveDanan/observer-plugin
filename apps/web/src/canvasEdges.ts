@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react"
 import type { EdgeEntity, EdgeType, Provenance } from "@observer-ai/protocol"
 import type { Edge } from "@xyflow/react"
-import { sharesBloodline, type Lineage } from "./lineage"
+import type { Lineage } from "./lineage"
 
 export const MESSAGE_SOURCE_HANDLE = "message-source"
 export const MESSAGE_TARGET_HANDLE = "message-target"
@@ -13,7 +13,7 @@ export interface AgentFlowEdgeData extends Record<string, unknown> {
   edgeType: EdgeType
   provenance: Provenance
   label: string | null
-  /** True when this is a message between agents outside each other's bloodline. */
+  /** True when this is a direct message between sibling subagents. */
   peer: boolean
   /** Both directions have been observed between this pair of agents. */
   bidirectional: boolean
@@ -60,16 +60,8 @@ function conversations(edges: readonly EdgeEntity[]): Array<{ edge: EdgeEntity; 
 }
 
 /**
- * True when a message crosses branches rather than running up or down one.
- *
- * A subagent messaging its own parent is saying something the hierarchy edge
- * between them already says, so it stays a plain line beside that edge. A
- * message to a cousin or a sibling is the only relationship on the canvas the
- * tree cannot show at all, and it is the one that gets its own geometry.
- *
- * An endpoint the lineage does not know about is not a peer. Before the first
- * layout the map is empty, and calling every message a peer then would make
- * the whole canvas flip geometry one frame later.
+ * Only siblings get an extra communication arc. Parent-child messages must
+ * not overlay the hierarchy line. Unknown lineage stays hidden until resolved.
  */
 export function isPeerMessage(
   edge: Pick<EdgeEntity, "edgeType" | "fromAgentId" | "toAgentId">,
@@ -77,8 +69,8 @@ export function isPeerMessage(
 ): boolean {
   if (edge.edgeType !== "messaged") return false
   if (edge.fromAgentId === edge.toAgentId) return false
-  if (!lineage.has(edge.fromAgentId) || !lineage.has(edge.toAgentId)) return false
-  return !sharesBloodline(lineage, edge.fromAgentId, edge.toAgentId)
+  const parentId = lineage.get(edge.fromAgentId)?.parentId
+  return parentId != null && parentId === lineage.get(edge.toAgentId)?.parentId
 }
 
 /**
@@ -96,23 +88,24 @@ export function isPeerMessage(
  *
  * `lineage` may be empty — the first paint of a session has no layout yet — in
  * which case edges fall back to the per-type colours in `app-surfaces.css` and
- * no message is treated as a peer message.
+ * message edges stay hidden until their sibling relationship is known.
  */
 export function toFlowEdges(
   edges: readonly EdgeEntity[],
   reducedMotion: boolean,
   lineage: ReadonlyMap<string, Lineage> = new Map(),
 ): Edge<AgentFlowEdgeData>[] {
-  return conversations(edges).map(({ edge, bidirectional }) => {
+  return conversations(edges).flatMap(({ edge, bidirectional }) => {
     const label = edge.label ?? (edge.provenance === "authoritative" ? undefined : edge.provenance)
     const message = edge.edgeType === "messaged"
     const peer = isPeerMessage(edge, lineage)
+    if (message && !peer) return []
     // The spawner's hue, not the child's: the line belongs to whoever drew it.
     // A message is nobody's lineage, so it never takes a branch colour.
     const color = message ? undefined : lineage.get(edge.fromAgentId)?.color
     const ends = `${edge.fromAgentId} ${bidirectional ? "and" : "to"} ${edge.toAgentId}`
 
-    return {
+    return [{
       // One id per conversation, so the two directions of a back-and-forth do
       // not fight over which arc React Flow keeps.
       id: message ? `message-pair:${messagePairKey(edge)}` : edge.id,
@@ -141,6 +134,6 @@ export function toFlowEdges(
       // so the selected and hover rules in the stylesheet still outrank it.
       ...(color ? { style: { "--app-lineage": color } as CSSProperties } : {}),
       ...(peer ? { sourceHandle: MESSAGE_SOURCE_HANDLE, targetHandle: MESSAGE_TARGET_HANDLE } : {}),
-    }
+    }]
   })
 }

@@ -48,6 +48,7 @@ import { useRoster } from "./employees/useRoster"
 import { EmployeeDialog } from "./employees/EmployeeDialog"
 import { EmployeeRoster } from "./employees/EmployeeRoster"
 import { employeeRows, matchesQuery } from "./employees/roster"
+import { LEGACY_EMPLOYEE_IDS } from "@observer-ai/roster"
 import { isEmptySeat } from "./employees/seat"
 
 /**
@@ -126,7 +127,10 @@ export function EmployeesPanel(): JSX.Element {
   const replaceSeat = (employeeId: string, spec: SeatSpec | undefined): void =>
     patch((current) => {
       const employees = { ...current.seats.employees }
-      if (spec === undefined || isEmptySeat(spec)) delete employees[employeeId]
+      if (spec === undefined || isEmptySeat(spec)) {
+        delete employees[employeeId]
+        if ((LEGACY_EMPLOYEE_IDS[employeeId] ?? []).some((alias) => Object.hasOwn(employees, alias))) employees[employeeId] = {}
+      }
       else employees[employeeId] = spec
       return { seats: { control: current.seats.control, employees } }
     })
@@ -162,7 +166,7 @@ export function EmployeesPanel(): JSX.Element {
         <SettingsRow
           id="setting-seat-control"
           title="Seat control"
-          description="The model-pin switch, opt-in and off by default. Observer always makes the full employee roster available to installed harnesses, which may choose an employee when the description fits. With seat control on, a configured employee uses the selected model and supported options. A pin never forces the harness to delegate to that employee. Skills apply either way."
+          description="The model-pin switch, opt-in and off by default. Observer makes six default employees and any enabled optional specialists available to installed hosts. With seat control on, a configured employee uses the selected model and supported options. A pin never forces the harness to delegate to that employee. Skills apply either way."
           resetAction={
             seats.control ? (
               <SettingResetButton
@@ -238,7 +242,7 @@ export function EmployeesPanel(): JSX.Element {
         <SettingsRow
           id="setting-employees"
           title="Seats"
-          description="Every employee on the roster, always, whether or not they are configured. A seat gives one person a target per host — a model id in that host's own spelling, plus the options that host describes for it — and skills shared across all of them. Open a card to edit one."
+          description="Six default roles, plus optional Security and Hardware specialists. Open a card to configure models and skills, or to enable a specialist."
           control={
             <div className="flex w-full items-center gap-2 sm:w-56">
               <SearchIcon className="size-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />

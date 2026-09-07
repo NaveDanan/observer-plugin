@@ -106,7 +106,7 @@ function arrowPoints(from: Point, tip: Point): string {
 }
 
 /**
- * A direct message between two agents that are not each other's ancestor.
+ * A direct message between two sibling subagents.
  *
  * The one relationship on the canvas that is not hierarchy, so it is the one
  * relationship drawn with a different geometry. One arc per conversation: an

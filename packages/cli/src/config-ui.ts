@@ -67,7 +67,7 @@ type SyncSeatAgents = typeof syncSeatControl
 type LoadTargetCatalogue = (targetId: string) => ModelCatalogue
 
 export function rosterRows(): EmployeeRow[] {
-  return ROSTER.map((profile) => ({ id: profile.id, name: profile.fullName, role: profile.title }))
+  return ROSTER.map((profile) => ({ id: profile.id, name: profile.fullName, role: profile.title, optional: profile.optional }))
 }
 
 export interface ConfigCommandOptions {

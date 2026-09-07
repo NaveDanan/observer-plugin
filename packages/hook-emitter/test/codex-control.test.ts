@@ -37,7 +37,7 @@ describe("Codex spawn context control", () => {
   })
 
   it.each([
-    ["employee agent", "observer-arjun-mehta"],
+    ["employee agent", "observer-frontend-engineer"],
     ["subcontractor", "worker"],
   ])("passes the same project and global skills to an %s spawn", (_label, agentType) => {
     const output = codexHookOutput(

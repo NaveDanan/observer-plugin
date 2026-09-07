@@ -82,11 +82,16 @@ async function harness(
     assignmentsUnavailable?: boolean
     /** Assignment lineage inherited by a nested OpenCode process. */
     inheritedAssignmentId?: string
+    /** Generated SDKs read body/path; newer clients read flat parameters. */
+    sdk?: "v1" | "v2"
+    promptError?: string
+    /** Hold SDK acceptance to detect serialization between independent sessions. */
+    acceptPrompt?: (input: Record<string, any>) => Promise<void>
   } = {},
 ): Promise<Harness> {
   const sessions = options.sessions ?? {}
   const unreachable = new Set(options.unreachable ?? [])
-  const seat = options.seat ?? { id: "malik-johnson", directive: "Be calm and direct.", score: 9 }
+  const seat = options.seat ?? { id: "backend-engineer", directive: "Be calm and direct.", score: 9 }
 
   if (options.guidance === false || options.seats || options.subagentLimits) {
     writeFileSync(
@@ -116,9 +121,13 @@ async function harness(
     if (href.endsWith("/v1/roster/match")) {
       return Response.json({ matches: [seat] })
     }
+    if (new URL(href).pathname === "/v1/roster/brief") {
+      const employeeId = new URL(href).searchParams.get("employeeId")
+      return Response.json(employeeId ? { employeeId, contract: { mission: "Test contract" } } : { employees: [{ id: "backend-engineer" }] })
+    }
     if (href.endsWith("/v1/roster")) {
       return Response.json({
-        profiles: [{ id: "malik-johnson", fullName: "Malik Johnson", title: "Staff Backend Engineer", fields: ["APIs"] }],
+        profiles: [{ id: "backend-engineer", fullName: "David Levi", title: "Staff Backend Engineer", fields: ["APIs"] }],
       })
     }
     if (href.includes("/v1/coordination/assignments")) {
@@ -168,10 +177,20 @@ async function harness(
         return Response.json({ mail: message, retained: true })
       }
       const query = new URL(href).searchParams
-      return Response.json({ messages: mail.filter((entry) => entry.toRuntimeId === query.get("runtimeId")) })
+      return Response.json({ messages: mail.filter((entry) => entry.toRuntimeId === query.get("runtimeId") && !entry.readAt) })
     }
-    if (href.endsWith("/v1/coordination/mail/read")) return Response.json({ ok: true })
-    if (href.includes("/v1/coordination/mail/") && href.endsWith("/delivered")) return Response.json({ ok: true })
+    if (href.endsWith("/v1/coordination/mail/read")) {
+      const body = JSON.parse(String(init?.body ?? "{}"))
+      for (const entry of mail) {
+        if (entry.toRuntimeId === body.runtimeId && body.ids.includes(entry.id)) entry.readAt = Date.now()
+      }
+      return Response.json({ ok: true })
+    }
+    if (href.includes("/v1/coordination/mail/") && href.endsWith("/delivered")) {
+      const entry = mail.find((entry) => new URL(href).pathname.endsWith(`/${entry.id}/delivered`))
+      if (entry) entry.deliveredAt = Date.now()
+      return Response.json({ ok: true })
+    }
     return new Response("{}", { status: 404 })
   }) as typeof globalThis.fetch
 
@@ -215,7 +234,7 @@ async function harness(
           return { data: record }
         },
         create: async (input: any) => {
-          const body = input?.body ?? input
+          const body = options.sdk === "v1" ? input?.body ?? {} : input
           const id = `spawned-${createdSessions.length + 1}`
           sessions[id] = { id, parentID: body.parentID, title: body.title, metadata: body.metadata }
           createdSessions.push({ id, ...body })
@@ -231,7 +250,15 @@ async function harness(
         messages: async () => ({ data: [] }),
         status: async () => ({ data: {} }),
         promptAsync: async (input: any) => {
+          if (options.sdk === "v1" && (!input?.path?.id || !input?.body?.parts)) {
+            return { error: { message: "Missing prompt path/body" } }
+          }
+          if (options.sdk !== "v1" && (!input?.sessionID || !input?.parts)) {
+            return { error: { message: "Missing prompt sessionID/parts" } }
+          }
           promptedSessions.push(input)
+          await options.acceptPrompt?.(input)
+          if (options.promptError) return { error: { message: options.promptError } }
           return { data: true }
         },
       } as any),
@@ -266,6 +293,25 @@ async function harness(
     },
   }
 }
+
+describe("employee brief tool", () => {
+  it("reads contracts without spawning a subagent", async () => {
+    const h = await harness({ sessions: { root: {} } })
+    const result = await h.hooks.tool.employee_brief.execute({ employeeId: "backend-engineer" }, { sessionID: "root", agent: "build" })
+    expect(JSON.parse(result)).toEqual({ employeeId: "backend-engineer", contract: { mission: "Test contract" } })
+    const list = await h.hooks.tool.employee_brief.execute({ employeeId: "" }, { sessionID: "root", agent: "build" })
+    expect(JSON.parse(list).employees).toHaveLength(1)
+    expect(h.createdSessions).toEqual([])
+    await h.flush()
+  })
+
+  it("honors a host denial for employee briefs", async () => {
+    const h = await harness({ sessions: { root: {} }, agentPermissions: { build: [{ permission: "employee_brief", pattern: "*", action: "deny" }] } })
+    const result = await h.hooks.tool.employee_brief.execute({ employeeId: "backend-engineer" }, { sessionID: "root", agent: "build" })
+    expect(result).toContain("denies employee brief lookup")
+    await h.flush()
+  })
+})
 
 /**
  * A task-tool call as OpenCode really makes it. The agent parameter is
@@ -340,7 +386,7 @@ describe("observer opencode plugin: seating the roster on child sessions", () =>
     await h.flush()
 
     const created = h.of("session.created").at(-1)
-    expect(created?.context["agentType"]).toBe("malik-johnson")
+    expect(created?.context["agentType"]).toBe("backend-engineer")
     expect(created?.context["prompt"]).toBe("Review the CI pipeline for flaky steps")
   })
 
@@ -356,7 +402,7 @@ describe("observer opencode plugin: seating the roster on child sessions", () =>
       await h.hooks["tool.execute.before"](call.input, call.output)
       await h.hooks.event({ event: sessionCreated({ id: "child", parentID: "root", title }) })
       await h.flush()
-      expect(h.of("session.created").at(-1)?.context["agentType"], title).toBe("malik-johnson")
+      expect(h.of("session.created").at(-1)?.context["agentType"], title).toBe("backend-engineer")
     }
   })
 
@@ -386,31 +432,31 @@ describe("observer opencode plugin: seating the roster on child sessions", () =>
     const h = await harness({
       sessions: { root: { id: "root" } },
       seat: { id: "x", directive: "", score: 0 },
-      agents: [...STOCK_AGENTS, "observer-malik-johnson"],
+      agents: [...STOCK_AGENTS, "observer-backend-engineer"],
     })
-    const call = taskCall("root", "call_1", "Trace dispatch", "Inspect this issue", "observer-malik-johnson")
+    const call = taskCall("root", "call_1", "Trace dispatch", "Inspect this issue", "observer-backend-engineer")
     await h.hooks["tool.execute.before"](call.input, call.output)
     await h.hooks.event({
-      event: sessionCreated({ id: "child", parentID: "root", title: "Trace dispatch (@observer-malik-johnson subagent)" }),
+      event: sessionCreated({ id: "child", parentID: "root", title: "Trace dispatch (@observer-backend-engineer subagent)" }),
     })
     await h.flush()
 
-    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("malik-johnson")
+    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("backend-engineer")
   })
 
   it("resolves an unambiguous shortened Observer agent type before host dispatch", async () => {
     const h = await harness({
       sessions: { root: { id: "root" } },
-      agents: [...STOCK_AGENTS, "observer-malik-johnson"],
+      agents: [...STOCK_AGENTS, "observer-backend-engineer"],
     })
-    const call = taskCall("root", "call_1", "Trace dispatch", "Inspect this issue", "observer-malik")
+    const call = taskCall("root", "call_1", "Trace dispatch", "Inspect this issue", "observer-backend")
     await h.hooks["tool.execute.before"](call.input, call.output)
 
-    expect(call.output.args["subagent_type"]).toBe("observer-malik-johnson")
+    expect(call.output.args["subagent_type"]).toBe("observer-backend-engineer")
   })
 })
 
-describe("observer opencode plugin: the @observer agent is an ack, not work", () => {
+describe("observer opencode plugin: the @observer coordinator keeps its own identity", () => {
   /**
    * Regression: the plugin read `args.subagentType`, but OpenCode's task tool
    * spells the parameter `subagent_type`. The branch never ran, so every
@@ -443,7 +489,7 @@ describe("observer opencode plugin: the @observer agent is an ack, not work", ()
       event: sessionCreated({ id: "child", parentID: "root", title: "Audit the build (@general subagent)" }),
     })
     await h.flush()
-    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("malik-johnson")
+    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("backend-engineer")
   })
 
   it("honours a camelCase subagentType too, in case a host renames the parameter", async () => {
@@ -473,7 +519,7 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
     await h.flush()
 
     const created = h.of("session.created").at(-1)
-    expect(created?.context["agentType"]).toBe("malik-johnson")
+    expect(created?.context["agentType"]).toBe("backend-engineer")
     expect(created?.context["prompt"]).toBe("prompt text")
   })
 
@@ -488,7 +534,7 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
     await h.flush()
 
     const created = h.of("session.created").at(-1)
-    expect(created?.context["agentType"]).toBe("malik-johnson")
+    expect(created?.context["agentType"]).toBe("backend-engineer")
     expect(created?.context["prompt"]).toBe("prompt text")
   })
 
@@ -546,7 +592,7 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
 
     const created = h.of("session.created")
     expect(created.map((delivery) => delivery.context["prompt"])).toEqual(["first prompt", "second prompt"])
-    expect(created.every((delivery) => delivery.context["agentType"] === "malik-johnson")).toBe(true)
+    expect(created.every((delivery) => delivery.context["agentType"] === "backend-engineer")).toBe(true)
   })
 
   it("replays the seating on later updates instead of letting them blank it", async () => {
@@ -558,7 +604,7 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
     await h.hooks.event({ event: { type: "session.updated", properties: { info } } })
     await h.flush()
 
-    expect(h.of("session.updated").at(-1)?.context["agentType"]).toBe("malik-johnson")
+    expect(h.of("session.updated").at(-1)?.context["agentType"]).toBe("backend-engineer")
   })
 
   it("still seats a child session whose title is only filled in on the update", async () => {
@@ -575,7 +621,7 @@ describe("observer opencode plugin: delegation bookkeeping is order-independent"
     await h.flush()
 
     expect(h.of("session.created").at(-1)?.context["agentType"]).toBeUndefined()
-    expect(h.of("session.updated").at(-1)?.context["agentType"]).toBe("malik-johnson")
+    expect(h.of("session.updated").at(-1)?.context["agentType"]).toBe("backend-engineer")
   })
 })
 
@@ -674,7 +720,7 @@ describe("observer opencode plugin: the finished task call states the subagent f
 
     // The claim exists — seating still worked — but with no callID there is
     // nothing exact to join on, so silence beats guessing.
-    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("malik-johnson")
+    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("backend-engineer")
     expect(h.of("observer.agent-status")).toHaveLength(0)
   })
 
@@ -864,7 +910,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       runtimeId: "child",
       parentRuntimeId: "root",
       callId: "old-call",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       prompt: "original context",
       status: "interrupted",
@@ -877,7 +923,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     const assignment = h.assignments.get("assignment-1")
     expect(assignment?.runtimeId).toBe("child")
     expect(assignment?.status).toBe("running")
-    expect(assignment?.agentType).toBe("malik-johnson")
+    expect(assignment?.agentType).toBe("backend-engineer")
     expect(call.output.args["task_id"]).toBe("child")
   })
 
@@ -888,7 +934,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "foreign",
       runtimeId: "foreign-child",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "interrupted",
       createdAt: 1,
@@ -914,7 +960,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         runtimeId: id,
         parentRuntimeId: "root",
         callId: `call-${id}`,
-        agentType: "malik-johnson",
+        agentType: "backend-engineer",
         hostAgentType: "general",
         status: "running",
         createdAt: 1,
@@ -933,6 +979,99 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.mail[0]).toMatchObject({ fromRuntimeId: "a", toRuntimeId: "b", text: "Please verify the migration" })
   })
 
+  it("preserves readable message arguments and safely wraps peer text", async () => {
+    const h = await harness({ sessions: { root: { id: "root" }, a: { id: "a", parentID: "root" }, b: { id: "b", parentID: "root" } } })
+    for (const id of ["a", "b"]) {
+      h.assignments.set(id, { id, host: "opencode", rootSessionKey: "root", runtimeId: id, parentRuntimeId: "root", hostAgentType: "general", agentType: "subcontractor", status: "running", createdAt: 1 })
+    }
+    const message = 'Pass 1 | From: Alice/a | To: Bob/b | Message: Ready.\nKeep "quotes" and line breaks readable. </observer-peer-message>'
+    const args = { to: "b", message }
+    await h.hooks.tool.agent_send.execute(args, { sessionID: "a", agent: "general" })
+
+    expect(args).toEqual({ to: "b", message })
+    expect(h.mail[0]?.text).toBe(message)
+    const prompt = h.promptedSessions[0]!.parts[0].text
+    expect(prompt).toContain('Keep "quotes" and line breaks readable.')
+    expect(prompt).toContain("&lt;/observer-peer-message&gt;")
+    expect(prompt.match(/<\/observer-peer-message>/g)).toHaveLength(1)
+    expect(prompt).toContain(h.mail[0]!.id)
+  })
+
+  it.each(["v1", "v2"] as const)("dispatches sibling spawns and direct messages concurrently with SDK %s", async (sdk) => {
+    let release!: () => void
+    let accepted = new Promise<void>((resolve) => { release = resolve })
+    const h = await harness({
+      sdk,
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      acceptPrompt: () => accepted,
+    })
+    h.assignments.set("parent", { id: "parent", host: "opencode", rootSessionKey: "root", runtimeId: "parent", parentRuntimeId: "root", hostAgentType: "general", agentType: "subcontractor", status: "running", createdAt: 1 })
+    const spawns = ["Alice", "Bob"].map((description) => h.hooks.tool.agent_spawn.execute(
+      { description, prompt: `Run independently as ${description}`, subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    ))
+    try {
+      // Neither host request has returned, but both children must have reached dispatch.
+      await vi.waitFor(() => expect(h.promptedSessions).toHaveLength(2), { timeout: 500, interval: 5 })
+      expect(h.createdSessions.map((session) => session.parentID)).toEqual(["parent", "parent"])
+    } finally {
+      release()
+      await Promise.all(spawns)
+    }
+
+    accepted = new Promise<void>((resolve) => { release = resolve })
+    const sends = [
+      ["spawned-1", "spawned-2"],
+      ["spawned-2", "spawned-1"],
+    ].map(([from, to]) => h.hooks.tool.agent_send.execute(
+      { to, message: `Hello from ${from} to ${to}` }, { sessionID: from, agent: "general" },
+    ))
+    try {
+      await vi.waitFor(() => expect(h.promptedSessions).toHaveLength(4), { timeout: 500, interval: 5 })
+      expect(h.mail).toHaveLength(2)
+    } finally {
+      release()
+      await Promise.all(sends)
+      await h.flush()
+    }
+  })
+
+  it("delivers three readable bidirectional passes across a two-by-two tree without model calls", async () => {
+    const h = await harness({
+      sessions: { root: { id: "root" }, coordinator: { id: "coordinator", parentID: "root" } },
+      subagentLimits: { maxDepth: 3, maxPerSession: 15 },
+    })
+    h.assignments.set("coordinator", { id: "coordinator", host: "opencode", rootSessionKey: "root", runtimeId: "coordinator", parentRuntimeId: "root", hostAgentType: "general", agentType: "subcontractor", status: "running", createdAt: 1 })
+    const spawn = async (parent: string, description: string): Promise<string> => JSON.parse(await h.hooks.tool.agent_spawn.execute(
+      { description, prompt: "Exchange three direct passes", subagent_type: "general" },
+      { sessionID: parent, agent: "general" },
+    )).id
+    const workers = await Promise.all([spawn("coordinator", "Alice"), spawn("coordinator", "Bob")])
+    const children = await Promise.all(workers.map((parent) => Promise.all([spawn(parent, "Carol"), spawn(parent, "David")])))
+    const pairs = [workers, ...children]
+    for (let pass = 1; pass <= 3; pass++) {
+      await Promise.all(pairs.flatMap((pair) => pair.map(async (from, index) => {
+        const to = pair[1 - index]!
+        const message = `Pass ${pass} | From: ${from} | To: ${to} | Message: ${pass === 1 ? "Ready for the test." : `I received and acknowledged pass ${pass - 1}.`}`
+        await h.hooks.tool.agent_send.execute({ to, message }, { sessionID: from, agent: "general" })
+      })))
+      await Promise.all(pairs.flat().map(async (id) => {
+        const context = { sessionID: id, agent: "general" }
+        const inbox = await h.hooks.tool.agent_inbox.execute({}, context)
+        const received = h.mail.filter((entry) => entry.toRuntimeId === id && !entry.readAt)
+        expect(received).toHaveLength(1)
+        expect(inbox).toContain(`Pass ${pass} |`)
+        expect(inbox).toContain(received[0]!.id)
+        await h.hooks.tool.agent_ack.execute({ ids: received.map((entry) => entry.id) }, context)
+        expect(await h.hooks.tool.agent_inbox.execute({}, context)).toBe("No queued direct messages.")
+      }))
+    }
+    expect(h.createdSessions).toHaveLength(6)
+    expect(h.mail).toHaveLength(18)
+    expect(h.mail.every((entry) => entry.deliveredAt && entry.readAt)).toBe(true)
+    await h.flush()
+  })
+
   it("directs a top-level subagent to return its root-bound message as the task result", async () => {
     const h = await harness({ sessions: { root: { id: "root" }, a: { id: "a", parentID: "root" } } })
     h.assignments.set("assignment-a", {
@@ -941,7 +1080,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "a",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -974,7 +1113,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         ...assignment,
         host: "opencode",
         rootSessionKey: "root",
-        agentType: "malik-johnson",
+        agentType: "backend-engineer",
         hostAgentType: "general",
         status: "running",
         createdAt: 1,
@@ -1006,7 +1145,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "a",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1047,7 +1186,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
         rootSessionKey,
         runtimeId: id,
         parentRuntimeId: "root",
-        agentType: "malik-johnson",
+        agentType: "backend-engineer",
         hostAgentType: "general",
         status: "running",
         createdAt: 1,
@@ -1063,8 +1202,40 @@ describe("observer opencode plugin: stable identity and coordination", () => {
     expect(h.mail).toHaveLength(0)
   })
 
-  it("spawns a nested child with its own persisted stable id", async () => {
+  it.each(["v1", "v2"] as const)("marks a nested child failed when SDK %s rejects its prompt", async (sdk) => {
     const h = await harness({
+      sdk,
+      sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
+      promptError: "Model unavailable",
+    })
+    h.assignments.set("assignment-parent", {
+      id: "assignment-parent",
+      host: "opencode",
+      rootSessionKey: "root",
+      runtimeId: "parent",
+      parentRuntimeId: "root",
+      agentType: "backend-engineer",
+      hostAgentType: "general",
+      status: "running",
+      createdAt: 1,
+    })
+
+    await expect(h.hooks.tool.agent_spawn.execute(
+      { description: "Nested audit", prompt: "Check the storage layer", subagent_type: "general" },
+      { sessionID: "parent", agent: "general" },
+    )).rejects.toThrow("Model unavailable")
+    expect(h.promptedSessions).toHaveLength(1)
+    expect([...h.assignments.values()].find((entry) => entry.runtimeId === "spawned-1")?.status).toBe("failed")
+    await h.flush()
+    expect(h.of("observer.agent-status").at(-1)).toMatchObject({
+      payload: { status: "failed" },
+      context: { sessionKey: "root", agentKey: "session:spawned-1", parentAgentKey: "session:parent" },
+    })
+  })
+
+  it.each(["v1", "v2"] as const)("spawns a nested child with its own persisted stable id using SDK %s", async (sdk) => {
+    const h = await harness({
+      sdk,
       sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
       agents: [...STOCK_AGENTS],
     })
@@ -1075,7 +1246,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       runtimeId: "parent",
       parentRuntimeId: "root",
       callId: "call-parent",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1093,13 +1264,23 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       status: "running",
     })
     expect(h.promptedSessions).toHaveLength(1)
+    const prompted = h.promptedSessions[0]!
+    expect(h.createdSessions).toHaveLength(1)
+    expect(sdk === "v1" ? prompted.path.id : prompted.sessionID).toBe("spawned-1")
+    expect((sdk === "v1" ? prompted.body : prompted).parts[0].text).toContain("Check the storage layer")
+    await h.flush()
+    expect(h.of("observer.assignment").at(-1)?.context).toMatchObject({
+      sessionKey: "root",
+      agentKey: "session:spawned-1",
+      parentAgentKey: "session:parent",
+    })
   })
 
   it("resolves a shortened Observer agent type for a nested child and preserves employee attribution", async () => {
     const h = await harness({
       sessions: { root: { id: "root" }, parent: { id: "parent", parentID: "root" } },
       seat: { id: "x", directive: "", score: 0 },
-      agents: [...STOCK_AGENTS, "observer-malik-johnson"],
+      agents: [...STOCK_AGENTS, "observer-backend-engineer"],
     })
     h.assignments.set("assignment-parent", {
       id: "assignment-parent",
@@ -1107,21 +1288,21 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
     })
 
     await h.hooks.tool.agent_spawn.execute(
-      { description: "Nested audit", prompt: "Inspect this issue", subagent_type: "observer-malik" },
+      { description: "Nested audit", prompt: "Inspect this issue", subagent_type: "observer-backend" },
       { sessionID: "parent", agent: "general" },
     )
 
-    expect(h.createdSessions[0]).toMatchObject({ agent: "observer-malik-johnson" })
+    expect(h.createdSessions[0]).toMatchObject({ agent: "observer-backend-engineer" })
     expect([...h.assignments.values()].find((entry) => entry.runtimeId === "spawned-1")).toMatchObject({
-      agentType: "malik-johnson",
-      hostAgentType: "observer-malik-johnson",
+      agentType: "backend-engineer",
+      hostAgentType: "observer-backend-engineer",
     })
   })
 
@@ -1135,7 +1316,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1162,7 +1343,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "nested",
       parentRuntimeId: "parent",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1188,7 +1369,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1217,7 +1398,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "sofia-moreno",
+      agentType: "product-designer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1257,7 +1438,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1292,7 +1473,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1394,7 +1575,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "completed",
       createdAt: 1,
@@ -1436,7 +1617,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       rootSessionKey: "root",
       runtimeId: "parent",
       parentRuntimeId: "root",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "completed",
       createdAt: 1,
@@ -1709,7 +1890,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "explore",
       status: "running",
       createdAt: 1,
@@ -1729,7 +1910,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "parent",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1749,7 +1930,7 @@ describe("observer opencode plugin: stable identity and coordination", () => {
       host: "opencode",
       rootSessionKey: "root",
       runtimeId: "a",
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       status: "running",
       createdAt: 1,
@@ -1784,7 +1965,7 @@ describe("observer opencode plugin: manual activation", () => {
     await h.flush()
 
     const created = h.of("session.created").at(-1)
-    expect(created?.context["agentType"]).toBe("malik-johnson")
+    expect(created?.context["agentType"]).toBe("backend-engineer")
     expect(created?.context["parentAgentKey"]).toBe("session:child")
   })
 
@@ -1883,7 +2064,7 @@ describe("observer opencode plugin: manual activation", () => {
     await h.flush()
 
     expect(output.system.join("\n")).toContain(ROSTER_HEADING)
-    expect(output.system.join("\n")).toContain("observer-malik-johnson")
+    expect(output.system.join("\n")).toContain("observer-backend-engineer")
     expect(output.system.join("\n")).toContain("Staff Backend Engineer")
     expect(output.system.join("\n")).not.toContain(ACTIVATION_SENTENCE)
   })
@@ -1923,8 +2104,8 @@ describe("observer opencode plugin: chat.message leaves the host's parts alone",
 
 describe("observer opencode plugin: seat control", () => {
   /** The generated agent name for the employee the harness always seats. */
-  const MALIK = "observer-malik-johnson"
-  const CONTROLLED = { control: true, employees: { "malik-johnson": { model: "anthropic/claude-opus-4-5", variant: "high" } } }
+  const MALIK = "observer-backend-engineer"
+  const CONTROLLED = { control: true, employees: { "backend-engineer": { model: "anthropic/claude-opus-4-5", variant: "high" } } }
 
   it("does not force a generated employee agent even when a model pin and definition exist", async () => {
     const h = await harness({ sessions: { root: { id: "root" } }, seats: CONTROLLED, agents: [...STOCK_AGENTS, MALIK] })
@@ -1990,7 +2171,7 @@ describe("observer opencode plugin: seat control", () => {
     // generated for it and the plugin must not go looking for one.
     const h = await harness({
       sessions: { root: { id: "root" } },
-      seats: { control: true, employees: { "malik-johnson": { variant: "high" } } },
+      seats: { control: true, employees: { "backend-engineer": { variant: "high" } } },
       agents: [...STOCK_AGENTS, MALIK],
     })
     const call = taskCall("root", "call_1", "Audit the build", "prompt text")
@@ -2001,7 +2182,7 @@ describe("observer opencode plugin: seat control", () => {
   it("leaves subagent_type untouched for an employee nobody configured", async () => {
     const h = await harness({
       sessions: { root: { id: "root" } },
-      seats: { control: true, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-5" } } },
+      seats: { control: true, employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-5" } } },
       agents: [...STOCK_AGENTS, MALIK],
     })
     const call = taskCall("root", "call_1", "Audit the build", "prompt text")
@@ -2089,7 +2270,7 @@ describe("observer opencode plugin: seat control", () => {
     })
     await h.flush()
 
-    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("malik-johnson")
+    expect(h.of("session.created").at(-1)?.context["agentType"]).toBe("backend-engineer")
     expect(h.of("session.created").at(-1)?.context["prompt"]).toBe("prompt text")
   })
 

@@ -68,7 +68,7 @@ export function LandingPage(props: { connection: Connection; error?: string; onO
               <span className="landing-button-pulse" aria-hidden="true" />{signalLive ? "Signal received" : "Wake the demo"}
             </button>
           </div>
-          <div className="landing-proof"><span>OPEN SOURCE</span><span>LOCAL FIRST</span><span>14 SPECIALISTS</span></div>
+          <div className="landing-proof"><span>OPEN SOURCE</span><span>LOCAL FIRST</span><span>6 CORE ROLES + 2 OPTIONAL</span></div>
         </div>
         <div className={`landing-hero-art${signalLive ? " is-live" : ""}`} role="group" aria-label="Interactive 3D model of an antique pocket watch">
           <div className="landing-art-stamp">LIVE / 3D ASSET / CC0</div>
@@ -94,8 +94,8 @@ export function LandingPage(props: { connection: Connection; error?: string; onO
       </section>
 
       <section className="landing-roster-section" id="roster">
-        <div className="landing-roster-copy"><p className="landing-kicker">The roster</p><h2>Fourteen sharp minds. <span>Zero beige avatars.</span></h2><p>Every subagent gets a face, a voice, and a reason to be in the room. The matcher reads the task and seats the best fit — without pretending it knows more than it does.</p><div className="landing-roster-tags"><span>FRONTEND</span><span>SECURITY</span><span>DATA</span><span>QA</span><span>DEVOPS</span></div></div>
-        <div className="landing-portrait-stack" aria-label="A selection of Observer employee portraits"><img src="/roster/06_sofia_moreno_lead_product_designer.png" alt="Sofia Moreno, lead product designer" loading="lazy" decoding="async" /><img src="/roster/02_malik_johnson_staff_backend_engineer.png" alt="Malik Johnson, staff backend engineer" loading="lazy" decoding="async" /><img src="/roster/05_nia_okafor_senior_cybersecurity_engineer.png" alt="Nia Okafor, senior cybersecurity engineer" loading="lazy" decoding="async" /><div className="landing-portrait-note">THE ROOM<br />IS NEVER EMPTY</div></div>
+        <div className="landing-roster-copy"><p className="landing-kicker">The roster</p><h2>Six focused roles. <span>Two specialists on call.</span></h2><p>Every subagent gets a face, a voice, and a reason to be in the room. The matcher reads the task and seats the best fit — without pretending it knows more than it does.</p><div className="landing-roster-tags"><span>FRONTEND</span><span>SECURITY</span><span>DATA</span><span>QA</span><span>DEVOPS</span></div></div>
+        <div className="landing-portrait-stack" aria-label="A selection of Observer employee portraits"><img src="/roster/06_sofia_moreno_lead_product_designer.png" alt="Product Designer, Yael Mizrahi" loading="lazy" decoding="async" /><img src="/roster/02_malik_johnson_staff_backend_engineer.png" alt="Backend Engineer, David Levi" loading="lazy" decoding="async" /><img src="/roster/05_nia_okafor_senior_cybersecurity_engineer.png" alt="Security Specialist, Tamar Katz" loading="lazy" decoding="async" /><div className="landing-portrait-note">THE ROOM<br />IS NEVER EMPTY</div></div>
       </section>
 
       <section className="landing-install-section" id="install">
@@ -104,7 +104,7 @@ export function LandingPage(props: { connection: Connection; error?: string; onO
         <p className="landing-install-footnote" aria-live="polite">{copied === "failed" ? "Clipboard access is unavailable. Select the command above to copy it manually." : "Works with OpenCode, Codex, Claude Code, and GitHub Copilot CLI."}<span> No cloud relay. No mystery meat.</span></p>
       </section>
 
-      <footer className="landing-footer"><span>OBSERVER / 0.9.19</span><span>CC0 POCKET WATCH / POLY HAVEN</span><span>MADE FOR PEOPLE WHO RUN AGENTS</span><a href="#top">BACK TO TOP ↑</a></footer>
+      <footer className="landing-footer"><span>OBSERVER / 0.9.21</span><span>CC0 POCKET WATCH / POLY HAVEN</span><span>MADE FOR PEOPLE WHO RUN AGENTS</span><a href="#top">BACK TO TOP ↑</a></footer>
     </main>
   )
 }

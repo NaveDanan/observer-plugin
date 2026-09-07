@@ -219,7 +219,7 @@ describe("Store", () => {
         runtimeId: "child",
         parentRuntimeId: "root",
         callId: "call-1",
-        agentType: "malik-johnson",
+        agentType: "backend-engineer",
         hostAgentType: "general",
         description: "Audit storage",
         prompt: "Check migrations",

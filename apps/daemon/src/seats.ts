@@ -1,4 +1,4 @@
-import { ROSTER } from "@observer-ai/roster"
+import { canonicalEmployeeId, employeeEnabled, employeeSetting, LEGACY_EMPLOYEE_IDS, RETIRED_EMPLOYEE_IDS, ROSTER } from "@observer-ai/roster"
 import type { EmployeeProfile, EmployeeSkill } from "@observer-ai/roster"
 import { z } from "zod"
 import { HOST_KINDS, isHostKind } from "./providers.js"
@@ -11,7 +11,7 @@ import { HOST_KINDS, isHostKind } from "./providers.js"
  * agent, which is observed — what the host told us it actually ran. The two
  * must never be conflated; see CONTEXT.md.
  *
- * Every supported host receives native agent definitions for the full roster.
+ * Every supported host receives the default employees and enabled optional specialists.
  * A target only pins model fields on its employee's definition; it never makes
  * the employee available and never routes a delegation to that employee.
  * Host-specific rules still matter:
@@ -147,6 +147,8 @@ export interface SeatTarget {
  * deleted, and `diagnoseSeats` reports them rather than pretending they work.
  */
 export interface SeatSpec {
+  /** Explicit opt-in for optional specialists, independent of model pin control. */
+  enabled?: boolean
   /**
    * Legacy OpenCode model, `providerID/modelID`.
    *
@@ -181,7 +183,7 @@ export interface SeatsConfig {
    * `skills` are unaffected by this flag.
    */
   control: boolean
-  /** Keyed by the stable roster id, e.g. `arjun-mehta`, `dr-mei-lin`. */
+  /** Keyed by the stable roster id, e.g. `frontend-engineer`, `research-analyst`. */
   employees: Record<string, SeatSpec>
 }
 
@@ -278,6 +280,7 @@ export const SeatTargetSchema = z
  */
 export const SeatSpecSchema = z
   .object({
+    enabled: z.boolean().optional().catch(undefined),
     model: z.string().min(1).optional().catch(undefined),
     variant: z.string().min(1).optional().catch(undefined),
     skills: z.array(SeatSkillSchema).optional().catch(undefined),
@@ -314,6 +317,9 @@ const _schemaMatchesType: SchemaMatchesType = true
 void _schemaMatchesType
 
 export type SeatIssueCode =
+  | "legacy-employee"
+  | "retired-employee"
+  | "specialist-disabled"
   | "unknown-employee"
   | "variant-without-model"
   | "unrecognised-variant"
@@ -358,7 +364,7 @@ export type SeatIssueSeverity = "error" | "warning" | "info"
 export interface SeatIssue {
   code: SeatIssueCode
   severity: SeatIssueSeverity
-  /** Dotted config path, e.g. `seats.employees.arjun-mehta.variant`. */
+  /** Dotted config path, e.g. `seats.employees.frontend-engineer.variant`. */
   path: string
   /** The roster id the finding is scoped to, when it is scoped to one. */
   employeeId?: string
@@ -438,7 +444,7 @@ export interface SeatDiagnosis {
 const ROSTER_IDS = new Set(ROSTER.map((profile) => profile.id))
 
 /** Fields Observer reads from a seat spec. Anything else is reported, not applied. */
-const KNOWN_SEAT_FIELDS = new Set(["model", "variant", "skills", "targets"])
+const KNOWN_SEAT_FIELDS = new Set(["model", "variant", "skills", "targets", "enabled"])
 
 /**
  * The targets a seat actually asks for, with the legacy pair folded in.
@@ -584,13 +590,29 @@ export function diagnoseSeats(seats: SeatsConfig): SeatDiagnosis {
       issues.push({ code, severity, path: suffix ? `${path}.${suffix}` : path, employeeId: id, message })
     }
 
-    if (!ROSTER_IDS.has(id)) {
+    const canonical = canonicalEmployeeId(id)
+    if ((RETIRED_EMPLOYEE_IDS as readonly string[]).includes(id)) {
+      add("retired-employee", "info", "", "This management role is retired. The root agent now owns planning and architecture. Its saved settings are preserved but inactive.")
+      continue
+    }
+    if (canonical !== id) {
+      const sources = [canonical, ...(LEGACY_EMPLOYEE_IDS[canonical] ?? [])].filter((key) => Object.hasOwn(employees, key))
+      add("legacy-employee", "info", "", `This legacy ID now refers to ${canonical}. Settings from ${sources[0]} take precedence; other saved entries are preserved. Edit the current employee to migrate its settings.`)
+      if (sources[0] !== id) continue
+    }
+    if (!ROSTER_IDS.has(canonical)) {
       add(
         "unknown-employee",
         "error",
         "",
         `"${id}" is not an employee on the roster, so this seat is never used. It is kept in the file so you can correct the id.`,
       )
+    }
+
+    const profile = ROSTER.find((entry) => entry.id === canonical)
+    if (profile && !employeeEnabled(profile, spec)) {
+      add("specialist-disabled", "info", "enabled", "This optional specialist is disabled. Enable it in Employees settings to register its host agent; model pins and skills remain saved.")
+      continue
     }
 
     const hasModel = typeof spec.model === "string" && spec.model.length > 0
@@ -737,7 +759,7 @@ export function diagnoseSeats(seats: SeatsConfig): SeatDiagnosis {
       add("unknown-field", "info", field, `Observer does not apply "${field}" yet. It is preserved in the file untouched.`)
     }
 
-    if (!hasModel && !hasVariant && skillCount === 0 && targetIds.length === 0) {
+    if (!hasModel && !hasVariant && skillCount === 0 && targetIds.length === 0 && spec.enabled === undefined) {
       add("empty-seat", "info", "", "This seat sets nothing, so it changes nothing.")
     }
 
@@ -792,8 +814,8 @@ function describeOption(option: SeatTargetOption | undefined): string {
  * cannot accidentally act on a typo.
  */
 export function seatFor(seats: SeatsConfig, employeeId: string): SeatSpec | undefined {
-  if (!ROSTER_IDS.has(employeeId)) return undefined
-  return seats?.employees?.[employeeId]
+  if (!ROSTER_IDS.has(canonicalEmployeeId(employeeId))) return undefined
+  return employeeSetting(seats?.employees, employeeId)
 }
 
 /**

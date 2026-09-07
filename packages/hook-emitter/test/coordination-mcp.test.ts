@@ -79,9 +79,30 @@ async function call(
 }
 
 describe("portable Observer coordination MCP", () => {
-  it("advertises the same four coordination tools on MCP initialization", async () => {
+  it("retrieves a brief without subagent identity and preserves daemon errors", async () => {
+    const paths: string[] = []
+    const api = {
+      async get(path: string) { paths.push(path); return { employeeId: "frontend-engineer", mode: "review" } },
+      async post() { throw new Error("briefs must not mutate state") },
+    }
+    const result = await call("employee_brief", { employeeId: "frontend-engineer", mode: "review" }, api, {})
+    expect(result.isError).toBeUndefined()
+    expect(JSON.parse(result.content[0].text)).toEqual({ employeeId: "frontend-engineer", mode: "review" })
+    expect(paths).toEqual(["/v1/roster/brief?employeeId=frontend-engineer&mode=review"])
+    await call("employee_brief", {}, api, {})
+    expect(paths.at(-1)).toBe("/v1/roster/brief?")
+    for (const args of [{ employeeId: 3 }, { mode: "" }, { install: true }]) {
+      expect((await call("employee_brief", args, api, {})).isError).toBe(true)
+    }
+    const offline = await call("employee_brief", {}, { ...api, async get() { throw new Error("daemon offline") } }, {})
+    expect(offline.isError).toBe(true)
+    expect(offline.content[0].text).toContain("daemon offline")
+  })
+
+  it("advertises employee briefs and the four coordination tools on MCP initialization", async () => {
     const { api } = harness()
     expect(COORDINATION_TOOLS.map((tool) => tool.name)).toEqual([
+      "employee_brief",
       "agent_identity",
       "agent_send",
       "agent_inbox",
@@ -109,6 +130,7 @@ describe("portable Observer coordination MCP", () => {
     const responses = run.stdout.trim().split("\n").map((line) => JSON.parse(line))
     expect(responses[0].result.serverInfo.name).toBe("observer-coordination")
     expect(responses[1].result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "employee_brief",
       "agent_identity",
       "agent_send",
       "agent_inbox",

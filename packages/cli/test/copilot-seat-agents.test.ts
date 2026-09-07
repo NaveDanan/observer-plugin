@@ -40,7 +40,7 @@ function seats(control = true) {
   return {
     control,
     employees: {
-      "malik-johnson": {
+      "backend-engineer": {
         targets: {
           "copilot:default": {
             host: "copilot",
@@ -57,6 +57,16 @@ function seats(control = true) {
 }
 
 describe("Copilot seat agents", () => {
+  it("enables and removes optional specialist definitions independently of model pins", () => {
+    const config = { control: false, employees: { "security-specialist": { enabled: true } } }
+    syncCopilotSeatAgents(config)
+    const path = join(process.env["COPILOT_HOME"]!, "agents", "observer-security-specialist.agent.md")
+    expect(readFileSync(path, "utf8")).toContain("Tamar Katz")
+    expect(existsSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-hardware-specialist.agent.md"))).toBe(false)
+    config.employees["security-specialist"].enabled = false
+    expect(syncCopilotSeatAgents(config).removed).toContain(path)
+    expect(existsSync(path)).toBe(false)
+  })
   it("generates a plugin agent and reconciles its model settings", () => {
     writeFileSync(
       copilotSettingsPath(),
@@ -65,24 +75,24 @@ describe("Copilot seat agents", () => {
 
     const result = syncCopilotSeatAgents(seats())
     const agent = readFileSync(
-      join(process.env["COPILOT_HOME"]!, "plugins", "observer", "agents", "observer-malik-johnson.agent.md"),
+      join(process.env["COPILOT_HOME"]!, "plugins", "observer", "agents", "observer-backend-engineer.agent.md"),
       "utf8",
     )
     const settings = JSON.parse(readFileSync(copilotSettingsPath(), "utf8"))
     const personalAgent = readFileSync(
-      join(process.env["COPILOT_HOME"]!, "agents", "observer-arjun-mehta.agent.md"),
+      join(process.env["COPILOT_HOME"]!, "agents", "observer-frontend-engineer.agent.md"),
       "utf8",
     )
 
     expect(agent).toContain("observer:copilot-seat-agent v1")
     expect(agent).toContain('model: "claude-opus-5"')
-    expect(agent).toContain("You are Malik Johnson")
+    expect(agent).toContain("You are David Levi")
     expect(agent).toContain("Use `apply_patch` instead of the legacy `edit` and `create` tools")
-    expect(personalAgent).toContain("You are Arjun Mehta")
+    expect(personalAgent).toContain("You are Noam Cohen")
     expect(personalAgent).not.toContain("model:")
     expect(settings.theme).toBe("github")
     expect(settings.subagents.agents.explore).toEqual({ model: "gpt-5.6-luna" })
-    expect(settings.subagents.agents["observer:observer-malik-johnson"]).toEqual({
+    expect(settings.subagents.agents["observer:observer-backend-engineer"]).toEqual({
       model: "claude-opus-5",
       effortLevel: "high",
       contextTier: "long_context",
@@ -95,9 +105,9 @@ describe("Copilot seat agents", () => {
     writeFileSync(join(copilotPluginCacheDir(), "plugin.json"), "{}\n")
 
     const result = syncCopilotSeatAgents(seats())
-    expect(result.written).toHaveLength(42)
+    expect(result.written).toHaveLength(18)
     expect(
-      existsSync(join(copilotPluginCacheDir(), "agents", "observer-malik-johnson.agent.md")),
+      existsSync(join(copilotPluginCacheDir(), "agents", "observer-backend-engineer.agent.md")),
     ).toBe(true)
   })
 
@@ -107,16 +117,16 @@ describe("Copilot seat agents", () => {
       "plugins",
       "observer",
       "agents",
-      "observer-malik-johnson.agent.md",
+      "observer-backend-engineer.agent.md",
     )
     mkdirSync(join(path, ".."), { recursive: true })
-    writeFileSync(path, "---\nname: observer-malik-johnson\n---\nUser-owned agent.\n")
+    writeFileSync(path, "---\nname: observer-backend-engineer\n---\nUser-owned agent.\n")
 
     const result = syncCopilotSeatAgents(seats())
 
     expect(readFileSync(path, "utf8")).toContain("User-owned agent.")
-    expect(result.written).toHaveLength(27)
-    expect(result.written.filter((written) => written.endsWith("observer-malik-johnson.agent.md"))).toHaveLength(1)
+    expect(result.written).toHaveLength(11)
+    expect(result.written.filter((written) => written.endsWith("observer-backend-engineer.agent.md"))).toHaveLength(1)
     expect(result.notes.join(" ")).toContain("is not owned by Observer")
     expect(existsSync(copilotSettingsPath())).toBe(false)
   })
@@ -129,10 +139,10 @@ describe("Copilot seat agents", () => {
 
     const result = syncCopilotSeatAgents(seats(false))
     const after = JSON.parse(readFileSync(copilotSettingsPath(), "utf8"))
-    expect(after.subagents.agents["observer:observer-malik-johnson"]).toBeUndefined()
+    expect(after.subagents.agents["observer:observer-backend-engineer"]).toBeUndefined()
     expect(after.subagents.agents["my-agent"]).toEqual({ model: "gpt-5.4" })
     expect(result.removed).toEqual([])
-    expect(readFileSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-malik-johnson.agent.md"), "utf8")).not.toContain("model:")
+    expect(readFileSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-backend-engineer.agent.md"), "utf8")).not.toContain("model:")
     expect(JSON.parse(readFileSync(copilotSeatStatePath(), "utf8")).agents).toEqual([])
   })
 
@@ -149,8 +159,8 @@ describe("Copilot seat agents", () => {
   it("generates personal employee agents before the plugin exists", () => {
     rmSync(join(process.env["COPILOT_HOME"]!, "plugins", "observer"), { recursive: true, force: true })
     const result = syncCopilotSeatAgents(seats())
-    expect(result.written).toHaveLength(14)
-    expect(existsSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-malik-johnson.agent.md"))).toBe(true)
+    expect(result.written).toHaveLength(6)
+    expect(existsSync(join(process.env["COPILOT_HOME"]!, "agents", "observer-backend-engineer.agent.md"))).toBe(true)
     expect(result.notes.join(" ")).toContain("unpinned agents inherit Copilot's model choice")
   })
 })

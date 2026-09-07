@@ -73,16 +73,13 @@ function family(): { agents: AgentEntity[]; edges: EdgeEntity[] } {
 }
 
 describe("toFlowEdges", () => {
-  it.each(["spawned", "delegated", "messaged", "forked"] as const)(
+  it.each(["spawned", "delegated", "forked"] as const)(
     "preserves the %s relationship type independently from provenance",
     (edgeType) => {
       const [flowEdge] = toFlowEdges([edge(edgeType, "reconciled")], false)
 
       expect(flowEdge).toMatchObject({
-        id:
-          edgeType === "messaged"
-            ? "message-pair:opencode:root:opencode:root~session:a<->opencode:root~session:b"
-            : `edge-${edgeType}`,
+        id: `edge-${edgeType}`,
         source: "opencode:root~session:a",
         target: "opencode:root~session:b",
         type: "step",
@@ -96,20 +93,22 @@ describe("toFlowEdges", () => {
 
   it("animates communication only when motion is allowed", () => {
     const types = ["spawned", "delegated", "messaged", "forked"] as const
-    expect(toFlowEdges(types.map((type) => edge(type)), false).map((entry) => entry.animated)).toEqual([
+    const lineage = computeLineage([
+      agent("root", null),
+      agent(edge("messaged").fromAgentId, "root"),
+      agent(edge("messaged").toAgentId, "root"),
+    ], [])
+    expect(toFlowEdges(types.map((type) => edge(type)), false, lineage).map((entry) => entry.animated)).toEqual([
       false,
       false,
       true,
       false,
     ])
-    expect(toFlowEdges([edge("messaged")], true)[0]?.animated).toBe(false)
+    expect(toFlowEdges([edge("messaged")], true, lineage)[0]?.animated).toBe(false)
   })
 
-  it("retains an authoritative relationship label before lineage is known", () => {
-    const [flowEdge] = toFlowEdges([edge("messaged", "authoritative", "direct message")], false)
-
-    expect(flowEdge?.label).toBe("direct message")
-    expect(flowEdge?.ariaLabel).toBe("direct message")
+  it("hides messages until sibling lineage is known rather than flashing a straight line", () => {
+    expect(toFlowEdges([edge("messaged", "authoritative", "direct message")], false)).toEqual([])
   })
 
   it("falls back to provenance when the host supplied no label", () => {
@@ -208,9 +207,9 @@ describe("peer messages", () => {
   const { agents, edges } = family()
   const lineage = computeLineage(agents, edges)
 
-  it("treats a message between agents outside each other's bloodline as a peer message", () => {
+  it("treats only messages between siblings as peer messages", () => {
     expect(isPeerMessage(link("a", "b", "messaged"), lineage)).toBe(true)
-    expect(isPeerMessage(link("a1", "b", "messaged"), lineage)).toBe(true)
+    expect(isPeerMessage(link("a1", "b", "messaged"), lineage)).toBe(false)
   })
 
   it("does not treat a message to an ancestor or a descendant as a peer message", () => {
@@ -262,18 +261,29 @@ describe("peer messages", () => {
   })
 
   it("keeps two different conversations apart", () => {
-    const drawn = toFlowEdges([link("a", "b", "messaged"), link("a1", "b", "messaged")], false, lineage)
+    const siblings = computeLineage([...agents, agent("c", "root", 4)], edges)
+    const drawn = toFlowEdges([link("a", "b", "messaged"), link("a", "c", "messaged")], false, siblings)
 
     expect(drawn).toHaveLength(2)
     expect(new Set(drawn.map((entry) => entry.id)).size).toBe(2)
   })
 
-  it("reserves the communication arc for messages outside the family line", () => {
-    const [message] = toFlowEdges([link("a", "a1", "messaged")], false, lineage)
+  it("leaves hierarchy lines and node colours unchanged when parents and children exchange messages", () => {
+    const withMessages = [...edges, link("a", "a1", "messaged"), link("a1", "a", "messaged"), link("a1", "root", "messaged")]
+    const nextLineage = computeLineage(agents, withMessages)
+    expect(nextLineage).toEqual(lineage)
+    expect(toFlowEdges(withMessages, false, nextLineage)).toEqual(toFlowEdges(edges, false, lineage))
+  })
 
-    expect(message?.type).toBe("step")
-    expect(message?.className).not.toContain("edge-peer")
-    expect(message?.data?.peer).toBe(false)
+  it("hides cross-level, self, and unknown-endpoint messages", () => {
+    const messages = [link("a1", "b", "messaged"), link("a", "a", "messaged"), link("a", "missing", "messaged")]
+    expect(toFlowEdges(messages, false, lineage)).toEqual([])
+  })
+
+  it("draws arcs for nested siblings but not unrelated roots", () => {
+    const extended = computeLineage([...agents, agent("a2", "a", 4), agent("other-root", null, 5)], edges)
+    expect(toFlowEdges([link("a1", "a2", "messaged")], false, extended)[0]?.type).toBe(PEER_EDGE_TYPE)
+    expect(toFlowEdges([link("root", "other-root", "messaged")], false, extended)).toEqual([])
   })
 })
 

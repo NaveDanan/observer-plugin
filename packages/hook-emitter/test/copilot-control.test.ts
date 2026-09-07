@@ -10,7 +10,7 @@ const configured: CopilotControlConfig = {
   seats: {
     control: true,
     employees: {
-      "malik-johnson": {
+      "backend-engineer": {
         targets: {
           "copilot:default": {
             host: "copilot",
@@ -45,7 +45,7 @@ describe("Copilot delegation control", () => {
     ).toEqual({
       modifiedArgs: {
         ...args,
-        agent_type: "observer:observer-malik-johnson",
+        agent_type: "observer:observer-backend-engineer",
       },
     })
   })
@@ -59,7 +59,7 @@ describe("Copilot delegation control", () => {
       mkdirSync(join(copilotHome, "plugins", "observer", "agents"), { recursive: true })
       writeFileSync(join(observerHome, "config.json"), `${JSON.stringify(configured)}\n`)
       writeFileSync(
-        join(copilotHome, "plugins", "observer", "agents", "observer-malik-johnson.agent.md"),
+        join(copilotHome, "plugins", "observer", "agents", "observer-backend-engineer.agent.md"),
         "---\n# observer:copilot-seat-agent v1\nmodel: claude-opus-5\n---\n",
       )
       writeFileSync(
@@ -67,7 +67,7 @@ describe("Copilot delegation control", () => {
         `${JSON.stringify({
           subagents: {
             agents: {
-              "observer:observer-malik-johnson": {
+              "observer:observer-backend-engineer": {
                 model: "claude-opus-5",
                 effortLevel: "high",
               },
@@ -99,7 +99,7 @@ describe("Copilot delegation control", () => {
       expect(child.status).toBe(0)
       expect(JSON.parse(child.stdout)).toEqual({
         modifiedArgs: {
-          agent_type: "observer:observer-malik-johnson",
+          agent_type: "observer:observer-backend-engineer",
           name: "api-helper",
           prompt: "Scale the database and redesign the API contracts.",
         },
@@ -154,7 +154,7 @@ describe("Copilot delegation control", () => {
     expect(
       controlCopilotDelegation(
         neutral,
-        { ...configured, seats: { control: true, employees: { "malik-johnson": {} } } },
+        { ...configured, seats: { control: true, employees: { "backend-engineer": {} } } },
         () => true,
       ),
     ).toBeUndefined()

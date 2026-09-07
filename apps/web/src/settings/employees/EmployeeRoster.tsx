@@ -103,10 +103,10 @@ function EmployeeCard({
 
       <span className="min-w-0 flex-1 space-y-1">
         <span className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">{profile.fullName}</span>
-          {row.seated ? null : <span className="shrink-0 text-[11px] text-muted-foreground/70">no seat</span>}
+          <span className="truncate text-sm font-medium text-foreground">{profile.title}</span>
+          {profile.optional === true ? <Badge variant="outline" size="sm">{row.spec?.enabled === true ? "Enabled" : "Optional · off"}</Badge> : null}
         </span>
-        <span className="block truncate text-xs text-muted-foreground">{profile.title}</span>
+        <span className="block truncate text-xs text-muted-foreground">{profile.fullName}</span>
 
         {row.targets.length === 0 ? (
           <span className="flex flex-wrap gap-1 pt-0.5">
@@ -126,8 +126,8 @@ function EmployeeCard({
                   <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-primary">
                     {isTarget(target.target) ? targetSummary(directory, target) : `${target.id} — not a target`}
                   </span>
-                  <Badge variant={verdict.tone} size="sm">
-                    {verdict.label}
+                  <Badge variant={profile.optional && row.spec?.enabled !== true ? "secondary" : verdict.tone} size="sm">
+                    {profile.optional && row.spec?.enabled !== true ? "Disabled" : verdict.label}
                   </Badge>
                 </span>
               )
@@ -137,7 +137,7 @@ function EmployeeCard({
 
         {row.skillCount > 0 ? (
           <span className="block pt-0.5 text-[11px] text-muted-foreground">
-            {row.skillCount} skill{row.skillCount === 1 ? "" : "s"}, applied on every host
+            {row.skillCount} skill{row.skillCount === 1 ? "" : "s"}, {profile.optional && row.spec?.enabled !== true ? "saved while disabled" : "applied on every host"}
           </span>
         ) : null}
 

@@ -1,4 +1,5 @@
 import { ROSTER } from "./roster.js"
+import { activeEmployees } from "./selection.js"
 import type { EmployeeMatch, MatchReason, RosterProfile } from "./types.js"
 
 /**
@@ -118,6 +119,7 @@ function buildIndex(profile: RosterProfile): ProfileIndex {
     ...profile.fields,
     profile.title,
     profile.shortDescription,
+    profile.work?.selection ?? "",
   ]
   const bags = sources.map((source) => new Set(contentWords(source)))
   for (const bag of bags) {
@@ -145,6 +147,9 @@ function buildIndex(profile: RosterProfile): ProfileIndex {
   }
   for (const word of contentWords(profile.title)) addTerm(word, 1.5)
   for (const word of contentWords(profile.shortDescription)) addTerm(word, 0.5)
+  // Index only the employee's own selection criteria. Handoff names and
+  // neighboring specialties must not make this employee match their work.
+  for (const word of contentWords(profile.work?.selection ?? "")) addTerm(word, 1.5)
 
   return {
     profile,
@@ -169,13 +174,15 @@ function containsPhrase(haystack: string, phrase: string): boolean {
  * Ranks every employee against the task text, best first. Always returns up
  * to `limit` entries; callers decide what score is good enough.
  */
-export function rankEmployees(task: string, limit = 3): EmployeeMatch[] {
+export function rankEmployees(task: string, limit = 3, profiles: readonly RosterProfile[] = activeEmployees()): EmployeeMatch[] {
   const normalizedTask = normalize(task)
   if (normalizedTask.length === 0) return []
   const taskTokens = new Set(tokenize(task))
 
   const matches: EmployeeMatch[] = []
+  const allowed = new Set(profiles.map((profile) => profile.id))
   for (const index of indexes()) {
+    if (!allowed.has(index.profile.id)) continue
     let score = 0
     const reasons: MatchReason[] = []
     /** Term hits worth naming, strongest first. */
@@ -226,8 +233,8 @@ export function rankEmployees(task: string, limit = 3): EmployeeMatch[] {
  * the confidence floor. The undefined case matters: Observer never invents an
  * assignment it cannot support.
  */
-export function matchEmployee(task: string): EmployeeMatch | undefined {
-  const [best] = rankEmployees(task, 1)
+export function matchEmployee(task: string, profiles?: readonly RosterProfile[]): EmployeeMatch | undefined {
+  const [best] = rankEmployees(task, 1, profiles)
   if (!best || best.score < MIN_SCORE) return undefined
   return best
 }

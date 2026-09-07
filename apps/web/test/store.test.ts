@@ -143,22 +143,22 @@ describe("employee seating", () => {
     // name as agentType. The task path and prompt can be arbitrary, so the
     // employee identity must not depend on lexical task matching.
     const node = agent({
-      agentType: "observer-marcus-reed",
+      agentType: "observer-quality-engineer",
       displayName: "/root/marcus_manager",
       delegationPrompt: "Coordinate this effort.",
     })
     const match = selectEmployeeMatch(state, node)
-    expect(match?.profile.fullName).toBe("Marcus Reed")
-    expect(match?.profile.title).toBe("Engineering Manager")
+    expect(match?.profile.fullName).toBe("Daniel Peretz")
+    expect(match?.profile.title).toBe("Quality Engineer")
   })
 
   it("keeps explicit employee identity when the task text fits somebody else", () => {
     const node = agent({
-      agentType: "observer-marcus-reed",
+      agentType: "observer-quality-engineer",
       delegationPrompt: "Set up Kubernetes and CI/CD for the deployment.",
       updatedAt: 2_000,
     })
-    expect(selectEmployeeMatch(state, node)?.profile.id).toBe("marcus-reed")
+    expect(selectEmployeeMatch(state, node)?.profile.id).toBe("quality-engineer")
   })
 
   it("falls back to task matching for an unknown observer-prefixed type", () => {
@@ -167,7 +167,7 @@ describe("employee seating", () => {
       delegationPrompt: "Set up Kubernetes and CI/CD for the deployment.",
       updatedAt: 3_000,
     })
-    expect(selectEmployeeMatch(state, node)?.profile.id).toBe("elias-mercer")
+    expect(selectEmployeeMatch(state, node)?.profile.id).toBe("platform-engineer")
   })
 
   it("seats an employee from the delegation prompt", () => {
@@ -216,8 +216,8 @@ describe("host title suffix", () => {
     const task = "Tidy up the accessibility of the settings screen"
     const decorated = agent({ id: "a", description: `${task} (@k8s subagent)` })
     const plain = agent({ id: "b", description: task })
-    expect(selectEmployeeMatch(state, plain)?.profile.id).toBe("sofia-moreno")
-    expect(selectEmployeeMatch(state, decorated)?.profile.id).toBe("sofia-moreno")
+    expect(selectEmployeeMatch(state, plain)?.profile.id).toBe("product-designer")
+    expect(selectEmployeeMatch(state, decorated)?.profile.id).toBe("product-designer")
   })
 
   it("still refuses to seat anyone on an explicit subcontractor node", () => {

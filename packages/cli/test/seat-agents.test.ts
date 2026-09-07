@@ -112,10 +112,25 @@ function read(file: string): string {
 
 const ARJUN = { model: "anthropic/claude-opus-4-5", variant: "high" }
 
+it("registers optional OpenCode specialists only when enabled and resolves legacy settings", () => {
+  const config = seats(false, {
+    "arjun-mehta": { skills: [{ name: "legacy-ui", description: "Retained" }] },
+    "hardware-specialist": { enabled: true },
+  })
+  syncSeatAgents(config)
+  expect(employeeAgentFiles()).toHaveLength(7)
+  expect(read("observer-hardware-specialist.md")).toContain("Eitan Dahan")
+  expect(read("observer-frontend-engineer.md")).toContain("legacy-ui: Retained")
+  expect(read("observer-frontend-engineer.md")).not.toContain("observer-security-specialist`: Security")
+  const second = syncSeatAgents(seats(false, { ...config.employees, "hardware-specialist": { enabled: false } }))
+  expect(second.removed).toContain(join(seatAgentDir(), "observer-hardware-specialist.md"))
+  expect(employeeAgentFiles()).toHaveLength(6)
+})
+
 describe("seatAgentName", () => {
   it("prefixes a roster id and leaves an already-slug-shaped id alone", () => {
-    expect(seatAgentName("arjun-mehta")).toBe("observer-arjun-mehta")
-    expect(seatAgentName("dr-mei-lin")).toBe("observer-dr-mei-lin")
+    expect(seatAgentName("frontend-engineer")).toBe("observer-frontend-engineer")
+    expect(seatAgentName("research-analyst")).toBe("observer-research-analyst")
   })
 
   it("produces a name the plugin's title join still accepts", () => {
@@ -127,7 +142,7 @@ describe("seatAgentName", () => {
      * silently — so the naming rule is pinned here as well as in the plugin.
      */
     const SUBAGENT_TITLE_SUFFIX = /\s*\(\s*@?[\w.\-]+\s+subagent\s*\)\s*$/i
-    for (const id of ["arjun-mehta", "dr-mei-lin", "Weird Id!!", "", "...."]) {
+    for (const id of ["frontend-engineer", "research-analyst", "Weird Id!!", "", "...."]) {
       const name = seatAgentName(id)
       const title = `Audit the build (@${name} subagent)`
       expect(title.replace(SUBAGENT_TITLE_SUFFIX, ""), name).toBe("Audit the build")
@@ -144,19 +159,19 @@ describe("seatAgentName", () => {
 
 describe("syncSeatAgents", () => {
   it("writes one definition per seat that sets a model", () => {
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
 
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
-    expect(employeeAgentFiles()).toHaveLength(14)
-    expect(result.written).toHaveLength(14)
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
+    expect(employeeAgentFiles()).toHaveLength(6)
+    expect(result.written).toHaveLength(6)
     expect(result.removed).toEqual([])
 
-    const contents = read("observer-arjun-mehta.md")
+    const contents = read("observer-frontend-engineer.md")
     expect(contents).toContain("mode: subagent")
     expect(contents).not.toContain("hidden: true")
     expect(contents).toContain(`model: "anthropic/claude-opus-4-5"`)
     expect(contents).toContain(`variant: "high"`)
-    expect(contents).toContain("Arjun Mehta")
+    expect(contents).toContain("Noam Cohen")
   })
 
   it("makes nested delegation and peer coordination explicit in every employee definition", () => {
@@ -165,8 +180,8 @@ describe("syncSeatAgents", () => {
      * the config hook made the live registry vary by caller and left employees
      * unable to staff children even though Observer exposed agent_spawn.
      */
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    const contents = read("observer-arjun-mehta.md")
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    const contents = read("observer-frontend-engineer.md")
     expect(contents).toContain("permission:")
     expect(contents).toContain(`  todowrite: "deny"`)
     expect(contents).toContain(`  task: "allow"`)
@@ -175,19 +190,19 @@ describe("syncSeatAgents", () => {
   })
 
   it("puts the employee behavior in the native agent body", () => {
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    const [, body] = read("observer-arjun-mehta.md").split(/^---$/m).slice(1)
-    expect(body).toContain("You are Arjun Mehta")
-    expect(body).toContain("observer-sofia-moreno")
-    expect(body).toContain("Interaction design")
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    const [, body] = read("observer-frontend-engineer.md").split(/^---$/m).slice(1)
+    expect(body).toContain("You are Noam Cohen")
+    expect(body).toContain("observer-product-designer")
+    expect(body).toContain("design user flows, information architecture")
   })
 
   it("writes no file for a seat that sets a reasoning effort but no model", () => {
     // OpenCode applies a variant only to an agent's own configured model, so a
     // file with a variant and nothing else could not do anything.
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { variant: "high" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { variant: "high" } }))
     expect(agentFiles()).toEqual([])
-    expect(result.written).toHaveLength(14)
+    expect(result.written).toHaveLength(6)
     expect(result.notes.join("\n")).toContain("has no effect without a model")
   })
 
@@ -201,20 +216,20 @@ describe("syncSeatAgents", () => {
     // The file would load, appear in the host's agent list, pass the plugin's
     // existence check, and only then fail the delegation. Not writing it turns
     // a broken task into a no-op.
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "claude-opus-4-5" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "claude-opus-4-5" } }))
     expect(agentFiles()).toEqual([])
     expect(result.notes.join("\n")).toContain("missing its provider")
   })
 
   it("writes nothing and removes a previous run's files when control is off", () => {
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN, "malik-johnson": { model: "openai/gpt-5" } }))
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN, "backend-engineer": { model: "openai/gpt-5" } }))
     expect(agentFiles()).toHaveLength(2)
-    expect(employeeAgentFiles()).toHaveLength(14)
+    expect(employeeAgentFiles()).toHaveLength(6)
 
     // The seats survive in the config; only the flag changed. Turning the
     // feature off has to stop it billing the user for a model they no longer
     // asked for, which means the files have to go.
-    const result = syncSeatAgents(seats(false, { "arjun-mehta": ARJUN, "malik-johnson": { model: "openai/gpt-5" } }))
+    const result = syncSeatAgents(seats(false, { "frontend-engineer": ARJUN, "backend-engineer": { model: "openai/gpt-5" } }))
     expect(agentFiles()).toEqual([])
     expect(result.written).toHaveLength(2)
     expect(result.removed).toEqual([])
@@ -222,39 +237,39 @@ describe("syncSeatAgents", () => {
   })
 
   it("is idempotent: a second run writes and removes nothing", () => {
-    const config = seats(true, { "arjun-mehta": ARJUN })
+    const config = seats(true, { "frontend-engineer": ARJUN })
     syncSeatAgents(config)
-    const before = read("observer-arjun-mehta.md")
+    const before = read("observer-frontend-engineer.md")
 
     const second = syncSeatAgents(config)
     expect(second.written).toEqual([])
     expect(second.removed).toEqual([])
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
-    expect(read("observer-arjun-mehta.md")).toBe(before)
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
+    expect(read("observer-frontend-engineer.md")).toBe(before)
     // The count still has to be reported: a caller printing `written.length`
     // after a no-op save would claim nothing is in force.
-    expect(second.notes.join("\n")).toContain("14 employee agent definitions available")
+    expect(second.notes.join("\n")).toContain("6 employee agent definitions available")
   })
 
   it("removes a definition once its seat drops the model", () => {
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { variant: "high" } }))
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { variant: "high" } }))
     expect(agentFiles()).toEqual([])
-    expect(result.written).toEqual([join(seatAgentDir(), "observer-arjun-mehta.md")])
+    expect(result.written).toEqual([join(seatAgentDir(), "observer-frontend-engineer.md")])
     expect(result.removed).toEqual([])
   })
 
   it("rewrites a definition that no longer matches its seat", () => {
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "openai/gpt-5", variant: "low" } }))
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "openai/gpt-5", variant: "low" } }))
     expect(result.written).toHaveLength(1)
-    expect(read("observer-arjun-mehta.md")).toContain(`model: "openai/gpt-5"`)
-    expect(read("observer-arjun-mehta.md")).toContain(`variant: "low"`)
+    expect(read("observer-frontend-engineer.md")).toContain(`model: "openai/gpt-5"`)
+    expect(read("observer-frontend-engineer.md")).toContain(`variant: "low"`)
   })
 
   it("omits the variant entirely when the seat does not set one", () => {
-    syncSeatAgents(seats(true, { "arjun-mehta": { model: "openai/gpt-5" } }))
-    expect(read("observer-arjun-mehta.md")).not.toContain("variant:")
+    syncSeatAgents(seats(true, { "frontend-engineer": { model: "openai/gpt-5" } }))
+    expect(read("observer-frontend-engineer.md")).not.toContain("variant:")
   })
 
   it("keeps a file Observer did not write, through a sync and an uninstall", () => {
@@ -264,8 +279,8 @@ describe("syncSeatAgents", () => {
     writeFileSync(join(directory, "observer-notes.md"), "---\ndescription: mine\n---\nhand written\n")
     writeFileSync(join(directory, "observer.md"), "---\ndescription: the @observer mention\n---\n")
 
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md", "observer-notes.md", "observer.md"])
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md", "observer-notes.md", "observer.md"])
 
     syncSeatAgents(seats(false))
     expect(agentFiles()).toEqual(["observer-notes.md", "observer.md"])
@@ -274,8 +289,8 @@ describe("syncSeatAgents", () => {
     expect(readFileSync(join(directory, "observer-notes.md"), "utf8")).toContain("hand written")
   })
 
-  it("adopts a generated file whose marker a user removed", () => {    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    const path = join(seatAgentDir(), "observer-arjun-mehta.md")
+  it("adopts a generated file whose marker a user removed", () => {    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    const path = join(seatAgentDir(), "observer-frontend-engineer.md")
     // Deleting the marker line is the documented way to take ownership of a
     // generated file. Observer must then leave it alone rather than delete it.
     writeFileSync(path, readFileSync(path, "utf8").replace(/^# observer:employee-agent.*$/m, "# mine now"))
@@ -286,14 +301,14 @@ describe("syncSeatAgents", () => {
   })
 
   it("quotes values that would otherwise break the frontmatter", () => {
-    syncSeatAgents(seats(true, { "arjun-mehta": { model: `weird/model: "x"`, variant: "a: b" } }))
-    const contents = read("observer-arjun-mehta.md")
+    syncSeatAgents(seats(true, { "frontend-engineer": { model: `weird/model: "x"`, variant: "a: b" } }))
+    const contents = read("observer-frontend-engineer.md")
     expect(contents).toContain(`model: "weird/model: \\"x\\""`)
     expect(contents).toContain(`variant: "a: b"`)
   })
 
   it("says that seat control pins models without forcing delegation", () => {
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
     expect(result.notes.join("\n")).toContain("Restart OpenCode")
     expect(result.notes.join("\n")).toContain("does not force OpenCode to use an employee")
   })
@@ -301,13 +316,13 @@ describe("syncSeatAgents", () => {
   it("honours XDG_CONFIG_HOME", () => {
     process.env["XDG_CONFIG_HOME"] = join(home, "custom-config")
     expect(seatAgentDir()).toBe(join(home, "custom-config", "opencode", "agent"))
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    expect(existsSync(join(home, "custom-config", "opencode", "agent", "observer-arjun-mehta.md"))).toBe(true)
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    expect(existsSync(join(home, "custom-config", "opencode", "agent", "observer-frontend-engineer.md"))).toBe(true)
   })
 
   it("creates the full roster even when no model pins are configured", () => {
     syncSeatAgents(seats(true))
-    expect(employeeAgentFiles()).toHaveLength(14)
+    expect(employeeAgentFiles()).toHaveLength(6)
   })
 
   it("survives a config whose seats section is missing or malformed", () => {
@@ -330,19 +345,19 @@ describe("syncSeatAgents: variants the model does not declare", () => {
      * prevent, so it gets the same remedy: no file, and a sentence saying why.
      */
     catalogue(CATALOGUE)
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
 
     expect(agentFiles()).toEqual([])
-    expect(result.written).toHaveLength(14)
+    expect(result.written).toHaveLength(6)
     expect(result.notes.join("\n")).toContain(`"xhigh" is not one anthropic/claude-opus-4-5 offers (low, medium, high)`)
   })
 
   it("writes normally for a reasoning effort the model does declare", () => {
     catalogue(CATALOGUE)
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-opus-4-5", variant: "medium" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-opus-4-5", variant: "medium" } }))
 
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
-    expect(read("observer-arjun-mehta.md")).toContain(`variant: "medium"`)
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
+    expect(read("observer-frontend-engineer.md")).toContain(`variant: "medium"`)
     expect(result.notes.join("\n")).not.toContain("is not one")
   })
 
@@ -351,25 +366,25 @@ describe("syncSeatAgents: variants the model does not declare", () => {
     // the host is the authority; refusing here would break a user whose
     // provider ships faster than models.dev.
     catalogue(CATALOGUE)
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "exotic/model-9", variant: "xhigh" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "exotic/model-9", variant: "xhigh" } }))
 
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
-    expect(read("observer-arjun-mehta.md")).toContain(`variant: "xhigh"`)
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
+    expect(read("observer-frontend-engineer.md")).toContain(`variant: "xhigh"`)
     expect(result.notes.join("\n")).not.toContain("is not one")
   })
 
   it("writes when there is no catalogue at all", () => {
     // Nothing was written to ~/.cache/opencode. Silence is not a verdict.
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
 
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
     expect(result.notes.join("\n")).not.toContain("is not one")
   })
 
   it("writes when the catalogue is corrupt", () => {
     catalogue("{ this is not json")
-    syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+    syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
   })
 
   it("writes when the model declares a mechanism the catalogue cannot read an effort scale off", () => {
@@ -382,8 +397,8 @@ describe("syncSeatAgents: variants the model does not declare", () => {
      * unknown model is not a wrong model: write it and let the host rule.
      */
     catalogue(CATALOGUE)
-    syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-sonnet-4-5", variant: "high" } }))
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+    syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-sonnet-4-5", variant: "high" } }))
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
   })
 
   it("writes no file for a model that takes no reasoning effort at all", () => {
@@ -391,7 +406,7 @@ describe("syncSeatAgents: variants the model does not declare", () => {
     // rejects every variant, so this is a verdict rather than silence and the
     // seat has to be skipped — otherwise the delegation fails at use time.
     catalogue(CATALOGUE)
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-haiku-4-5", variant: "high" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-haiku-4-5", variant: "high" } }))
 
     expect(agentFiles()).toEqual([])
     expect(result.notes.join("\n")).toContain("takes no reasoning effort")
@@ -402,8 +417,8 @@ describe("syncSeatAgents: variants the model does not declare", () => {
     // seat. The catalogue below would have plenty to say about `xhigh`; there
     // is no `xhigh` to say it about.
     catalogue(CATALOGUE)
-    syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-opus-4-5" } }))
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+    syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-opus-4-5" } }))
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
   })
 
   it("removes a definition once its seat gains a variant the model does not offer", () => {
@@ -411,12 +426,12 @@ describe("syncSeatAgents: variants the model does not declare", () => {
     // last good config would keep passing the plugin's existence check and keep
     // failing the delegation.
     catalogue(CATALOGUE)
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
 
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { model: "anthropic/claude-opus-4-5", variant: "xhigh" } }))
     expect(agentFiles()).toEqual([])
-    expect(result.written).toEqual([join(seatAgentDir(), "observer-arjun-mehta.md")])
+    expect(result.written).toEqual([join(seatAgentDir(), "observer-frontend-engineer.md")])
     expect(result.removed).toEqual([])
     // The skipped seat must still speak: the TUI prints `notes`, so a seat that
     // produced no note would vanish from the user's view entirely.
@@ -427,13 +442,13 @@ describe("syncSeatAgents: variants the model does not declare", () => {
     catalogue(CATALOGUE)
     const result = syncSeatAgents(
       seats(true, {
-        "arjun-mehta": { model: "anthropic/claude-opus-4-5", variant: "xhigh" },
-        "malik-johnson": { model: "anthropic/claude-opus-4-5", variant: "high" },
+        "frontend-engineer": { model: "anthropic/claude-opus-4-5", variant: "xhigh" },
+        "backend-engineer": { model: "anthropic/claude-opus-4-5", variant: "high" },
       }),
     )
 
-    expect(agentFiles()).toEqual(["observer-malik-johnson.md"])
-    expect(result.notes.join("\n")).toContain("14 employee agent definitions available")
+    expect(agentFiles()).toEqual(["observer-backend-engineer.md"])
+    expect(result.notes.join("\n")).toContain("6 employee agent definitions available")
   })
 })
 
@@ -465,9 +480,9 @@ describe("syncSeatAgents: seats written as targets", () => {
 
   /** The generated file for one seat spec, with the directory left clean. */
   function generate(spec: Record<string, unknown>): { files: string[]; contents: string | undefined; notes: string } {
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": spec }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": spec }))
     const files = agentFiles()
-    const contents = files.includes("observer-arjun-mehta.md") ? read("observer-arjun-mehta.md") : undefined
+    const contents = files.includes("observer-frontend-engineer.md") ? read("observer-frontend-engineer.md") : undefined
     // Reconcile back to empty so the next call in a test starts from nothing.
     syncSeatAgents(seats(false))
     return { files, contents, notes: result.notes.join("\n") }
@@ -478,7 +493,7 @@ describe("syncSeatAgents: seats written as targets", () => {
     const target = generate(ARJUN_TARGET)
 
     expect(legacy.contents, "the legacy seat must still generate a file").toBeTruthy()
-    expect(target.files).toEqual(["observer-arjun-mehta.md"])
+    expect(target.files).toEqual(["observer-frontend-engineer.md"])
     expect(target.contents).toBe(legacy.contents)
   })
 
@@ -496,7 +511,7 @@ describe("syncSeatAgents: seats written as targets", () => {
     const target = generate({
       targets: { "opencode:work": { host: "opencode", model: "anthropic/claude-opus-4-5", options: [{ id: "variant", value: "high" }] } },
     })
-    expect(target.files).toEqual(["observer-arjun-mehta.md"])
+    expect(target.files).toEqual(["observer-frontend-engineer.md"])
     expect(target.contents).toBe(generate(ARJUN).contents)
   })
 
@@ -604,7 +619,7 @@ describe("syncSeatAgents: seats written as targets", () => {
         "opencode:work": { host: "opencode", model: "openai/gpt-5" },
       },
     })
-    expect(target.files).toEqual(["observer-arjun-mehta.md"])
+    expect(target.files).toEqual(["observer-frontend-engineer.md"])
     expect(target.contents).toContain(`model: "anthropic/claude-opus-4-5"`)
     expect(target.notes).toContain(`only "opencode:default" was applied`)
   })
@@ -612,12 +627,12 @@ describe("syncSeatAgents: seats written as targets", () => {
   it("removes a legacy seat's file once the seat migrates to a target that sets no model", () => {
     // Reconciliation has to survive the migration: a file left behind from the
     // legacy shape would keep passing the plugin's existence check.
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    expect(agentFiles()).toEqual(["observer-arjun-mehta.md"])
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    expect(agentFiles()).toEqual(["observer-frontend-engineer.md"])
 
-    const result = syncSeatAgents(seats(true, { "arjun-mehta": { targets: { "opencode:default": { host: "opencode" } } } }))
+    const result = syncSeatAgents(seats(true, { "frontend-engineer": { targets: { "opencode:default": { host: "opencode" } } } }))
     expect(agentFiles()).toEqual([])
-    expect(result.written).toEqual([join(seatAgentDir(), "observer-arjun-mehta.md")])
+    expect(result.written).toEqual([join(seatAgentDir(), "observer-frontend-engineer.md")])
     expect(result.removed).toEqual([])
   })
 
@@ -629,12 +644,12 @@ describe("syncSeatAgents: seats written as targets", () => {
      * every OpenCode watching that directory would see churn for a change the
      * user never made.
      */
-    syncSeatAgents(seats(true, { "arjun-mehta": ARJUN }))
-    const second = syncSeatAgents(seats(true, { "arjun-mehta": ARJUN_TARGET }))
+    syncSeatAgents(seats(true, { "frontend-engineer": ARJUN }))
+    const second = syncSeatAgents(seats(true, { "frontend-engineer": ARJUN_TARGET }))
 
     expect(second.written).toEqual([])
     expect(second.removed).toEqual([])
-    expect(second.notes.join("\n")).toContain("14 employee agent definitions available")
+    expect(second.notes.join("\n")).toContain("6 employee agent definitions available")
   })
 
   it("agrees with migrateSeatSpecToTargets, so a save cannot change what is on disk", () => {

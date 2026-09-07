@@ -94,7 +94,7 @@ describe("the install report", () => {
   })
 
   it("wraps notes to the terminal with a hanging indent, without breaking paths", () => {
-    const path = "/home/dev/.config/opencode/agent/observer-arjun-mehta.md"
+    const path = "/home/dev/.config/opencode/agent/observer-frontend-engineer.md"
     const section: HostSection = {
       ...OPENCODE,
       notes: [`Seat control applies to general delegations only, and the definitions live in ${path}.`],

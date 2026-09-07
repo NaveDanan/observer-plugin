@@ -15,7 +15,7 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
 - **A live agent graph.** Parent and child agents, with edges showing who
   delegated to whom.
 - **A company roster on every node.** Observer seats each agent as an employee
-  from a fixed cast of 14 profiles — the matcher reads the task text and picks
+  from six default roles and two optional specialists — the matcher reads the task text and picks
   the best fit (the SRE for deployment trouble, QA for flaky tests, security
   for threat models). Nodes show the employee's photo, name, tone and top
   strengths; clicking a node opens a panel on the right with their profile,
@@ -23,10 +23,11 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
 - **Guidance back to the model.** Observer offers the roster to the root agent
   as subagent staffing: who is on the team, what each employee is strong at,
   and when to reach for them. In Codex, explicitly invoking the Observer plugin
-  loads every employee and capability, asks the root to prefer an
+  lists employee specialties, asks the root to prefer an
   `observer-<employee>` agent, and requires the final answer to explain any use
   of a default agent. When an OpenCode subagent is spawned, the plugin appends
-  a persona directive — name, tone, strengths — and records the seated
+  an execution contract with a mission, workflow, deliverables, verification,
+  boundaries, and handoffs, and records the seated
   employee as the node's type; a subagent run without an employee is typed
   `subcontractor` (`"guidance": false` in `~/.observer/config.json` turns this
   off). Typing **`@observer`** in a message activates staffing for that
@@ -34,6 +35,11 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
   again, even with guidance on. Observer installs a small agent definition next
   to the plugin, so `@observer` appears in OpenCode's `@` menu; selecting it
   inserts the mention, which is what activates staffing.
+- **Employees defined by their work.** Every employee has a specialty and a
+  default work stage. Assign research, diagnosis, design, implementation,
+  review, verification, or planning explicitly. The `employee_brief` tool loads
+  one contract on demand. See [employee design and tools](docs/employee-design.md)
+  for ownership, handoff rules, capability discovery, and optional browser tools.
 - **Per-node model attribution.** Each node names the model it is running, and
   says so plainly when the host never reported one.
 - **Seat control, if you ask for it.** Off by default; see below.
@@ -56,7 +62,7 @@ no native build step).
 This is how you install Observer on a machine that does not have the source.
 
 ```bash
-npm install -g observer-ai-0.9.19.tgz
+npm install -g observer-ai-0.9.21.tgz
 
 observer install all      # or: observer install claude codex
 observer open
@@ -188,22 +194,30 @@ delegation. Saving updates a running Observer daemon when one is available.
 Run `observer install opencode` and/or `observer install copilot --plugin` after
 editing, then restart the affected host.
 
+The default roster has six roles. Security and Hardware are optional specialists;
+enable them in Settings > Employees or the employee detail screen in
+`observer config`. Model pins alone do not enable a specialist. Saving in
+`observer config` regenerates definitions. After a web settings change, rerun
+your host's existing installation command, including `--plugin` where applicable,
+and restart it. See [employee design](docs/employee-design.md) for the roster and
+legacy settings compatibility.
+
 ### What it actually does
 
-OpenCode's task tool takes no model parameter. The only lever is
-`subagent_type`, so `observer install opencode` writes one hidden agent
-definition per configured employee into `~/.config/opencode/agent/observer-*.md`,
-and the plugin points a seated delegation at it.
+OpenCode's task tool selects a registered `subagent_type`.
+`observer install opencode` writes one hidden definition per enabled employee
+into `~/.config/opencode/agent/observer-*.md`. Configured model pins customize
+these definitions; they do not force the host to select an employee.
 
 Copilot's task tool also selects an agent rather than a model. The plugin writes
-one `agents/observer-*.agent.md` definition per Copilot target and owns the
+one `agents/observer-*.agent.md` definition per enabled employee and owns the
 matching `subagents.agents["observer:observer-*"]` settings for effort and
 context tier. Its
 synchronous `preToolUse` controller redirects only `general-purpose`
 delegations and otherwise fails open.
 
-The generated definition keeps the built-in `general` prompt and work
-permissions: empty prompt, `mode: subagent`, and `todowrite: deny`. The plugin
+The generated OpenCode definition includes the employee's execution contract,
+`mode: subagent`, and `todowrite: deny`. The plugin
 registers Observer's nested-spawn, identity and direct-message tools. To prevent
 OpenCode from stripping nested task access, it adds `task: allow` only to
 `general` and generated Observer seats when no global, wildcard or per-agent

@@ -343,33 +343,33 @@ describe("codex adapter diagnose", () => {
 
   it("accepts a bare slug", () => {
     const adapter = seated()
-    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target({ model: "gpt-5.6-sol" }), "malik-johnson")).toEqual([])
+    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target({ model: "gpt-5.6-sol" }), "backend-engineer")).toEqual([])
   })
 
   it("accepts a bare slug the probe never listed", () => {
     // Codex ships models faster than Observer ships releases. An unlisted slug
     // is not evidence of a typo.
     const adapter = seated()
-    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target({ model: "gpt-9-unreleased" }), "malik-johnson")).toEqual([])
+    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target({ model: "gpt-9-unreleased" }), "backend-engineer")).toEqual([])
   })
 
   it("rejects only an empty model", () => {
     const adapter = seated()
-    const issues = adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target({ model: "   " }), "malik-johnson")
+    const issues = adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target({ model: "   " }), "backend-engineer")
     expect(issues).toHaveLength(1)
     expect(issues[0]).toMatchObject({
       code: "malformed-model",
       severity: "error",
       host: "codex",
       targetId: "codex:default",
-      employeeId: "malik-johnson",
-      path: "seats.employees.malik-johnson.targets.codex:default.model",
+      employeeId: "backend-engineer",
+      path: "seats.employees.backend-engineer.targets.codex:default.model",
     })
   })
 
   it("says nothing about a target with no model at all", () => {
     const adapter = seated()
-    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target(), "malik-johnson")).toEqual([])
+    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", target(), "backend-engineer")).toEqual([])
   })
 
   it("warns when an effort is not one the model advertises", () => {
@@ -378,7 +378,7 @@ describe("codex adapter diagnose", () => {
       CODEX_DEFAULT_PROFILE,
       "codex:default",
       target({ model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "xhigh" }] }),
-      "malik-johnson",
+      "backend-engineer",
     )
     expect(issues).toHaveLength(1)
     expect(issues[0]?.code).toBe("unrecognised-variant")
@@ -394,7 +394,7 @@ describe("codex adapter diagnose", () => {
         CODEX_DEFAULT_PROFILE,
         "codex:default",
         target({ model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "ultra-max" }] }),
-        "malik-johnson",
+        "backend-engineer",
       ),
     ).toEqual([])
   })
@@ -405,7 +405,7 @@ describe("codex adapter diagnose", () => {
       CODEX_DEFAULT_PROFILE,
       "codex:default",
       target({ model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "xhigh" }] }),
-      "malik-johnson",
+      "backend-engineer",
     )
     expect(issues).toEqual([])
     // Diagnosis runs on every keystroke in a config screen. It must never
@@ -420,7 +420,7 @@ describe("codex adapter diagnose", () => {
         CODEX_DEFAULT_PROFILE,
         "codex:default",
         target({ model: "gpt-5.6-sol", options: [{ id: "serviceTier", value: "whatever" }] }),
-        "malik-johnson",
+        "backend-engineer",
       ),
     ).toEqual([])
   })
@@ -428,7 +428,7 @@ describe("codex adapter diagnose", () => {
   it("throws nothing on a garbage target", () => {
     const adapter = seated()
     const junk = { host: "codex", model: 5, options: "not-an-array" } as unknown as SeatTarget
-    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", junk, "malik-johnson")).toEqual([])
+    expect(adapter.diagnose(CODEX_DEFAULT_PROFILE, "codex:default", junk, "backend-engineer")).toEqual([])
   })
 })
 

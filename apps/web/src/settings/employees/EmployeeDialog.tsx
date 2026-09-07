@@ -119,11 +119,11 @@ export function EmployeeDialog({
       className="max-w-3xl"
       title={
         <span className="flex items-center gap-2">
-          {profile.fullName}
+          {profile.title}
           {saving ? <span className="text-xs font-normal text-muted-foreground">saving…</span> : null}
         </span>
       }
-      description={profile.title}
+      description={profile.fullName}
       footer={
         <>
           <Button variant="destructive-outline" size="sm" disabled={spec === undefined} onClick={onClearSeat}>
@@ -138,6 +138,24 @@ export function EmployeeDialog({
       }
     >
       <div className="space-y-6 pb-2">
+        {profile.optional === true ? (
+          <section className="space-y-2">
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={spec?.enabled === true}
+                disabled={saving}
+                onChange={(event) => onChange({ ...spec, enabled: event.target.checked })}
+                className="size-4 accent-primary"
+              />
+              Enable {profile.title}
+            </label>
+            <p className="text-[13px] text-muted-foreground">
+              Changes save automatically. Rerun your host's Observer installation command, then restart
+              the host to load the updated roster. Model pins and skills stay saved while disabled.
+            </p>
+          </section>
+        ) : null}
         {seatIssues.length > 0 ? (
           <ul className="space-y-1.5">
             {seatIssues.map((issue) => (
@@ -164,8 +182,7 @@ export function EmployeeDialog({
 
           {rows.length === 0 ? (
             <p className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-[13px] leading-[1.45] text-muted-foreground">
-              No targets. {profile.fullName} is seated exactly as the roster describes them, on whatever model the
-              session is already running.
+              No model pins. When this employee is enabled, the host chooses its model.
             </p>
           ) : null}
 
@@ -212,8 +229,10 @@ export function EmployeeDialog({
                         {targetTitle(directory, row.id, host)}
                       </span>
                       <span className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant={verdict.tone}>{verdict.label}</Badge>
-                        {verdict.requiresReload ? <Badge variant="outline">needs a restart</Badge> : null}
+                        <Badge variant={profile.optional && spec?.enabled !== true ? "secondary" : verdict.tone}>
+                          {profile.optional && spec?.enabled !== true ? "Disabled" : verdict.label}
+                        </Badge>
+                        {verdict.requiresReload && (!profile.optional || spec?.enabled === true) ? <Badge variant="outline">needs a restart</Badge> : null}
                         {rowIssues.length > 0 ? (
                           <Badge variant={badgeVariant(rowIssues[0]?.severity ?? "info")} size="sm">
                             {rowIssues.length} finding{rowIssues.length === 1 ? "" : "s"}
@@ -273,8 +292,8 @@ export function EmployeeDialog({
           <div className="space-y-1">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">Skills</h3>
             <p className="text-[13px] leading-[1.45] text-muted-foreground/80">
-              Prompt text folded into this employee's behaviour directive, shared by every target. Skills are not gated
-              on seat control and they cannot fail a delegation, so they apply on all five hosts either way.
+              Prompt text folded into this employee's behaviour directive. Skills apply to enabled employees on
+              supported hosts, independently of model pins.
             </p>
           </div>
 
@@ -366,7 +385,9 @@ export function EmployeeDialog({
         <div className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2">
           <p className="text-[11px] font-medium tracking-wide text-muted-foreground/80 uppercase">In effect</p>
           <p className="pt-0.5 text-[13px] leading-[1.45] text-foreground">
-            {inEffect(profile, rows.length, skills.length, rows, directory, seatControl)}
+            {profile.optional && spec?.enabled !== true
+              ? "This optional specialist is disabled. Its saved model pins and skills are inactive."
+              : inEffect(profile, rows.length, skills.length, rows, directory, seatControl)}
           </p>
         </div>
       </div>

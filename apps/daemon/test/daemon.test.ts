@@ -419,7 +419,7 @@ describe("HTTP API", () => {
       runtimeId: id,
       parentRuntimeId: "root",
       callId,
-      agentType: "malik-johnson",
+      agentType: "backend-engineer",
       hostAgentType: "general",
       description: `Agent ${id}`,
       prompt: `Prompt ${id}`,

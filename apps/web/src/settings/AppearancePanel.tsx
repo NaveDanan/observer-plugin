@@ -65,7 +65,7 @@ const MODE_LABELS: Record<AppearanceModeOption, string> = {
 }
 
 const INTERFACE_PREVIEW = "The quick brown fox jumps over the lazy dog — 0123456789"
-const MONO_PREVIEW = 'const seat = employees["arjun-mehta"] // 0O 1lI'
+const MONO_PREVIEW = 'const seat = employees["frontend-engineer"] // 0O 1lI'
 
 function downloadThemeFile(theme: ThemeDefinition): void {
   const url = URL.createObjectURL(new Blob([serializeThemeFile(theme)], { type: "application/json" }))

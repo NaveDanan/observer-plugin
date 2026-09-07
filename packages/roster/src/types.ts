@@ -5,6 +5,8 @@
 
 export interface EmployeeProfile {
   id: string
+  /** Optional specialists are selectable only after explicit enablement. */
+  optional?: boolean
   fullName: string
   title: string
   yearsOfExperience: number
@@ -21,11 +23,26 @@ export interface EmployeeProfile {
   animalWhy: string
   /** File name inside the UI's /roster image directory. */
   imageFile: string
-  /**
-   * Per-employee skills, reserved for future use. Empty for now; the worker
-   * card renders the section only when an employee has skills.
-   */
+  /** Configured skill preferences; availability is resolved by the host. */
   skills: EmployeeSkill[]
+  /** Execution contract. Optional for profiles supplied by older clients. */
+  work?: EmployeeWorkContract
+}
+
+export type WorkMode = "research" | "diagnose" | "design" | "implement" | "review" | "verify" | "plan"
+
+export interface EmployeeWorkContract {
+  mission: string
+  /** Task-shaped selection guidance used by every host. */
+  selection: string
+  defaultMode: WorkMode
+  workflow: string[]
+  deliverables: string[]
+  verification: string[]
+  boundaries: string[]
+  handoffs: { employeeId: string; when: string }[]
+  /** Capability preferences, never an assertion that a tool is installed. */
+  capabilities: string[]
 }
 
 export interface EmployeeSkill {

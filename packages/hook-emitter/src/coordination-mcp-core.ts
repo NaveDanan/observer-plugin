@@ -41,6 +41,19 @@ const IDENTITY_PROPERTY = {
 
 export const COORDINATION_TOOLS = [
   {
+    name: "employee_brief",
+    description: "List Observer employee specialties or retrieve one employee's execution contract, work-mode instructions, and capability preferences from the Observer daemon. Read-only; does not spawn agents or install tools.",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        employeeId: { type: "string", description: "Roster ID such as frontend-engineer. Omit to list specialties." },
+        mode: { type: "string", enum: ["research", "diagnose", "design", "implement", "review", "verify", "plan"], description: "Override the employee's default work stage for this brief." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "agent_identity",
     description: "Return your stable subagent ID and the directly addressable peers in this Observer session.",
     inputSchema: {
@@ -130,6 +143,8 @@ async function callTool(params: unknown, context: CoordinationMcpContext): Promi
 
   try {
     switch (name) {
+      case "employee_brief":
+        return toolText(await employeeBrief(args, context))
       case "agent_identity":
         return toolText(await identity(args, meta, context))
       case "agent_send":
@@ -144,6 +159,20 @@ async function callTool(params: unknown, context: CoordinationMcpContext): Promi
   } catch (error) {
     return toolError(messageFor(error))
   }
+}
+
+async function employeeBrief(args: JsonObject, context: CoordinationMcpContext): Promise<string> {
+  if (Object.keys(args).some((key) => key !== "employeeId" && key !== "mode")) {
+    throw new Error("employee_brief accepts only employeeId and mode.")
+  }
+  const query = new URLSearchParams()
+  for (const key of ["employeeId", "mode"]) {
+    const value = args[key]
+    if (value === undefined) continue
+    if (typeof value !== "string" || !value.trim()) throw new Error(`${key} must be a non-empty string.`)
+    query.set(key, value)
+  }
+  return JSON.stringify(await context.api.get(`/v1/roster/brief?${query}`), null, 2)
 }
 
 async function identity(args: JsonObject, meta: JsonObject, context: CoordinationMcpContext): Promise<string> {

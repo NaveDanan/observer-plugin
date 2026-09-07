@@ -538,7 +538,7 @@ describe("copilot adapter diagnosis", () => {
   function diagnose(t: SeatTarget, script = HEALTHY, warm = true) {
     const { adapter } = adapterWith(script)
     if (warm) adapter.catalogue(COPILOT_DEFAULT_PROFILE)
-    return adapter.diagnose(COPILOT_DEFAULT_PROFILE, "copilot:default", t, "nia-okafor")
+    return adapter.diagnose(COPILOT_DEFAULT_PROFILE, "copilot:default", t, "security-specialist")
   }
 
   it("says nothing about a well-formed target", () => {
@@ -568,8 +568,8 @@ describe("copilot adapter diagnosis", () => {
     })
 
     it("uses a stable namespaced agent id", () => {
-      expect(copilotSeatAgentName("Nia Okafor")).toBe("observer-nia-okafor")
-      expect(copilotSeatAgentReference("Nia Okafor")).toBe("observer:observer-nia-okafor")
+      expect(copilotSeatAgentName("security-specialist")).toBe("observer-security-specialist")
+      expect(copilotSeatAgentReference("security-specialist")).toBe("observer:observer-security-specialist")
     })
   })
 
@@ -589,8 +589,8 @@ describe("copilot adapter diagnosis", () => {
     expect(issues[0]).toMatchObject({
       code: "malformed-model",
       severity: "error",
-      path: "seats.employees.nia-okafor.targets.copilot:default.model",
-      employeeId: "nia-okafor",
+      path: "seats.employees.security-specialist.targets.copilot:default.model",
+      employeeId: "security-specialist",
       targetId: "copilot:default",
       host: "copilot",
     })

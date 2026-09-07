@@ -19,12 +19,15 @@ export interface Bootstrap {
 }
 
 let token = ""
+let bootstrapping: Promise<Bootstrap> | undefined
 
 export function setToken(value: string): void {
   token = value
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Direct settings links mount before the root's startup effect completes.
+  if (!token && path !== "/v1/bootstrap") await bootstrap()
   const response = await fetch(path, {
     ...init,
     headers: {
@@ -36,10 +39,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-export async function bootstrap(): Promise<Bootstrap> {
-  const result = await request<Bootstrap>("/v1/bootstrap")
-  setToken(result.token)
-  return result
+export function bootstrap(): Promise<Bootstrap> {
+  if (!bootstrapping) {
+    bootstrapping = request<Bootstrap>("/v1/bootstrap").then((result) => {
+      setToken(result.token)
+      return result
+    }).finally(() => { bootstrapping = undefined })
+  }
+  return bootstrapping
 }
 
 export function listSessions(): Promise<{ sessions: SessionEntity[] }> {
@@ -136,6 +143,8 @@ export interface SeatTarget {
 
 /** One employee's desired per-host configuration and skills. */
 export interface SeatSpec {
+  /** Explicit opt-in for optional specialists. */
+  enabled?: boolean
   /** Legacy OpenCode model. Read through `readTargets`, never directly. */
   model?: string
   /** Legacy OpenCode reasoning effort. Read through `readTargets`. */

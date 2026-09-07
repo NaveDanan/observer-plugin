@@ -310,8 +310,8 @@ export function fitNameFontSize(lines: readonly string[], measure?: TextMeasure)
  */
 export function inferDepartment(profile: RosterProfile): string {
   const title = profile.title.toLowerCase()
-  if (profile.id === "leila-haddad" || title.includes("chief technology officer")) return "Executive Leadership"
-  if (profile.id === "adrian-cole" || title.includes("chief information security")) return "Security \u2022 Executive"
+  if (title.includes("chief technology officer")) return "Executive Leadership"
+  if (title.includes("chief information security")) return "Security \u2022 Executive"
   if (title.includes("data") || title.includes("analytics")) return "Data"
   if (title.includes("cybersecurity") || title.includes("security")) return "Security"
   if (title.includes("product")) return "Product & Design"
@@ -393,20 +393,14 @@ export function formatDisplayName(fullName: string): string[] {
  * rather than a position in an array.
  */
 const EMPLOYEE_NUMBERS: Record<string, number> = {
-  "arjun-mehta": 10415,
-  "malik-johnson": 10416,
-  "elias-mercer": 10417,
-  "dr-mei-lin": 10418,
-  "nia-okafor": 10419,
-  "sofia-moreno": 10420,
-  "daniel-brooks": 10421,
-  "ravi-menon": 10422,
-  "leila-haddad": 10423,
-  "marcus-reed": 10424,
-  "elena-vargas": 10425,
-  "omar-rahman": 10426,
-  "dr-maya-chen": 10427,
-  "adrian-cole": 10428,
+  "frontend-engineer": 10415,
+  "backend-engineer": 10416,
+  "platform-engineer": 10417,
+  "research-analyst": 10418,
+  "security-specialist": 10419,
+  "product-designer": 10420,
+  "quality-engineer": 10421,
+  "hardware-specialist": 10422,
 }
 
 /**

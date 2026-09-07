@@ -23,7 +23,7 @@ root agent is the context they are watched against.
 _Avoid_: Child agent, task, worker
 
 **Employee**:
-A persona from the fixed company roster. Every subagent node is drawn as an employee, with their
+A specialty from the company roster, presented with a fictional name. Seated subagent nodes use their
 photo, name, tone and strengths. An agent whose task matches nobody is shown unassigned rather
 than given a made-up identity.
 _Avoid_: Persona, avatar, worker (as a noun for the profile)
@@ -34,19 +34,20 @@ matcher and behaviour directives live in the same package.
 _Avoid_: Team, staff list
 
 **Seating / seated**:
-What the matcher does when a task arrives: it scores the task text against every employee and
+What the matcher does when a task arrives: it scores the task text against enabled employees and
 seats the best fit on the node. Seating labels and briefs the observed subagent; it never changes
 which employee agent the host selects or which model that agent uses.
 _Avoid_: Assignment (too strong — implies the host was told), matching (fine as a verb)
 
 **Employee agent**:
-A host-native selectable subagent representing one roster employee. Every installed host receives
-the full roster, whether or not any seat spec or model pin exists.
+A host-native selectable subagent representing one roster employee. Installed hosts receive six
+default employees and explicitly enabled optional specialists. Several subagents may use the same specialty.
 _Avoid_: Seated worker, hidden agent
 
 **Seat spec**:
 The model pins, host options, and skills a user configures for an employee. It customises an
-employee agent but neither creates that agent nor tells the host to select it.
+employee agent but never tells the host to select it. Optional specialist enablement determines
+whether its employee agent is offered, independently of model pins.
 _Avoid_: Assignment, agent config, model override
 
 **Seat control**:

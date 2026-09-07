@@ -135,6 +135,11 @@ describe("install", () => {
     const agentPath = join(dirname(hostConfigPath("opencode")), "..", "agent", "observer.md")
     expect(existsSync(agentPath)).toBe(true)
     expect(readFileSync(agentPath, "utf8")).toContain("mode: subagent")
+    const definition = readFileSync(agentPath, "utf8")
+    expect(definition).toContain("Execute the delegated task")
+    expect(definition).toContain("agent_spawn")
+    expect(definition).toContain("concurrently")
+    expect(definition).not.toContain("call no tools")
   })
 
   it("removes the @observer agent definition on uninstall", () => {
@@ -146,8 +151,8 @@ describe("install", () => {
 
   it("removes generated seat agents on uninstall, alongside the plugin and observer.md", () => {
     install("opencode")
-    syncSeatAgents({ control: true, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-5" } } } as any)
-    const seatPath = join(seatAgentDir(), "observer-arjun-mehta.md")
+    syncSeatAgents({ control: true, employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-5" } } } as any)
+    const seatPath = join(seatAgentDir(), "observer-frontend-engineer.md")
     expect(existsSync(seatPath)).toBe(true)
 
     const result = uninstall("opencode")
@@ -159,7 +164,7 @@ describe("install", () => {
     expect(existsSync(hostConfigPath("opencode"))).toBe(false)
     expect(existsSync(join(seatAgentDir(), "observer.md"))).toBe(false)
     expect(result.action).toBe("removed")
-    expect(result.notes.join("\n")).toContain("14 generated seat agent definitions")
+    expect(result.notes.join("\n")).toContain("6 generated seat agent definitions")
   })
 })
 
@@ -204,11 +209,11 @@ describe("uninstall", () => {
     // Seat definitions can outlive the plugin: `observer uninstall opencode`
     // run twice, or a config directory restored from a backup. The second run
     // must not narrate a plugin removal that did not happen.
-    syncSeatAgents({ control: true, employees: { "arjun-mehta": { model: "anthropic/claude-opus-4-5" } } } as any)
+    syncSeatAgents({ control: true, employees: { "frontend-engineer": { model: "anthropic/claude-opus-4-5" } } } as any)
     const result = uninstall("opencode")
 
     expect(result.action).toBe("removed")
-    expect(result.notes.join("\n")).toContain("14 generated seat agent definitions")
+    expect(result.notes.join("\n")).toContain("6 generated seat agent definitions")
     expect(result.notes.join("\n")).not.toContain("Removed the Observer plugin")
   })
 })

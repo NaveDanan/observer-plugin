@@ -15,6 +15,7 @@
  */
 
 import type { RosterProfile } from "@observer-ai/roster"
+import { employeeSetting } from "@observer-ai/roster"
 import type { SeatIssue, SeatSpec, SeatsConfig } from "../../api"
 import { hostLabel } from "./directory"
 import type { HostDirectory } from "./hosts"
@@ -49,7 +50,7 @@ export function employeeRows(
 ): EmployeeRow[] {
   const employees = seats?.employees ?? {}
   return profiles.map((profile) => {
-    const spec = employees[profile.id]
+    const spec = employeeSetting(employees, profile.id)
     return {
       id: profile.id,
       profile,

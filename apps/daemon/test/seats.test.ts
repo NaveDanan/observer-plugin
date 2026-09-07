@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ROSTER, behaviorDirective } from "@observer-ai/roster"
 import { loadConfig, saveConfig } from "@observer-ai/daemon"
+import { employeeSetting } from "@observer-ai/roster"
 // Straight from source, not from the package barrel: `apps/daemon` resolves to
 // `dist`, and the target contracts are not re-exported from `index.ts` yet
 // (ticket 02 owns that file). Importing the built copy would silently test
@@ -35,7 +36,7 @@ function codes(seats: SeatsConfig): SeatIssueCode[] {
   return diagnoseSeats(seats).issues.map((issue) => issue.code)
 }
 
-const REAL_ID = "arjun-mehta"
+const REAL_ID = "frontend-engineer"
 
 describe("seat spec schema", () => {
   it("defaults to control off and nobody seated", () => {
@@ -69,9 +70,9 @@ describe("seat spec schema", () => {
   it("keeps every other employee when one employee's seat is unusable", () => {
     const seats = parseSeats({
       control: true,
-      employees: { [REAL_ID]: "opus", "malik-johnson": { model: "anthropic/claude-opus-4-5" } },
+      employees: { [REAL_ID]: "opus", "backend-engineer": { model: "anthropic/claude-opus-4-5" } },
     })
-    expect(seats.employees["malik-johnson"]?.model).toBe("anthropic/claude-opus-4-5")
+    expect(seats.employees["backend-engineer"]?.model).toBe("anthropic/claude-opus-4-5")
     expect(seats.employees[REAL_ID]).toEqual({})
   })
 
@@ -99,6 +100,27 @@ describe("seat spec schema", () => {
 })
 
 describe("diagnoseSeats", () => {
+  it("preserves legacy settings, reports precedence and retired management roles, and parses specialist enablement", () => {
+    const raw = {
+      control: false,
+      employees: {
+        "dr-mei-lin": { model: "science/model" },
+        "dr-maya-chen": { model: "analytics/model" },
+        "marcus-reed": { skills: ["planning"] },
+        "security-specialist": { enabled: true },
+        "hardware-specialist": { enabled: false, model: "saved/model" },
+      },
+    }
+    const parsed = SeatsConfigSchema.parse(raw)
+    expect(parsed.employees["hardware-specialist"]).toEqual(raw.employees["hardware-specialist"])
+    expect(employeeSetting(parsed.employees, "research-analyst")?.model).toBe("science/model")
+    const issues = diagnoseSeats(parsed).issues
+    expect(issues.filter((issue) => issue.code === "legacy-employee")).toHaveLength(2)
+    expect(issues.some((issue) => issue.code === "retired-employee")).toBe(true)
+    expect(issues.some((issue) => issue.code === "specialist-disabled")).toBe(true)
+    expect(issues.some((issue) => issue.code === "unknown-employee")).toBe(false)
+    expect(parsed.employees["dr-maya-chen"]?.model).toBe("analytics/model")
+  })
   it("returns no findings for an empty config", () => {
     const diagnosis = diagnoseSeats(DEFAULT_SEATS)
     expect(diagnosis.issues).toEqual([])
@@ -129,7 +151,7 @@ describe("diagnoseSeats", () => {
   })
 
   it("accepts every real roster id without complaint", () => {
-    const employees = Object.fromEntries(ROSTER.map((profile) => [profile.id, { model: "anthropic/x" }]))
+    const employees = Object.fromEntries(ROSTER.map((profile) => [profile.id, { model: "anthropic/x", ...(profile.optional ? { enabled: true } : {}) }]))
     const seats = parseSeats({ control: true, employees })
     expect(diagnoseSeats(seats).issues).toEqual([])
   })
@@ -192,7 +214,7 @@ describe("diagnoseSeats", () => {
   })
 
   it("throws on nothing it is handed", () => {
-    const hostile = { control: true, employees: { "": {}, "arjun-mehta": { model: "", variant: "" } } } as unknown as SeatsConfig
+    const hostile = { control: true, employees: { "": {}, "frontend-engineer": { model: "", variant: "" } } } as unknown as SeatsConfig
     expect(() => diagnoseSeats(hostile)).not.toThrow()
   })
 })
@@ -227,7 +249,9 @@ describe("applySeatSkills", () => {
   it("lights up the skills line behaviorDirective already renders", () => {
     const seats = parseSeats({ control: false, employees: { [REAL_ID]: { skills: ["react"] } } })
     expect(behaviorDirective(profile, "build a form")).not.toContain("Skills available to you")
-    expect(behaviorDirective(applySeatSkills(profile, seats), "build a form")).toContain("Skills available to you: react.")
+    const directive = behaviorDirective(applySeatSkills(profile, seats), "build a form")
+    expect(directive).toContain("Configured skill preferences, resolve against the current host inventory")
+    expect(directive).toContain("- react:")
   })
 
   it("does not duplicate a skill the profile already has", () => {
@@ -380,7 +404,7 @@ describe("diagnoseSeats reports instead of throwing", () => {
   it("survives a null seat without losing the employees around it", () => {
     const hostile = {
       control: true,
-      employees: { [REAL_ID]: null, "malik-johnson": { model: "anthropic/x" } },
+      employees: { [REAL_ID]: null, "backend-engineer": { model: "anthropic/x" } },
     } as unknown as SeatsConfig
     expect(() => diagnoseSeats(hostile)).not.toThrow()
     expect(codes(hostile)).toContain("empty-seat")

@@ -21,6 +21,7 @@ import {
   type SubagentLimits,
 } from "@observer-ai/daemon"
 import type { EmployeeSkill } from "@observer-ai/roster"
+import { employeeSetting, LEGACY_EMPLOYEE_IDS } from "@observer-ai/roster"
 import { type ModelInfo, groupByProvider, variantsFor } from "./models.js"
 
 /**
@@ -87,13 +88,14 @@ export interface EmployeeRow {
   id: string
   name: string
   role: string
+  optional?: boolean
 }
 
 /** Rows of the per-employee view, in display order. */
 export const EMPLOYEE_ROWS = ["model", "skills", "reset"] as const
 export const TARGET_EMPLOYEE_ROWS = ["targets", "skills", "reset"] as const
-export type EmployeeRowKind = (typeof EMPLOYEE_ROWS)[number]
-export type TargetEmployeeRowKind = (typeof TARGET_EMPLOYEE_ROWS)[number]
+export type EmployeeRowKind = (typeof EMPLOYEE_ROWS)[number] | "enabled"
+export type TargetEmployeeRowKind = (typeof TARGET_EMPLOYEE_ROWS)[number] | "enabled"
 
 export type EntryField = "model" | "skills" | "filter" | "max-depth" | "max-per-session"
 
@@ -351,11 +353,12 @@ export function currentEmployee(state: ConfigUIState): EmployeeRow | undefined {
 
 export function seatOf(state: ConfigUIState, id: string | undefined): SeatSpec | undefined {
   if (id === undefined) return undefined
-  return state.seats.employees[id]
+  return employeeSetting(state.seats.employees, id)
 }
 
 export function employeeRows(state: ConfigUIState): ReadonlyArray<EmployeeRowKind | TargetEmployeeRowKind> {
-  return state.profiles.length > 0 ? TARGET_EMPLOYEE_ROWS : EMPLOYEE_ROWS
+  const rows = state.profiles.length > 0 ? TARGET_EMPLOYEE_ROWS : EMPLOYEE_ROWS
+  return currentEmployee(state)?.optional ? ["enabled", ...rows] : rows
 }
 
 export function targetRows(state: ConfigUIState): TargetRow[] {
@@ -760,6 +763,9 @@ function reduceEmployee(state: ConfigUIState, key: Key): ConfigUIState {
   if (isEnter(key)) {
     const row = rows[state.cursor.employee]
     const seat = seatOf(state, state.employeeId)
+    if (row === "enabled" && state.employeeId) {
+      return updateSeat(state, state.employeeId, (spec) => ({ ...spec, enabled: spec.enabled !== true }))
+    }
     if (row === "model") return openPicker(state, seat)
     if (row === "targets") {
       return {
@@ -1168,13 +1174,13 @@ export function defaultUnseatedIds(state: ConfigUIState): string[] {
   const targetId = state.defaultChoice?.targetId
   if (targetId === undefined) return unseatedIds(state)
   return state.roster
-    .filter((row) => targetModel(seatTargets(state.seats.employees[row.id])[targetId]) === undefined)
+    .filter((row) => targetModel(seatTargets(seatOf(state, row.id))[targetId]) === undefined)
     .map((row) => row.id)
 }
 
 /** Roster employees with no seat at all — the "unseated" scope. */
 export function unseatedIds(state: ConfigUIState): string[] {
-  return state.roster.filter((row) => state.seats.employees[row.id] === undefined).map((row) => row.id)
+  return state.roster.filter((row) => seatOf(state, row.id) === undefined).map((row) => row.id)
 }
 
 /**
@@ -1614,9 +1620,10 @@ function setSkills(state: ConfigUIState, raw: string): ConfigUIState {
 function resetSeat(state: ConfigUIState): ConfigUIState {
   const id = state.employeeId
   if (id === undefined) return state
-  if (state.seats.employees[id] === undefined) return { ...state, status: "This employee has no seat to reset." }
+  if (seatOf(state, id) === undefined) return { ...state, status: "This employee has no seat to reset." }
   const employees = { ...state.seats.employees }
   delete employees[id]
+  if ((LEGACY_EMPLOYEE_IDS[id] ?? []).some((alias) => Object.hasOwn(employees, alias))) employees[id] = {}
   return {
     ...state,
     seats: { ...state.seats, employees },
@@ -1635,8 +1642,8 @@ function resetSeat(state: ConfigUIState): ConfigUIState {
  */
 function updateSeat(state: ConfigUIState, id: string, edit: (seat: SeatSpec) => SeatSpec): ConfigUIState {
   const employees = { ...state.seats.employees }
-  const spec = edit(employees[id] ?? {})
-  if (Object.keys(spec).length === 0) delete employees[id]
+  const spec = edit(employeeSetting(employees, id) ?? {})
+  if (Object.keys(spec).length === 0 && !(LEGACY_EMPLOYEE_IDS[id] ?? []).some((alias) => Object.hasOwn(employees, alias))) delete employees[id]
   else employees[id] = spec
   return { ...state, seats: { ...state.seats, employees }, dirty: true }
 }

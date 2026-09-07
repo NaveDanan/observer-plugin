@@ -19,7 +19,7 @@ delegation to the matched employee agent. Preserve every other task argument.
 
 The local CLI path was exercised end to end against Copilot CLI 1.0.80: a
 neutral `general-purpose` call from `gpt-5.6-sol` was rewritten to
-`observer:observer-malik-johnson`, and `subagent.started`,
+`observer:observer-backend-engineer`, and `subagent.started`,
 `subagent.completed`, and task telemetry all reported the configured
 `gpt-5-mini` child model. The same local plugin cache is consumed by the
 Copilot app.

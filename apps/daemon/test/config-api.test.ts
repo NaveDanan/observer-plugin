@@ -145,12 +145,12 @@ describe("configuration API", () => {
       method: "PUT",
       url: "/v1/config",
       headers: auth(),
-      payload: { seats: { control: false, employees: { "arjun-mehta": { skills: ["react"] } } } },
+      payload: { seats: { control: false, employees: { "frontend-engineer": { skills: ["react"] } } } },
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json().seats.employees["arjun-mehta"].skills).toEqual([{ name: "react", description: "" }])
-    expect(JSON.parse(readFileSync(configPath(), "utf8")).seats.employees["arjun-mehta"].skills).toEqual([
+    expect(response.json().seats.employees["frontend-engineer"].skills).toEqual([{ name: "react", description: "" }])
+    expect(JSON.parse(readFileSync(configPath(), "utf8")).seats.employees["frontend-engineer"].skills).toEqual([
       { name: "react", description: "" },
     ])
   })

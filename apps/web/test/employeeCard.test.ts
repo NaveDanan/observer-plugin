@@ -24,7 +24,7 @@ import {
 
 /**
  * The card is drawn from the real roster, so the tests are too. Every case
- * below that says "all fourteen" means it: a spot-check would have missed
+ * below that says "all eight" means it: a spot-check would have missed
  * "Principal Technical Program Manager", which is the only title long enough
  * to break the pill.
  */
@@ -170,7 +170,7 @@ describe("role titles", () => {
     expect(shortRoleTitle("Senior QA Automation Engineer")).toBe("Sr. QA Automation Eng.")
   })
 
-  it("fits every one of the fourteen roles on one line", () => {
+  it("fits every one of the eight roles on one line", () => {
     for (const profile of EMPLOYEES) {
       expect(shortRoleTitle(profile.title).length, profile.id).toBeLessThanOrEqual(MAX_ROLE_CHARACTERS)
     }
@@ -179,12 +179,12 @@ describe("role titles", () => {
 
 describe("display names", () => {
   it("drops the honorific the card has no room for", () => {
-    expect(formatDisplayName("Dr. Mei Lin")).toEqual(["Mei", "Lin"])
+    expect(formatDisplayName("Dr. Maya Shapiro")).toEqual(["Maya", "Shapiro"])
     expect(formatDisplayName("Dr. Maya Chen")).toEqual(["Maya", "Chen"])
   })
 
   it("splits an ordinary name into two lines", () => {
-    expect(formatDisplayName("Arjun Mehta")).toEqual(["Arjun", "Mehta"])
+    expect(formatDisplayName("Noam Cohen")).toEqual(["Noam", "Cohen"])
   })
 
   it("groups everything but the surname onto the first line", () => {
@@ -202,9 +202,9 @@ describe("employee numbers", () => {
   it("issues the numbers the reference's index arithmetic produced", () => {
     // 10415 + arrayIndex, for the roster as it stands. Keeping them means
     // moving off the index changes nobody's card today.
-    expect(formatEmployeeId(profileFor("arjun-mehta"))).toBe("ID: 10415")
-    expect(formatEmployeeId(profileFor("dr-maya-chen"))).toBe("ID: 10427")
-    expect(formatEmployeeId(profileFor("adrian-cole"))).toBe("ID: 10428")
+    expect(formatEmployeeId(profileFor("frontend-engineer"))).toBe("ID: 10415")
+    expect(formatEmployeeId(profileFor("research-analyst"))).toBe("ID: 10418")
+    expect(formatEmployeeId(profileFor("security-specialist"))).toBe("ID: 10419")
   })
 
   it("gives every employee a different number", () => {
@@ -223,14 +223,14 @@ describe("employee numbers", () => {
   })
 
   it("issues a stable number to an id that is not pinned", () => {
-    const stranger = { ...profileFor("arjun-mehta"), id: "jordan-okonkwo" }
+    const stranger = { ...profileFor("frontend-engineer"), id: "jordan-okonkwo" }
     expect(employeeNumber(stranger)).toBe(employeeNumber({ ...stranger }))
   })
 
   it("keeps unpinned numbers out of the pinned block, so nobody is issued twice", () => {
     const pinned = new Set(EMPLOYEES.map(employeeNumber))
     for (const id of ["jordan-okonkwo", "a", "", "zzzz-zzzz", "priya-raman"]) {
-      const number = employeeNumber({ ...profileFor("arjun-mehta"), id })
+      const number = employeeNumber({ ...profileFor("frontend-engineer"), id })
       expect(number, id).toBeGreaterThanOrEqual(10500)
       expect(pinned.has(number), id).toBe(false)
     }
@@ -238,68 +238,56 @@ describe("employee numbers", () => {
 })
 
 describe("departments", () => {
-  it("puts every one of the fourteen somewhere", () => {
+  it("puts every one of the eight somewhere", () => {
     const byId = Object.fromEntries(EMPLOYEES.map((profile) => [profile.id, inferDepartment(profile)]))
     expect(byId).toEqual({
-      "arjun-mehta": "Engineering",
-      "malik-johnson": "Engineering",
-      "elias-mercer": "Engineering",
-      "dr-mei-lin": "Data",
-      "nia-okafor": "Security",
-      "sofia-moreno": "Product & Design",
-      "daniel-brooks": "Engineering",
-      "ravi-menon": "Hardware Engineering",
-      "leila-haddad": "Executive Leadership",
-      "marcus-reed": "Engineering",
-      "elena-vargas": "Product & Design",
-      "omar-rahman": "Program Management",
-      "dr-maya-chen": "Data",
-      "adrian-cole": "Security \u2022 Executive",
+      "frontend-engineer": "Engineering",
+      "backend-engineer": "Engineering",
+      "platform-engineer": "Engineering",
+      "research-analyst": "Data",
+      "security-specialist": "Security",
+      "product-designer": "Product & Design",
+      "quality-engineer": "Engineering",
+      "hardware-specialist": "Hardware Engineering",
     })
   })
 
   it("falls back to Engineering rather than inventing a department", () => {
-    expect(inferDepartment({ ...profileFor("arjun-mehta"), title: "Wrangler" })).toBe("Engineering")
+    expect(inferDepartment({ ...profileFor("frontend-engineer"), title: "Wrangler" })).toBe("Engineering")
   })
 })
 
 describe("access levels", () => {
-  it("grades every one of the fourteen", () => {
+  it("grades every one of the eight", () => {
     const byId = Object.fromEntries(EMPLOYEES.map((profile) => [profile.id, getAccessLevel(profile)]))
     expect(byId).toEqual({
-      "arjun-mehta": "Level 3 Access",
-      "malik-johnson": "Level 4 Access",
-      "elias-mercer": "Level 3 Access",
-      "dr-mei-lin": "Level 4 Access",
-      "nia-okafor": "Level 3 Access",
-      "sofia-moreno": "Level 4 Access",
-      "daniel-brooks": "Level 3 Access",
-      "ravi-menon": "Level 5 Access",
-      "leila-haddad": "Level 5 Access",
-      "marcus-reed": "Level 4 Access",
-      "elena-vargas": "Level 4 Access",
-      "omar-rahman": "Level 4 Access",
-      "dr-maya-chen": "Level 5 Access",
-      "adrian-cole": "Level 5 Access",
+      "frontend-engineer": "Level 2 Access",
+      "backend-engineer": "Level 4 Access",
+      "platform-engineer": "Level 2 Access",
+      "research-analyst": "Level 4 Access",
+      "security-specialist": "Level 2 Access",
+      "product-designer": "Level 2 Access",
+      "quality-engineer": "Level 2 Access",
+      "hardware-specialist": "Level 3 Access",
     })
   })
 
   it("lifts a long-tenured principal a level, and never past five", () => {
-    const base = profileFor("ravi-menon")
+    const base = { ...profileFor("hardware-specialist"), title: "Principal Hardware Engineer" }
     expect(getAccessLevel({ ...base, yearsOfExperience: 14 })).toBe("Level 4 Access")
     expect(getAccessLevel({ ...base, yearsOfExperience: 20 })).toBe("Level 5 Access")
-    expect(getAccessLevel({ ...profileFor("leila-haddad"), yearsOfExperience: 40 })).toBe("Level 5 Access")
+    expect(getAccessLevel({ ...base, yearsOfExperience: 40 })).toBe("Level 5 Access")
   })
 
   it("gives an untitled contributor the floor", () => {
-    expect(getAccessLevel({ ...profileFor("arjun-mehta"), title: "Engineer", yearsOfExperience: 2 })).toBe(
+    expect(getAccessLevel({ ...profileFor("frontend-engineer"), title: "Engineer", yearsOfExperience: 2 })).toBe(
       "Level 2 Access",
     )
   })
 })
 
 describe("card content", () => {
-  it("renders all four rows for every one of the fourteen without clipping", () => {
+  it("renders all four rows for every one of the eight without clipping", () => {
     const available = pillTextWidth()
     for (const profile of EMPLOYEES) {
       for (const field of employeeCardContent(profile).fields) {
@@ -323,7 +311,7 @@ describe("card content", () => {
   })
 
   it("shrinks a name that would overflow rather than letting it run off the card", () => {
-    const long = { ...profileFor("arjun-mehta"), fullName: "Anna Konstantinopoulos" }
+    const long = { ...profileFor("frontend-engineer"), fullName: "Anna Konstantinopoulos" }
     const content = employeeCardContent(long)
     expect(content.nameFontSize).toBeLessThan(CARD_LAYOUT.name.fontSize)
     for (const line of content.nameLines) {
@@ -337,17 +325,17 @@ describe("card content", () => {
     // There is no font size at which an arbitrarily long single token fits.
     // Past the floor the card keeps its typography and `.nj-name` clips,
     // which is the lesser of two bad outcomes.
-    const absurd = { ...profileFor("arjun-mehta"), fullName: "Wolfeschlegelsteinhausenbergerdorff" }
+    const absurd = { ...profileFor("frontend-engineer"), fullName: "Wolfeschlegelsteinhausenbergerdorff" }
     expect(employeeCardContent(absurd).nameFontSize).toBe(CARD_LAYOUT.name.minFontSize)
   })
 
   it("labels each row with the caption the template already prints", () => {
-    const content = employeeCardContent(profileFor("sofia-moreno"))
+    const content = employeeCardContent(profileFor("product-designer"))
     expect(content.fields.map((field) => [field.label, field.value])).toEqual([
-      ["Role", "Lead Product Designer"],
+      ["Role", "Product Designer"],
       ["Department", "Product & Design"],
       ["Employee ID", "ID: 10420"],
-      ["Access level", "Level 4 Access"],
+      ["Access level", "Level 2 Access"],
     ])
   })
 })

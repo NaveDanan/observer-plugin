@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ROSTER } from "@observer-ai/roster"
+import { activeEmployees } from "@observer-ai/roster"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   removeClaudeEmployeeAgents,
@@ -39,7 +39,7 @@ function seats(control: boolean) {
   return {
     control,
     employees: {
-      "arjun-mehta": {
+      "frontend-engineer": {
         targets: {
           "codex:default": {
             host: "codex",
@@ -61,14 +61,40 @@ function seats(control: boolean) {
 }
 
 describe("native employee agents", () => {
+  it.each(["codex", "claude"] as const)("reconciles optional and legacy %s definitions while preserving user-owned files", (host) => {
+    const extension = host === "codex" ? ".toml" : ".md"
+    const directory = host === "codex" ? join(process.env["CODEX_HOME"]!, "agents") : join(home, ".claude", "agents")
+    const sync = (employees: Record<string, any>) => host === "codex"
+      ? syncCodexEmployeeAgents({ control: true, employees }, { skillInventory: { skills: [], warnings: [] } })
+      : syncClaudeEmployeeAgents({ control: true, employees })
+    mkdirSync(directory, { recursive: true })
+    const obsolete = join(directory, `observer-leila-haddad${extension}`)
+    const userOwned = join(directory, `observer-marcus-reed${extension}`)
+    writeFileSync(obsolete, "# observer:employee-agent v1\nold generated profile")
+    writeFileSync(userOwned, "user-owned content")
+    const employees = {
+      "arjun-mehta": { skills: [{ name: "legacy-ui", description: "Retained preference" }] },
+      "security-specialist": { enabled: true },
+    }
+    const first = sync(employees)
+    expect(first.removed).toContain(obsolete)
+    expect(readFileSync(userOwned, "utf8")).toBe("user-owned content")
+    expect(readFileSync(join(directory, `observer-frontend-engineer${extension}`), "utf8")).toContain("legacy-ui: Retained preference")
+    const specialist = join(directory, `observer-security-specialist${extension}`)
+    expect(readFileSync(specialist, "utf8")).toContain("Tamar Katz")
+    expect(existsSync(join(directory, `observer-hardware-specialist${extension}`))).toBe(false)
+    expect(sync({ ...employees, "security-specialist": { enabled: false } }).removed).toContain(specialist)
+    expect(existsSync(userOwned)).toBe(true)
+  })
+
   it("makes the full roster available to Codex without model pins by default", () => {
     const result = syncCodexEmployeeAgents({ control: false, employees: {} }, { skillInventory: { skills: [], warnings: [] } })
     const directory = join(process.env["CODEX_HOME"]!, "agents")
-    expect(readdirSync(directory)).toHaveLength(ROSTER.length)
-    expect(result.written).toHaveLength(ROSTER.length)
+    expect(readdirSync(directory)).toHaveLength(activeEmployees().length)
+    expect(result.written).toHaveLength(activeEmployees().length)
 
-    const arjun = readFileSync(join(directory, "observer-arjun-mehta.toml"), "utf8")
-    expect(arjun).toContain('name = "observer-arjun-mehta"')
+    const arjun = readFileSync(join(directory, "observer-frontend-engineer.toml"), "utf8")
+    expect(arjun).toContain('name = "observer-frontend-engineer"')
     expect(arjun).toContain("developer_instructions =")
     expect(arjun).not.toMatch(/^model =/m)
   })
@@ -76,8 +102,8 @@ describe("native employee agents", () => {
   it("pins only the configured Codex employee when control is on", () => {
     syncCodexEmployeeAgents(seats(true), { skillInventory: { skills: [], warnings: [] } })
     const directory = join(process.env["CODEX_HOME"]!, "agents")
-    const arjun = readFileSync(join(directory, "observer-arjun-mehta.toml"), "utf8")
-    const malik = readFileSync(join(directory, "observer-malik-johnson.toml"), "utf8")
+    const arjun = readFileSync(join(directory, "observer-frontend-engineer.toml"), "utf8")
+    const malik = readFileSync(join(directory, "observer-backend-engineer.toml"), "utf8")
 
     expect(arjun).toContain('model = "gpt-5.6-sol"')
     expect(arjun).toContain('model_reasoning_effort = "xhigh"')
@@ -88,14 +114,14 @@ describe("native employee agents", () => {
   it("pins Claude model and effort without forcing the employee", () => {
     const result = syncClaudeEmployeeAgents(seats(true))
     const directory = join(home, ".claude", "agents")
-    expect(readdirSync(directory)).toHaveLength(ROSTER.length)
+    expect(readdirSync(directory)).toHaveLength(activeEmployees().length)
 
-    const arjun = readFileSync(join(directory, "observer-arjun-mehta.md"), "utf8")
-    const malik = readFileSync(join(directory, "observer-malik-johnson.md"), "utf8")
+    const arjun = readFileSync(join(directory, "observer-frontend-engineer.md"), "utf8")
+    const malik = readFileSync(join(directory, "observer-backend-engineer.md"), "utf8")
     expect(arjun).toContain('model: "opus"')
     expect(arjun).toContain('effort: "high"')
-    expect(arjun).toContain("Use proactively")
-    expect(arjun).toContain("Same-level peers communicate directly with agent_send")
+    expect(arjun).toContain("Select to implement UI components")
+    expect(arjun).toContain("agent_identity, agent_send, agent_inbox, and agent_ack when exposed")
     expect(malik).not.toMatch(/^model:/m)
     expect(result.notes.join(" ")).toContain("model pins do not force")
   })
@@ -103,7 +129,7 @@ describe("native employee agents", () => {
   it("removes pins but keeps employee definitions when control turns off", () => {
     syncCodexEmployeeAgents(seats(true), { skillInventory: { skills: [], warnings: [] } })
     const result = syncCodexEmployeeAgents(seats(false), { skillInventory: { skills: [], warnings: [] } })
-    const path = join(process.env["CODEX_HOME"]!, "agents", "observer-arjun-mehta.toml")
+    const path = join(process.env["CODEX_HOME"]!, "agents", "observer-frontend-engineer.toml")
     expect(readFileSync(path, "utf8")).not.toMatch(/^model =/m)
     expect(result.removed).toEqual([])
     expect(result.written).toEqual([path])
@@ -112,17 +138,17 @@ describe("native employee agents", () => {
   it("preserves collisions and uninstalls only Observer-owned definitions", () => {
     const codexDirectory = join(process.env["CODEX_HOME"]!, "agents")
     mkdirSync(codexDirectory, { recursive: true })
-    const collision = join(codexDirectory, "observer-arjun-mehta.toml")
+    const collision = join(codexDirectory, "observer-frontend-engineer.toml")
     writeFileSync(collision, 'name = "mine"\n')
 
     const result = syncCodexEmployeeAgents(seats(true), { skillInventory: { skills: [], warnings: [] } })
     expect(readFileSync(collision, "utf8")).toBe('name = "mine"\n')
     expect(result.notes.join(" ")).toContain("does not own it")
-    expect(removeCodexEmployeeAgents()).toHaveLength(ROSTER.length - 1)
+    expect(removeCodexEmployeeAgents()).toHaveLength(activeEmployees().length - 1)
     expect(existsSync(collision)).toBe(true)
 
     syncClaudeEmployeeAgents(seats(false))
-    expect(removeClaudeEmployeeAgents()).toHaveLength(ROSTER.length)
+    expect(removeClaudeEmployeeAgents()).toHaveLength(activeEmployees().length)
   })
 
   it("puts project and global skills in every employee's Default pack", () => {
@@ -157,7 +183,7 @@ describe("native employee agents", () => {
         },
       },
     )
-    const contents = readFileSync(join(process.env["CODEX_HOME"]!, "agents", "observer-arjun-mehta.toml"), "utf8")
+    const contents = readFileSync(join(process.env["CODEX_HOME"]!, "agents", "observer-frontend-engineer.toml"), "utf8")
     expect(contents).not.toContain("## Default skills pack")
     expect(result.notes.join(" ")).toContain("Default skill pack is off")
   })

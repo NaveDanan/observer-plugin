@@ -388,7 +388,7 @@ describe("opencode adapter", () => {
         agentKey: "session:child",
         parentAgentKey: "main",
         runtimeId: "child",
-        agentType: "malik-johnson",
+        agentType: "backend-engineer",
         resumed: true,
       },
     })

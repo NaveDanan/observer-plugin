@@ -38,7 +38,7 @@ const releaseDir = join(root, "release")
 const stageDir = join(releaseDir, "package")
 
 const rootManifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
-const version = process.env.OBSERVER_VERSION ?? rootManifest.version ?? "0.9.19"
+const version = process.env.OBSERVER_VERSION ?? rootManifest.version ?? "0.9.21"
 
 /** Kept external so they install from npm rather than being inlined. */
 const EXTERNAL = ["fastify", "@fastify/websocket"]
@@ -135,6 +135,7 @@ async function main() {
     join(root, "integrations/opencode/observer-agent.md"),
     join(stageDir, "integrations/opencode/observer-agent.md"),
   )
+  cpSync(join(root, "integrations/playwright"), join(stageDir, "integrations/playwright"), { recursive: true })
   for (const file of ["README.md", "LICENSE"]) {
     if (existsSync(join(root, file))) cpSync(join(root, file), join(stageDir, file))
   }

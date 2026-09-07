@@ -5,14 +5,14 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import websocket from "@fastify/websocket"
 import { AgentStatus, HOST_CAPABILITIES, HostId, IngestBatch, MAIN_AGENT_KEY, PROTOCOL_VERSION } from "@observer-ai/protocol"
 import type { AgentAssignment, AgentDetail, AgentMail, SessionSnapshot } from "@observer-ai/protocol"
-import { behaviorDirective, ROSTER, rankEmployees } from "@observer-ai/roster"
+import { activeEmployees, employeeEnabled, behaviorDirective, CAPABILITIES, employeeDescription, getEmployee, isWorkMode, ROSTER, rankEmployees } from "@observer-ai/roster"
 import type { Store } from "@observer-ai/storage"
 import { z } from "zod"
 import { ConfigPatchSchema, loadConfig, saveConfig } from "./config.js"
 import type { ObserverConfig } from "./config.js"
 import type { Pipeline } from "./pipeline.js"
 import type { Diagnostics } from "./diagnostics.js"
-import { applySeatSkills, diagnoseSeats } from "./seats.js"
+import { applySeatSkills, diagnoseSeats, seatFor } from "./seats.js"
 import { Broadcaster } from "./broadcaster.js"
 import { describeCatalogue, listModels } from "./models.js"
 import { seatAdapters } from "./adapters/index.js"
@@ -781,7 +781,29 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
    */
   app.get("/v1/roster", async (request, reply) => {
     if (!authorize(request, reply)) return
-    return reply.send({ profiles: ROSTER })
+    return reply.send({ profiles: ROSTER, activeEmployeeIds: activeEmployees(config.seats).map((profile) => profile.id) })
+  })
+
+  app.get("/v1/roster/brief", async (request, reply) => {
+    if (!authorize(request, reply)) return
+    const parsed = z.object({ employeeId: z.string().min(1).max(100).optional(), mode: z.string().optional() }).strict().safeParse(request.query)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid employee brief request" })
+    const { employeeId, mode } = parsed.data
+    if (mode !== undefined && !isWorkMode(mode)) return reply.code(400).send({ error: "unknown work mode" })
+    if (employeeId === undefined) {
+      if (mode !== undefined) return reply.code(400).send({ error: "employeeId is required with mode" })
+      return reply.send({ employees: activeEmployees(config.seats).map((profile) => ({ id: profile.id, description: employeeDescription(profile), defaultMode: profile.work?.defaultMode })) })
+    }
+    const profile = getEmployee(employeeId)
+    if (!profile) return reply.code(404).send({ error: "unknown employee" })
+    return reply.send({
+      employeeId: profile.id,
+      enabled: employeeEnabled(profile, seatFor(config.seats, profile.id)),
+      mode: mode ?? profile.work?.defaultMode,
+      contract: profile.work,
+      capabilities: (profile.work?.capabilities ?? []).map((id) => ({ id, ...CAPABILITIES[id], availability: "discover-in-host" })),
+      instructions: behaviorDirective(applySeatSkills(profile, config.seats), undefined, mode),
+    })
   })
 
   app.post("/v1/roster/match", async (request, reply) => {
@@ -790,7 +812,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
       .object({ task: z.string().max(20_000), limit: z.number().int().min(1).max(14).optional() })
       .safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "invalid match request" })
-    const matches = rankEmployees(parsed.data.task, parsed.data.limit ?? 3)
+    const matches = rankEmployees(parsed.data.task, parsed.data.limit ?? 3, activeEmployees(config.seats))
     return reply.send({
       matches: matches.map((match) => ({
         id: match.profile.id,

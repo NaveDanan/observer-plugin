@@ -1,6 +1,6 @@
 # Observer mobile UI recommendation
 
-**Prepared by:** Sofia Moreno, Lead Product Designer  
+**Prepared by:** Yael Mizrahi, Product Designer
 **Scope:** design/prototype guidance only; no product code, tests, or configuration changed.  
 **Surface:** `apps/web` live Observer canvas, session list, agent detail panel, settings page, and NJ-LABS employee card.
 

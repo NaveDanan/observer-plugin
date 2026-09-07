@@ -4,7 +4,7 @@ import type { InstallResult } from "./install.js"
 import { HOST_EVENTS } from "./install.js"
 import { loadConfig } from "@observer-ai/daemon"
 import { removeCodexEmployeeAgents, syncCodexEmployeeAgents } from "./host-employee-agents.js"
-import { EMPLOYEES, rosterBriefing } from "@observer-ai/roster"
+import { activeEmployees, rosterBriefing } from "@observer-ai/roster"
 import { codexHome, codexWindowsCommand, coordinationMcpPath, emitterPath, homeDir, nodePath, shellQuote } from "./paths.js"
 
 /**
@@ -151,7 +151,7 @@ export function installCodexPlugin(version: string): InstallResult {
       "",
       "# Observer delegation",
       "",
-      rosterBriefing(EMPLOYEES),
+      rosterBriefing(activeEmployees()),
       "",
       "Complete the root task after collecting the selected subagents' results. If any delegation used a default Codex agent, name that delegation and state why no employee fit it.",
       "",

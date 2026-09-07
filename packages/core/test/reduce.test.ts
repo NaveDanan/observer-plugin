@@ -189,13 +189,13 @@ describe("reduce", () => {
     const key = "session:child"
     reduce(
       store,
-      event({ kind: "agent.started", agentType: "malik-johnson", runtimeId: "child", prompt: "original context" }, { agentKey: key }),
+      event({ kind: "agent.started", agentType: "backend-engineer", runtimeId: "child", prompt: "original context" }, { agentKey: key }),
     )
     reduce(store, event({ kind: "message.assistant", messageKey: "m1", text: "partial work" }, { agentKey: key }))
     reduce(store, event({ kind: "agent.stopped", status: "interrupted" }, { agentKey: key }))
     reduce(
       store,
-      event({ kind: "agent.started", agentType: "malik-johnson", runtimeId: "child", resumed: true }, { agentKey: key }),
+      event({ kind: "agent.started", agentType: "backend-engineer", runtimeId: "child", resumed: true }, { agentKey: key }),
     )
 
     const id = agentId(SESSION, key)
@@ -210,7 +210,7 @@ describe("reduce", () => {
     reduce(store, event({ kind: "agent.stopped", status: "failed" }, { agentKey: key }))
     reduce(
       store,
-      event({ kind: "agent.started", agentType: "malik-johnson", runtimeId: "child", resumed: true }, { agentKey: key }),
+      event({ kind: "agent.started", agentType: "backend-engineer", runtimeId: "child", resumed: true }, { agentKey: key }),
     )
     expect(store.getAgent(agentId(SESSION, key))).toMatchObject({ runtimeId: "child", status: "running", endedAt: null })
   })
@@ -221,7 +221,7 @@ describe("reduce", () => {
     reduce(store, event({ kind: "agent.stopped", status: "completed" }, { agentKey: key }))
     reduce(
       store,
-      event({ kind: "agent.started", agentType: "malik-johnson", runtimeId: "child", resumed: true }, { agentKey: key }),
+      event({ kind: "agent.started", agentType: "backend-engineer", runtimeId: "child", resumed: true }, { agentKey: key }),
     )
     expect(store.getAgent(agentId(SESSION, key))).toMatchObject({ runtimeId: "child", status: "running", endedAt: null })
   })

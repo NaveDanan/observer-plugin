@@ -77,13 +77,13 @@ describe("portable coordination assignment projection", () => {
       host: "codex",
       event: "SubagentStart",
       deliveryId: "start",
-      payload: { session_id: "root-session", agent_id: "child-1", agent_type: "observer-dr-mei-lin" },
+      payload: { session_id: "root-session", agent_id: "child-1", agent_type: "observer-research-analyst" },
     })
 
     expect(store.getAgentAssignmentByRuntime("codex", "child-1")).toMatchObject({
       rootSessionKey: "root-session",
       parentRuntimeId: "root-session",
-      agentType: "observer-dr-mei-lin",
+      agentType: "observer-research-analyst",
       status: "running",
     })
 
@@ -91,7 +91,7 @@ describe("portable coordination assignment projection", () => {
       host: "codex",
       event: "SubagentStop",
       deliveryId: "stop",
-      payload: { session_id: "root-session", agent_id: "child-1", agent_type: "observer-dr-mei-lin" },
+      payload: { session_id: "root-session", agent_id: "child-1", agent_type: "observer-research-analyst" },
     })
     expect(store.getAgentAssignmentByRuntime("codex", "child-1")?.status).toBe("completed")
   })

@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSyn
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { EMPLOYEES } from "@observer-ai/roster"
+import { activeEmployees } from "@observer-ai/roster"
 import {
   CODEX_PLUGIN_NAME,
   codexPluginDir,
@@ -171,9 +171,9 @@ describe("installCodexPlugin", () => {
     expect(skill).toContain("Use only when the user explicitly invokes @observer")
     expect(skill).toContain('fork_turns: "none"')
     expect(skill).toContain("state the reason")
-    for (const profile of EMPLOYEES) {
+    for (const profile of activeEmployees()) {
       expect(skill).toContain(profile.fullName)
-      for (const field of profile.fields) expect(skill).toContain(field)
+      expect(skill).toContain(profile.work!.selection)
     }
   })
 

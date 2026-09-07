@@ -43,7 +43,7 @@ Opening via `file://` will fail to `fetch` the JSON — use a server.
 ```
 .
 ├── emploee-card.png          # 1023×1537 template (note typo is intentional)
-├── company_roster.json       # 14 profiles, images in images/
+├── company_roster.json       # 6 default roles + 2 optional specialists, images in images/
 ├── images/                   # 1254×1254 portraits
 ├── index.html
 ├── style.css

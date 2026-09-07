@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { EMPLOYEES } from "../src/data.js"
 import { behaviorDirective, rosterBriefing } from "../src/guidance.js"
-import { describeReason, getEmployee, matchEmployee, rankEmployees } from "../src/index.js"
+import { activeEmployees, describeReason, getEmployee, matchEmployee, rankEmployees } from "../src/index.js"
 
 describe("roster data", () => {
   it("has a unique id per employee", () => {
@@ -15,28 +15,37 @@ describe("roster data", () => {
 })
 
 describe("matchEmployee", () => {
+  it.each([
+    ["Evaluate AI agents using held-out tasks and repeated trials", "research-analyst"],
+    ["Review an authorization bypass with exploit preconditions", "security-specialist"],
+    ["Define security policy and audit controls for organizational risk", "security-specialist"],
+    ["Define metric grain, denominator and analytics lineage", "research-analyst"],
+  ])("routes the specialized task: %s", (task, employeeId) => {
+    expect(matchEmployee(task, activeEmployees({ employees: { "security-specialist": { enabled: true } } }))?.profile.id).toBe(employeeId)
+  })
+
   it("seats infrastructure work with the SRE", () => {
     const match = matchEmployee(
       "Our deployments work differently in every environment and nobody can explain why the production service is unhealthy. Set up kubernetes and CI/CD.",
     )
-    expect(match?.profile.id).toBe("elias-mercer")
+    expect(match?.profile.id).toBe("platform-engineer")
   })
 
   it("seats UI work with the frontend engineer", () => {
     const match = matchEmployee(
       "The React components are inconsistent and the interface feels slow. Refactor the component architecture and improve accessibility.",
     )
-    expect(match?.profile.id).toBe("arjun-mehta")
+    expect(match?.profile.id).toBe("frontend-engineer")
   })
 
   it("seats flaky test investigations with QA", () => {
     const match = matchEmployee("A bug cannot be reproduced consistently and the automated test suite has become slow or flaky.")
-    expect(match?.profile.id).toBe("daniel-brooks")
+    expect(match?.profile.id).toBe("quality-engineer")
   })
 
   it("seats threat modelling with security", () => {
-    const match = matchEmployee("A new service will handle sensitive information; we need a threat model before implementation.")
-    expect(["nia-okafor", "adrian-cole"]).toContain(match?.profile.id)
+    const match = matchEmployee("A new service will handle sensitive information; we need a threat model before implementation.", activeEmployees({ employees: { "security-specialist": { enabled: true } } }))
+    expect(["security-specialist"]).toContain(match?.profile.id)
   })
 
   it("returns undefined for text that matches nobody", () => {
@@ -71,7 +80,7 @@ describe("rankEmployees", () => {
 
 describe("getEmployee", () => {
   it("finds profiles by id", () => {
-    expect(getEmployee("malik-johnson")?.title).toBe("Staff Backend Engineer")
+    expect(getEmployee("backend-engineer")?.title).toBe("Backend Engineer")
     expect(getEmployee("nobody")).toBeUndefined()
   })
 })
@@ -80,7 +89,7 @@ describe("guidance", () => {
   it("renders a persona directive", () => {
     const profile = EMPLOYEES[0]!
     const directive = behaviorDirective(profile, "Rebuild the settings screen.")
-    expect(directive).toContain("You are Arjun Mehta")
+    expect(directive).toContain("You are Noam Cohen")
     expect(directive).toContain(profile.tone)
     expect(directive).toContain("Rebuild the settings screen.")
   })
@@ -107,7 +116,7 @@ describe("guidance", () => {
     expect(briefing).toContain('fork_turns: "none"')
     expect(briefing).toContain("state the reason")
     for (const profile of EMPLOYEES) {
-      for (const field of profile.fields) expect(briefing).toContain(field)
+      expect(briefing).toContain(profile.work!.selection)
     }
   })
 })

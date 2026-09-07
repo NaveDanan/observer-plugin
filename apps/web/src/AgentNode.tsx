@@ -223,11 +223,11 @@ export function AgentNode({ data }: NodeProps): JSX.Element {
           <span className={`dot status-${agent.status} photo-dot`} aria-hidden="true" />
         </div>
         <div className="employee-id">
-          <span className="node-title" title={name}>
-            {name}
+          <span className="node-title" title={employee ? role.long : name}>
+            {employee ? role.short : name}
           </span>
-          <span className="node-role" title={role.long}>
-            {role.short}
+          <span className="node-role" title={employee ? name : role.long}>
+            {employee ? name : role.short}
           </span>
           <span className={`badge status-${agent.status}${live ? " badge-running" : ""}${done ? " badge-done" : ""}`}>
             {live && <span className="pulse-dot" aria-hidden="true" />}

@@ -11,6 +11,7 @@
  */
 
 import type { SeatIssue, SeatIssueSeverity, SeatSkill, SeatSpec } from "../../api"
+import { canonicalEmployeeId } from "@observer-ai/roster"
 import { readTargets } from "./targets"
 
 export function seatSkills(spec: SeatSpec | undefined): SeatSkill[] {
@@ -34,7 +35,7 @@ export function setSkills(spec: SeatSpec | undefined, skills: SeatSkill[]): Seat
 /** Whether this employee has a seat a user would recognise as configured. */
 export function isSeated(spec: SeatSpec | undefined): boolean {
   if (spec === undefined) return false
-  return Object.keys(readTargets(spec)).length > 0 || seatSkills(spec).length > 0
+  return spec.enabled !== undefined || Object.keys(readTargets(spec)).length > 0 || seatSkills(spec).length > 0
 }
 
 const KNOWN_SEAT_FIELDS = new Set(["model", "variant", "skills", "targets"])
@@ -53,7 +54,7 @@ export function isEmptySeat(spec: SeatSpec | undefined): boolean {
 }
 
 export function issuesFor(issues: ReadonlyArray<SeatIssue>, employeeId: string): SeatIssue[] {
-  return issues.filter((issue) => issue.employeeId === employeeId)
+  return issues.filter((issue) => issue.employeeId !== undefined && canonicalEmployeeId(issue.employeeId) === employeeId)
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   seatTargets,
 } from "@observer-ai/daemon"
 import { formatContext } from "./models.js"
+import { canonicalEmployeeId, employeeSetting } from "@observer-ai/roster"
 import { diagnoseOpencodeSeats } from "./seat-agents.js"
 import {
   type ConfigUIState,
@@ -460,7 +461,7 @@ function employeeList(
     theme.heading("Employees") + theme.dim(`   ${seated} of ${state.roster.length} seated`),
     "",
     theme.dim(
-      `  ${pad("Employee", width.name)}${pad("Role", width.role)}${pad("Model", width.model)}${pad("Effort", width.effort)}${width.skills > 0 ? "Skills" : ""}`,
+      `  ${pad("Role", width.role)}${pad("Employee", width.name)}${pad("Model", width.model)}${pad("Effort", width.effort)}${width.skills > 0 ? "Skills" : ""}`,
     ),
   ]
 
@@ -468,12 +469,12 @@ function employeeList(
   for (let index = window.start; index < window.end; index++) {
     const row = state.roster[index]
     if (!row) continue
-    const seat = state.seats.employees[row.id]
+    const seat = employeeSetting(state.seats.employees, row.id)
     const configured = opencodeSeat(seat)
     const targets = seatTargets(seat)
     const targetCount = Object.keys(targets).length
     const model =
-      state.profiles.length > 0
+      row.optional && seat?.enabled !== true ? "disabled" : state.profiles.length > 0
         ? targetCount === 0
           ? "no targets"
           : `${targetCount} target${targetCount === 1 ? "" : "s"}`
@@ -482,14 +483,15 @@ function employeeList(
     const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
     const selected = index === state.cursor.employees
     const name = pad(truncate(row.name, width.name - 1), width.name)
+    const role = pad(truncate(row.role, width.role - 1), width.role)
     // A configured model is the one piece of data on the row the user put
     // there, so it is the one that takes the highlight; `inherit` is the
     // absence of a choice and reads as secondary.
     const modelCell = pad(truncate(model, width.model - 1), width.model)
     lines.push(
       marker(selected, flagged.has(row.id), theme) +
-        (selected ? theme.focus(name) : name) +
-        theme.dim(pad(truncate(row.role, width.role - 1), width.role)) +
+        (selected ? theme.focus(role) : role) +
+        theme.dim(name) +
         (state.profiles.length > 0 ? (targetCount > 0 ? theme.accent(modelCell) : theme.dim(modelCell)) : configured !== undefined ? theme.accent(modelCell) : theme.dim(modelCell)) +
         pad(variant, width.effort) +
         (width.skills > 0 ? theme.dim(truncate(skills.length > 0 ? skills : "-", width.skills)) : ""),
@@ -511,12 +513,14 @@ function employeeDetail(state: ConfigUIState, columns: number, theme: Theme): st
   const skills = Array.isArray(seat?.skills) ? seat.skills.map((skill) => skill.name).join(", ") : ""
 
   const values: Record<string, string> = {
+    enabled: seat?.enabled === true ? "on, available after host reload" : "off, optional specialist",
     model: `${configured !== undefined ? theme.accent(model) : theme.dim(model)}   ${theme.dim("effort")} ${variant}`,
     targets: `${Object.keys(seatTargets(seat)).length} configured   ${theme.dim("enter to edit by host and profile")}`,
     skills: skills.length > 0 ? skills : theme.dim("none"),
     reset: theme.dim("clear this employee's targets and skills"),
   }
   const labels: Record<string, string> = {
+    enabled: "Enable specialist",
     model: "Model",
     targets: "Targets",
     skills: "Skills",
@@ -1179,16 +1183,16 @@ export function renderReport(
     "",
   ]
 
-  const configured = roster.filter((row) => seats.employees[row.id] !== undefined)
+  const configured = roster.filter((row) => employeeSetting(seats.employees, row.id) !== undefined)
   if (configured.length === 0) {
     lines.push("No employee model pins are configured. Employee agents remain available and inherit the harness's model choice.")
   } else if (profiles.length > 0) {
     for (const row of configured) {
-      lines.push(...reportTargetSeat(row.id, seats.employees[row.id]!, profiles, seats.control))
+      lines.push(...reportTargetSeat(row.id, employeeSetting(seats.employees, row.id)!, profiles, seats.control))
     }
   } else {
     for (const row of configured) {
-      const seat = seats.employees[row.id]!
+      const seat = employeeSetting(seats.employees, row.id)!
       const configured = opencodeSeat(seat)
       const model = configured?.model ?? "inherit"
       const variant = configured?.variant ?? "-"
@@ -1200,7 +1204,7 @@ export function renderReport(
   // Seats naming an id that is not on the roster are the reason this loop is
   // separate: they are invisible in a roster-ordered table, and they are
   // exactly the typo a user needs told about.
-  const strays = Object.keys(seats.employees).filter((id) => !roster.some((row) => row.id === id))
+  const strays = Object.keys(seats.employees).filter((id) => !roster.some((row) => row.id === canonicalEmployeeId(id)))
   for (const id of strays) {
     if (profiles.length > 0) lines.push(...reportTargetSeat(`${id} (not on the roster)`, seats.employees[id]!, profiles, seats.control))
     else lines.push(`${pad(id, 18)}not on the roster`)
@@ -1312,7 +1316,7 @@ function groupHint(state: ConfigUIState): string {
   return word === undefined ? "group" : `group: ${word}`
 }
 
-/** `Employees > Arjun Mehta > Model`, with the leaf picked out. */
+/** `Employees > Noam Cohen > Model`, with the leaf picked out. */
 function breadcrumb(theme: Theme, ...parts: string[]): string {
   const trail = parts.slice(0, -1)
   const leaf = parts[parts.length - 1] ?? ""

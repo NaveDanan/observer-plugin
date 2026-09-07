@@ -200,7 +200,7 @@ describe("the OpenCode adapter's catalogue", () => {
     })
     adapter.catalogue(OPENCODE_DEFAULT_PROFILE)
     adapter.catalogue(OPENCODE_DEFAULT_PROFILE)
-    adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", target(OPUS.id, "high"), "arjun-mehta")
+    adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", target(OPUS.id, "high"), "frontend-engineer")
     expect(reads).toBe(1)
   })
 
@@ -214,15 +214,15 @@ describe("the OpenCode adapter's catalogue", () => {
         return [OPUS]
       },
     })
-    adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", target(OPUS.id), "arjun-mehta")
-    adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", target("claude-opus-4-5", "high"), "arjun-mehta")
+    adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", target(OPUS.id), "frontend-engineer")
+    adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", target("claude-opus-4-5", "high"), "frontend-engineer")
     expect(reads).toBe(0)
   })
 })
 
 describe("the OpenCode adapter's diagnosis", () => {
   const adapter = createOpencodeAdapter({ readModels: models(OPUS, HAIKU, SONNET) })
-  const diagnose = (raw: SeatTarget) => adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", raw, "arjun-mehta")
+  const diagnose = (raw: SeatTarget) => adapter.diagnose(OPENCODE_DEFAULT_PROFILE, "opencode:default", raw, "frontend-engineer")
 
   it("owns the provider/model slash rule, and scopes the finding to a row", () => {
     const [issue] = diagnose(target("claude-opus-4-5"))
@@ -231,10 +231,10 @@ describe("the OpenCode adapter's diagnosis", () => {
     expect(issue?.message).toContain("missing its provider")
     // A UI cannot put a finding on the right row without these; target keys
     // contain `:` and may contain `.`, so splitting `path` back apart is not safe.
-    expect(issue?.employeeId).toBe("arjun-mehta")
+    expect(issue?.employeeId).toBe("frontend-engineer")
     expect(issue?.targetId).toBe("opencode:default")
     expect(issue?.host).toBe("opencode")
-    expect(issue?.path).toBe("seats.employees.arjun-mehta.targets.opencode:default.model")
+    expect(issue?.path).toBe("seats.employees.frontend-engineer.targets.opencode:default.model")
   })
 
   it("says nothing about a well-formed model with a declared variant", () => {
