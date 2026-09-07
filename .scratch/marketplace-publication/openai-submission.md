@@ -24,9 +24,15 @@ that URL. Do not expose a user's local daemon or telemetry publicly to satisfy
 this requirement. A skills-only installation guide would be a narrower listing
 and needs a self-contained skill bundle before submission.
 
-The browser reached https://platform.openai.com/plugins, but a Cloudflare human
-verification challenge prevented access to the authenticated submission form.
-No OpenAI draft or submission has been created.
+The user completed browser verification and the authenticated Plugins page
+became available. Selecting Create plugin > With MCP displayed: "You need a
+verified developer identity before you can create or upload a plugin."
+The portal offered With MCP and Skills only submission types.
+
+Continue routed to https://platform.openai.com/settings/organization/general,
+but that settings page rendered blank in the integrated browser. The publisher
+must complete developer identity verification, or select an organization with
+an already verified identity. No OpenAI draft or submission has been created.
 
 ## Candidate review cases for a local setup skill
 

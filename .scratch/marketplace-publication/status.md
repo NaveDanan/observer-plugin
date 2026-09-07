@@ -28,10 +28,12 @@ Status: needs-info
 
 ## Remaining
 
-The universal OpenAI directory submission has not been created. The portal is
-behind a human-verification challenge, publisher identity/details are pending,
-and its current hosted-MCP/skills submission format does not accept Observer's
-full local hooks plus stdio MCP package directly. See `openai-submission.md`.
+The universal OpenAI directory submission has not been created. Browser
+verification was completed and the authenticated portal was inspected. The
+portal explicitly requires a verified developer identity before creating or
+uploading a plugin. Publisher identity/details are pending, and its current
+hosted-MCP/skills submission format does not accept Observer's full local hooks
+plus stdio MCP package directly. See `openai-submission.md`.
 
 Do not mark default-catalog publication complete until GitHub merges the catalog
 entry and OpenAI accepts and publishes a supported submission.
