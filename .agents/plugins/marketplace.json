@@ -1,0 +1,20 @@
+{
+  "name": "observer-public",
+  "interface": {
+    "displayName": "Observer Public"
+  },
+  "plugins": [
+    {
+      "name": "observer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/observer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

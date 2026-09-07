@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event sessionStart",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event sessionStart",
+        "timeoutSec": 5
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event sessionEnd",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event sessionEnd",
+        "timeoutSec": 5
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event userPromptSubmitted",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event userPromptSubmitted",
+        "timeoutSec": 5
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/copilot-control.mjs\" --host copilot --event preToolUse",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/copilot-control.mjs\" --host copilot --event preToolUse",
+        "timeoutSec": 5
+      },
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event preToolUse",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event preToolUse",
+        "timeoutSec": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event postToolUse",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event postToolUse",
+        "timeoutSec": 5
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event postToolUseFailure",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event postToolUseFailure",
+        "timeoutSec": 5
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event agentStop",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event agentStop",
+        "timeoutSec": 5
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event subagentStart",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event subagentStart",
+        "timeoutSec": 5
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event subagentStop",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event subagentStop",
+        "timeoutSec": 5
+      }
+    ],
+    "errorOccurred": [
+      {
+        "type": "command",
+        "bash": "node \"${COPILOT_PLUGIN_ROOT}/scripts/emit.mjs\" --host copilot --event errorOccurred",
+        "powershell": "& node \"$env:COPILOT_PLUGIN_ROOT/scripts/emit.mjs\" --host copilot --event errorOccurred",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

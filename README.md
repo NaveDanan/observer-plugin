@@ -54,6 +54,10 @@ Supported hosts: **OpenCode**, **Codex**, **Claude Code**, **GitHub Copilot CLI*
 
 ## Install
 
+For the Codex and GitHub Copilot plugin directories, use the
+[public marketplace installation](docs/marketplace.md). It includes setup from
+the published release and commands to add the `observer-public` marketplace.
+
 Requires **Node 22.5+** (Observer uses the built-in `node:sqlite`, so there is
 no native build step).
 

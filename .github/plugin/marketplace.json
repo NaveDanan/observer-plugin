@@ -1,0 +1,18 @@
+{
+  "name": "observer-public",
+  "owner": {
+    "name": "NaveDanan"
+  },
+  "metadata": {
+    "description": "Observer coding-agent canvas and employee coordination",
+    "version": "0.9.21"
+  },
+  "plugins": [
+    {
+      "name": "observer",
+      "description": "Watch and coordinate coding agents on a local canvas. Requires Node.js and one-time runtime setup.",
+      "version": "0.9.21",
+      "source": "./plugins/copilot/observer"
+    }
+  ]
+}

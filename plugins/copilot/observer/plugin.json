@@ -1,0 +1,22 @@
+{
+  "name": "observer",
+  "version": "0.9.21",
+  "description": "Watch coding agents on a local canvas and coordinate work with six employee specialties.",
+  "author": {
+    "name": "NaveDanan",
+    "url": "https://github.com/NaveDanan"
+  },
+  "homepage": "https://github.com/NaveDanan/observer-plugin",
+  "repository": "https://github.com/NaveDanan/observer-plugin",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "observability",
+    "delegation",
+    "canvas"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "agents": "./agents/",
+  "hooks": "./hooks/hooks.json"
+}

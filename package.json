@@ -12,6 +12,8 @@
     "build": "pnpm -r --filter=!@observer-ai/web build && pnpm --filter=@observer-ai/web build",
     "build:libs": "pnpm -r --filter=!@observer-ai/web build",
     "release": "pnpm build && node scripts/build-release.mjs",
+    "marketplace:build": "pnpm build:libs && node scripts/build-marketplace.mjs",
+    "marketplace:test": "node --test scripts/test-marketplace.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm build:libs && vitest run",
     "test:only": "vitest run",

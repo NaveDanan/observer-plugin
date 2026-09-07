@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "observer": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/scripts/coordination-mcp.mjs",
+        "--host",
+        "copilot"
+      ]
+    }
+  }
+}

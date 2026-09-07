@@ -1,0 +1,35 @@
+{
+  "name": "observer",
+  "version": "0.9.21",
+  "description": "Watch coding agents on a local canvas and coordinate work with six employee specialties.",
+  "author": {
+    "name": "NaveDanan",
+    "url": "https://github.com/NaveDanan"
+  },
+  "homepage": "https://github.com/NaveDanan/observer-plugin",
+  "repository": "https://github.com/NaveDanan/observer-plugin",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "observability",
+    "delegation",
+    "canvas"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Observer",
+    "shortDescription": "Watch and coordinate coding agents locally.",
+    "longDescription": "Watch coding agents on a local canvas and coordinate work with six employee specialties. Requires Node.js 22.5+ and one-time runtime setup. Session data stays on your computer.",
+    "developerName": "NaveDanan",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Observability"
+    ],
+    "websiteURL": "https://github.com/NaveDanan/observer-plugin",
+    "defaultPrompt": [
+      "Set up Observer for this computer.",
+      "Use Observer to coordinate this task."
+    ]
+  }
+}
